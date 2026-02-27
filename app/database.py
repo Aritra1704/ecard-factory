@@ -94,17 +94,18 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_database() -> None:
-    """Create the application schema and any imported ORM tables on startup."""
+    """Create the application schema if it doesn't exist.
 
-    # Import models lazily so every table is registered on Base.metadata before
-    # `create_all()` runs during local bootstrap and health checks.
-    import app.models  # noqa: F401
+    Table creation is handled exclusively by Alembic migrations.
+    This function only ensures the schema namespace exists.
+    """
 
     safe_schema_name = settings.db_schema.replace('"', '""')
 
     async with engine.begin() as connection:
-        await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{safe_schema_name}"'))
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.execute(
+            text(f'CREATE SCHEMA IF NOT EXISTS "{safe_schema_name}"')
+        )
 
 
 async def close_database() -> None:
