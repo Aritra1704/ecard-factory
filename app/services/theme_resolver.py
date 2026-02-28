@@ -9,7 +9,7 @@ import logging
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,19 +36,19 @@ FALLBACK_THEME = {
     "tone_emotion_pct": 30,
     "prompt_keywords": [],
     "color_palette": [],
-    "visual_style": "clean minimal illustration",
+    "visual_style": "",
     "instagram_hashtags": [],
 }
 
 
 @dataclass(slots=True)
 class ThemeResolver:
-    """Resolve and persist the daily content theme using a fixed priority order."""
+    """Resolve today's theme using overrides, weekly rotation, or a fallback."""
 
     now_provider: Callable[[], datetime] | None = None
 
     def _get_now(self) -> datetime:
-        """Return the current Asia/Kolkata-aware datetime."""
+        """Return the current timezone-aware datetime in Asia/Kolkata."""
 
         if self.now_provider is not None:
             return self.now_provider()
@@ -56,25 +56,31 @@ class ThemeResolver:
         return datetime.now(tz=KOLKATA_TZ)
 
     @staticmethod
+    def get_weekday_index(target_date: date) -> int:
+        """Return the weekday index where Monday is 0 and Sunday is 6."""
+
+        return target_date.weekday()
+
+    @staticmethod
     def get_weekday_name(target_date: date) -> str:
-        """Map Python weekday numbering to the stored lowercase weekday name."""
+        """Return the lowercase weekday name for compatibility with seeded data."""
 
         return WEEKDAY_NAMES[target_date.weekday()]
 
     @staticmethod
     def get_rotation_month(current_month: int) -> int:
-        """Return the three-part seeded rotation bucket for a calendar month."""
+        """Return the rotation value using the explicit month formula provided."""
 
-        return (((current_month - 1) % 9) // 3) + 1
+        return ((current_month - 1) % 9) + 1
 
     async def resolve_today(self, session: AsyncSession) -> dict[str, Any]:
-        """Resolve today's theme, upsert it into the daily plan table, and return it."""
+        """Resolve today's theme and upsert it into the daily content plan table."""
 
-        today = self._get_now().date()
+        today = self._get_now().astimezone(KOLKATA_TZ).date()
 
-        override = await self._get_active_override(session=session, today=today)
+        override = await self._get_override(session=session, today=today)
         if override is not None:
-            resolved = self._serialize_theme(
+            resolved = self._build_resolved_theme(
                 source="override",
                 plan_date=today,
                 theme_name=override.theme_name,
@@ -87,13 +93,13 @@ class ThemeResolver:
                 override_id=override.id,
                 weekly_theme_id=None,
             )
-            logger.info("Resolved today's theme using override source")
+            logger.info("Theme resolver selected override source")
             await self._upsert_daily_plan(session=session, resolved=resolved)
-            return self._public_response(resolved=resolved)
+            return self._to_response(resolved=resolved)
 
         weekly_theme = await self._get_weekly_theme(session=session, today=today)
         if weekly_theme is not None:
-            resolved = self._serialize_theme(
+            resolved = self._build_resolved_theme(
                 source="weekly",
                 plan_date=today,
                 theme_name=weekly_theme.theme_name,
@@ -106,9 +112,9 @@ class ThemeResolver:
                 override_id=None,
                 weekly_theme_id=weekly_theme.id,
             )
-            logger.info("Resolved today's theme using weekly source")
+            logger.info("Theme resolver selected weekly source")
             await self._upsert_daily_plan(session=session, resolved=resolved)
-            return self._public_response(resolved=resolved)
+            return self._to_response(resolved=resolved)
 
         resolved = {
             **FALLBACK_THEME,
@@ -116,16 +122,17 @@ class ThemeResolver:
             "override_id": None,
             "weekly_theme_id": None,
         }
-        logger.info("Resolved today's theme using fallback source")
+        logger.info("Theme resolver selected fallback source")
         await self._upsert_daily_plan(session=session, resolved=resolved)
-        return self._public_response(resolved=resolved)
+        return self._to_response(resolved=resolved)
 
-    async def _get_active_override(
+    async def _get_override(
         self,
+        *,
         session: AsyncSession,
         today: date,
     ) -> ThemeOverride | None:
-        """Return the highest-priority active override for the target date."""
+        """Return the highest-priority active override for the current day."""
 
         statement = (
             select(ThemeOverride)
@@ -142,26 +149,35 @@ class ThemeResolver:
 
     async def _get_weekly_theme(
         self,
+        *,
         session: AsyncSession,
         today: date,
     ) -> WeeklyTheme | None:
-        """Return the active weekly theme for the target weekday and rotation."""
+        """Return the active weekly theme for the current weekday and rotation."""
 
+        weekday_index = self.get_weekday_index(today)
         weekday_name = self.get_weekday_name(today)
         rotation_month = self.get_rotation_month(today.month)
+
+        # The prompt specifies Monday=0 weekday matching. The current seeded data
+        # stores weekday names, so the query accepts both numeric-string and name
+        # values to remain compatible with existing rows.
         statement = (
             select(WeeklyTheme)
             .where(
                 WeeklyTheme.active.is_(True),
-                WeeklyTheme.day_of_week == weekday_name,
                 WeeklyTheme.rotation_month == rotation_month,
+                or_(
+                    WeeklyTheme.day_of_week == str(weekday_index),
+                    WeeklyTheme.day_of_week == weekday_name,
+                ),
             )
             .limit(1)
         )
         result = await session.execute(statement)
         return result.scalar_one_or_none()
 
-    def _serialize_theme(
+    def _build_resolved_theme(
         self,
         *,
         source: str,
@@ -176,7 +192,7 @@ class ThemeResolver:
         override_id: int | None,
         weekly_theme_id: int | None,
     ) -> dict[str, Any]:
-        """Normalize database records into a single resolved theme payload."""
+        """Normalize a selected source into a single internal payload."""
 
         return {
             "theme_name": theme_name,
@@ -194,10 +210,11 @@ class ThemeResolver:
 
     async def _upsert_daily_plan(
         self,
+        *,
         session: AsyncSession,
         resolved: dict[str, Any],
     ) -> None:
-        """Persist the resolved theme with an idempotent upsert on plan date."""
+        """Insert or update the daily plan row so repeated runs stay idempotent."""
 
         statement = insert(DailyContentPlan).values(
             plan_date=resolved["plan_date"],
@@ -228,8 +245,8 @@ class ThemeResolver:
         await session.execute(statement)
         await session.commit()
 
-    def _public_response(self, resolved: dict[str, Any]) -> dict[str, Any]:
-        """Convert the internal payload into the exact API response contract."""
+    def _to_response(self, *, resolved: dict[str, Any]) -> dict[str, Any]:
+        """Return the exact public response contract required by callers."""
 
         return {
             "theme_name": resolved["theme_name"],

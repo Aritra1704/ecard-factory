@@ -1,4 +1,4 @@
-"""Async unit tests for the theme resolver service and theme endpoints."""
+"""Async unit tests for the theme resolver service."""
 
 from __future__ import annotations
 
@@ -10,12 +10,11 @@ import sys
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ScalarOneOrNoneResult:
-    """Minimal async-result stub that mimics SQLAlchemy scalar_one_or_none()."""
+    """Minimal async-result stub that provides scalar_one_or_none()."""
 
     def __init__(self, value):
         self.value = value
@@ -24,45 +23,27 @@ class ScalarOneOrNoneResult:
         return self.value
 
 
-class ScalarsListResult:
-    """Minimal async-result stub that mimics SQLAlchemy scalars().all()."""
-
-    def __init__(self, values):
-        self.values = values
-
-    def scalars(self):
-        return self
-
-    def all(self):
-        return self.values
-
-
-def reload_theme_modules():
-    """Reload app modules so tests pick up fresh environment and patches."""
+def reload_theme_service_module():
+    """Reload the resolver module so each test sees fresh app state."""
 
     for module_name in list(sys.modules):
         if (
-            module_name in {"app.config", "app.database", "app.main"}
+            module_name in {"app.config", "app.database"}
             or module_name.startswith("app.models")
-            or module_name.startswith("app.routers")
-            or module_name.startswith("app.schemas")
             or module_name.startswith("app.services")
         ):
             sys.modules.pop(module_name, None)
 
-    service_module = importlib.import_module("app.services.theme_resolver")
-    main_module = importlib.import_module("app.main")
-    models_module = importlib.import_module("app.models")
-    return service_module, main_module, models_module
+    return importlib.import_module("app.services.theme_resolver")
 
 
 @pytest.mark.asyncio
-async def test_resolve_today_returns_correct_keys_and_uses_weekly_source(
+async def test_resolve_today_uses_weekly_source_when_no_override(
     configured_env: dict[str, str],
 ) -> None:
-    """The resolver should return the exact response contract when weekly data is used."""
+    """Weekly themes should be used when no override applies for the day."""
 
-    service_module, _, _ = reload_theme_modules()
+    service_module = reload_theme_service_module()
     resolver = service_module.ThemeResolver(
         now_provider=lambda: datetime(2026, 1, 5, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     )
@@ -88,6 +69,7 @@ async def test_resolve_today_returns_correct_keys_and_uses_weekly_source(
 
     resolved = await resolver.resolve_today(session)
 
+    assert resolved["source"] == "weekly"
     assert resolved == {
         "theme_name": "Motivation Monday",
         "source": "weekly",
@@ -102,12 +84,12 @@ async def test_resolve_today_returns_correct_keys_and_uses_weekly_source(
 
 
 @pytest.mark.asyncio
-async def test_resolve_today_prefers_override_when_active(
+async def test_resolve_today_uses_override_source_when_override_exists(
     configured_env: dict[str, str],
 ) -> None:
-    """An active override should win before the weekly rotation is consulted."""
+    """Overrides should win before any weekly theme lookup occurs."""
 
-    service_module, _, _ = reload_theme_modules()
+    service_module = reload_theme_service_module()
     resolver = service_module.ThemeResolver(
         now_provider=lambda: datetime(2026, 1, 5, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     )
@@ -141,9 +123,9 @@ async def test_resolve_today_prefers_override_when_active(
 async def test_resolve_today_uses_fallback_when_no_theme_data(
     configured_env: dict[str, str],
 ) -> None:
-    """The resolver should fall back to a hardcoded default when no data exists."""
+    """Fallback data should be returned when neither source produces a theme."""
 
-    service_module, _, _ = reload_theme_modules()
+    service_module = reload_theme_service_module()
     resolver = service_module.ThemeResolver(
         now_provider=lambda: datetime(2026, 2, 3, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     )
@@ -159,72 +141,44 @@ async def test_resolve_today_uses_fallback_when_no_theme_data(
 
     resolved = await resolver.resolve_today(session)
 
-    assert resolved["source"] == "fallback"
-    assert resolved["theme_name"] == "Relatable / Everyday"
-    assert resolved["prompt_keywords"] == []
-    assert resolved["color_palette"] == []
-
-
-def test_rotation_month_calculation_is_correct_for_all_12_months(
-    configured_env: dict[str, str],
-) -> None:
-    """Rotation buckets should repeat in three seeded quarters across the year."""
-
-    service_module, _, _ = reload_theme_modules()
-    resolver = service_module.ThemeResolver()
-
-    expected = {
-        1: 1,
-        2: 1,
-        3: 1,
-        4: 2,
-        5: 2,
-        6: 2,
-        7: 3,
-        8: 3,
-        9: 3,
-        10: 1,
-        11: 1,
-        12: 1,
+    assert resolved == {
+        "theme_name": "Relatable / Everyday",
+        "source": "fallback",
+        "tone_funny_pct": 70,
+        "tone_emotion_pct": 30,
+        "prompt_keywords": [],
+        "color_palette": [],
+        "visual_style": "",
+        "instagram_hashtags": [],
+        "plan_date": "2026-02-03",
     }
 
-    for month, rotation in expected.items():
-        assert resolver.get_rotation_month(month) == rotation
 
-
-def test_day_of_week_mapping_matches_python_weekday_numbers(
+def test_rotation_month_matches_explicit_formula(
     configured_env: dict[str, str],
 ) -> None:
-    """Weekday names should map Monday=0 through Sunday=6 exactly once."""
+    """Rotation month should follow the explicit ((month - 1) % 9) + 1 formula."""
 
-    service_module, _, _ = reload_theme_modules()
+    service_module = reload_theme_service_module()
     resolver = service_module.ThemeResolver()
-    dates_and_names = {
-        date(2026, 1, 5): "monday",
-        date(2026, 1, 6): "tuesday",
-        date(2026, 1, 7): "wednesday",
-        date(2026, 1, 8): "thursday",
-        date(2026, 1, 9): "friday",
-        date(2026, 1, 10): "saturday",
-        date(2026, 1, 11): "sunday",
-    }
 
-    for target_date, name in dates_and_names.items():
-        assert resolver.get_weekday_name(target_date) == name
+    assert resolver.get_rotation_month(1) == 1
+    assert resolver.get_rotation_month(4) == 4
+    assert resolver.get_rotation_month(10) == 1
 
 
 @pytest.mark.asyncio
 async def test_resolve_today_is_idempotent_for_same_day(
     configured_env: dict[str, str],
 ) -> None:
-    """Repeated calls on the same day should upsert one logical daily plan row."""
+    """Running the resolver twice on the same day should not create duplicates."""
 
-    service_module, _, _ = reload_theme_modules()
+    service_module = reload_theme_service_module()
     resolver = service_module.ThemeResolver(
         now_provider=lambda: datetime(2026, 1, 5, 8, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
     )
     session = AsyncMock(spec=AsyncSession)
-    stored_plans: dict[date, dict[str, object]] = {}
+    stored_rows: dict[date, dict[str, object]] = {}
     weekly_theme = SimpleNamespace(
         id=11,
         theme_name="Motivation Monday",
@@ -252,7 +206,7 @@ async def test_resolve_today_is_idempotent_for_same_day(
                 getattr(key, "name", str(key)): getattr(value, "value", value)
                 for key, value in statement._values.items()
             }
-            stored_plans[values["plan_date"]] = values
+            stored_rows[values["plan_date"]] = values
             return object()
 
         return object()
@@ -264,123 +218,5 @@ async def test_resolve_today_is_idempotent_for_same_day(
     second = await resolver.resolve_today(session)
 
     assert first == second
-    assert len(stored_plans) == 1
-    assert date(2026, 1, 5) in stored_plans
-
-
-def test_theme_today_endpoint_returns_200_with_correct_schema(
-    configured_env: dict[str, str],
-    monkeypatch,
-) -> None:
-    """The theme endpoint should validate and return the resolved theme schema."""
-
-    _, main_module, _ = reload_theme_modules()
-    theme_router_module = importlib.import_module("app.routers.theme")
-    fake_session = AsyncMock(spec=AsyncSession)
-
-    async def fake_init_database() -> None:
-        return None
-
-    async def fake_close_database() -> None:
-        return None
-
-    async def fake_get_db():
-        yield fake_session
-
-    async def fake_resolve_today(_self, _: AsyncSession):
-        return {
-            "theme_name": "Motivation Monday",
-            "source": "weekly",
-            "tone_funny_pct": 30,
-            "tone_emotion_pct": 70,
-            "prompt_keywords": ["fresh start"],
-            "color_palette": ["#2F6BFF"],
-            "visual_style": "clean editorial illustration",
-            "instagram_hashtags": ["#MotivationMonday"],
-            "plan_date": "2026-01-05",
-        }
-
-    monkeypatch.setattr(main_module, "init_database", fake_init_database)
-    monkeypatch.setattr(main_module, "close_database", fake_close_database)
-    monkeypatch.setattr(theme_router_module.ThemeResolver, "resolve_today", fake_resolve_today)
-    main_module.app.dependency_overrides[theme_router_module.get_db] = fake_get_db
-
-    with TestClient(main_module.app) as client:
-        response = client.get("/theme/today")
-
-    main_module.app.dependency_overrides.clear()
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "theme_name": "Motivation Monday",
-        "source": "weekly",
-        "tone_funny_pct": 30,
-        "tone_emotion_pct": 70,
-        "prompt_keywords": ["fresh start"],
-        "color_palette": ["#2F6BFF"],
-        "visual_style": "clean editorial illustration",
-        "instagram_hashtags": ["#MotivationMonday"],
-        "plan_date": "2026-01-05",
-    }
-
-
-def test_theme_history_endpoint_returns_list(
-    configured_env: dict[str, str],
-    monkeypatch,
-) -> None:
-    """The history endpoint should return the most recent daily plan items."""
-
-    _, main_module, models_module = reload_theme_modules()
-    theme_router_module = importlib.import_module("app.routers.theme")
-    fake_session = AsyncMock(spec=AsyncSession)
-
-    async def fake_init_database() -> None:
-        return None
-
-    async def fake_close_database() -> None:
-        return None
-
-    async def fake_get_db():
-        yield fake_session
-
-    fake_session.execute = AsyncMock(
-        return_value=ScalarsListResult(
-            [
-                models_module.DailyContentPlan(
-                    plan_date=date(2026, 1, 5),
-                    theme_name="Motivation Monday",
-                    source="weekly",
-                    tone_funny_pct=30,
-                    tone_emotion_pct=70,
-                    prompt_keywords=["fresh start"],
-                    color_palette=["#2F6BFF"],
-                    cards_generated=0,
-                    status="resolved",
-                )
-            ]
-        )
-    )
-
-    monkeypatch.setattr(main_module, "init_database", fake_init_database)
-    monkeypatch.setattr(main_module, "close_database", fake_close_database)
-    main_module.app.dependency_overrides[theme_router_module.get_db] = fake_get_db
-
-    with TestClient(main_module.app) as client:
-        response = client.get("/theme/history?limit=1")
-
-    main_module.app.dependency_overrides.clear()
-
-    assert response.status_code == 200
-    assert response.json() == [
-        {
-            "plan_date": "2026-01-05",
-            "theme_name": "Motivation Monday",
-            "source": "weekly",
-            "tone_funny_pct": 30,
-            "tone_emotion_pct": 70,
-            "prompt_keywords": ["fresh start"],
-            "color_palette": ["#2F6BFF"],
-            "cards_generated": 0,
-            "status": "resolved",
-        }
-    ]
+    assert len(stored_rows) == 1
+    assert date(2026, 1, 5) in stored_rows

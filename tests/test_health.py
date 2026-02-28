@@ -25,16 +25,12 @@ def test_health_endpoint_returns_200(configured_env: dict[str, str], monkeypatch
 
     main_module = reload_main_module()
 
-    async def fake_init_database() -> None:
-        return None
-
     async def fake_close_database() -> None:
         return None
 
     async def fake_get_database_version() -> str:
         return "16.9"
 
-    monkeypatch.setattr(main_module, "init_database", fake_init_database)
     monkeypatch.setattr(main_module, "close_database", fake_close_database)
     monkeypatch.setattr(main_module, "get_database_version", fake_get_database_version)
 
