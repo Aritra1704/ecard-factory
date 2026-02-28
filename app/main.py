@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.config import settings
-from app.database import close_database, engine, init_database
+from app.database import close_database, engine
 from app.routers import api_router
 
 logger = logging.getLogger(__name__)
@@ -29,11 +29,12 @@ async def get_database_version() -> str:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Run startup and shutdown hooks for the FastAPI application."""
 
-    await init_database()
+    logger.info("Application is starting")
 
     try:
         yield
     finally:
+        logger.info("Application is shutting down")
         await close_database()
 
 
