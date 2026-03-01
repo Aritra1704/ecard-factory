@@ -45,6 +45,13 @@ class CardUrlUpdate(BaseModel):
     dalle_prompt: str | None = None
 
 
+class CardContentUpdate(BaseModel):
+    """Request body for updating phrase-generation content on a card."""
+
+    phrase: str | None = None
+    dalle_prompt: str | None = None
+
+
 class CardResponse(BaseModel):
     """Full serialized card payload returned by the cards API."""
 

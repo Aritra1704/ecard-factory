@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.card import Card
-from app.schemas.cards import CardCreate, CardResponse, CardStatusUpdate, CardUrlUpdate
+from app.schemas.cards import (
+    CardContentUpdate,
+    CardCreate,
+    CardResponse,
+    CardStatusUpdate,
+    CardUrlUpdate,
+)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -76,6 +82,30 @@ async def update_card_urls(
     await db.commit()
 
     return {"card_id": card.id, "updated_fields": updated_fields}
+
+
+@router.patch("/{card_id}/content")
+async def update_card_content(
+    card_id: int,
+    payload: CardContentUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int | list[str]]:
+    """Persist generated phrase or prompt content for a card record."""
+
+    card = await db.get(Card, card_id)
+    if card is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No content fields provided.")
+
+    for field_name, value in updates.items():
+        setattr(card, field_name, value)
+
+    await db.commit()
+
+    return {"card_id": card.id, "updated_fields": list(updates.keys())}
 
 
 @router.get("/pending", response_model=list[CardResponse])
