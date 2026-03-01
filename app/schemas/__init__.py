@@ -24,6 +24,8 @@ from app.schemas.telegram import (
     PhraseApprovalRequest,
     TelegramNotificationRequest,
     TelegramSendResponse,
+    TelegramSetupWebhookRequest,
+    TelegramSetupWebhookResponse,
     TelegramWebhookRequest,
     TelegramWebhookResponse,
 )
@@ -49,6 +51,8 @@ __all__ = [
     "PhraseApprovalRequest",
     "TelegramNotificationRequest",
     "TelegramSendResponse",
+    "TelegramSetupWebhookRequest",
+    "TelegramSetupWebhookResponse",
     "TelegramWebhookRequest",
     "TelegramWebhookResponse",
     "ThemeHistoryItem",

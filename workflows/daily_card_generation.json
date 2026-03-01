@@ -1,0 +1,1220 @@
+{
+  "name": "Daily Card Generation Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2080,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://ecard-factory:8000/theme/today",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Resolve Today's Theme",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1840,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/cards/create",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"phrase\":\"\",\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"],\"theme_source\":$node[\"Resolve Today's Theme\"].json[\"source\"]}",
+        "options": {}
+      },
+      "id": "3",
+      "name": "Create Card Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1600,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/phrases",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"],\"tone_funny_pct\":$node[\"Resolve Today's Theme\"].json[\"tone_funny_pct\"],\"tone_emotion_pct\":$node[\"Resolve Today's Theme\"].json[\"tone_emotion_pct\"],\"prompt_keywords\":$node[\"Resolve Today's Theme\"].json[\"prompt_keywords\"],\"visual_style\":$node[\"Resolve Today's Theme\"].json[\"visual_style\"],\"count\":5,\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"]}",
+        "options": {}
+      },
+      "id": "4",
+      "name": "Generate Phrases",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1360,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/phrase-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"],\"phrases\":$node[\"Generate Phrases\"].json[\"phrases\"],\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"],\"plan_date\":$node[\"Resolve Today's Theme\"].json[\"plan_date\"]}",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Send Phrase Approval to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1120,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => ({ json: { ...item.json, phrase_deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } }));"
+      },
+      "id": "6",
+      "name": "Set Phrase Gate Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "7",
+      "name": "Wait for Phrase Approval Gate",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://ecard-factory:8000/cards/{{ $node[\"Create Card Record\"].json[\"card_id\"] }}",
+        "options": {}
+      },
+      "id": "8",
+      "name": "Fetch Card After Phrase Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "9a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "phrase_approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Phrase Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -160,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "10a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "rejected",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "10",
+      "name": "Phrase Rejected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deadline = $node[\"Set Phrase Gate Context\"].json[\"phrase_deadline\"]; return items.map((item) => ({ json: { ...item.json, timed_out: new Date().toISOString() >= deadline ? \"true\" : \"false\" } }));"
+      },
+      "id": "11",
+      "name": "Check Phrase Timeout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "12a",
+              "leftValue": "={{ $json.timed_out }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "12",
+      "name": "Phrase Approval Timed Out?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"message\":\"No approval received for Card #\" + $node[\"Create Card Record\"].json[\"card_id\"] + \" within 24 hours. Skipping today's card.\"}",
+        "options": {}
+      },
+      "id": "13",
+      "name": "Send Phrase Timeout Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/dalle-prompt",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"phrase\":$node[\"Fetch Card After Phrase Approval\"].json[\"phrase\"],\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"],\"color_palette\":$node[\"Resolve Today's Theme\"].json[\"color_palette\"],\"visual_style\":$node[\"Resolve Today's Theme\"].json[\"visual_style\"],\"prompt_keywords\":$node[\"Resolve Today's Theme\"].json[\"prompt_keywords\"],\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"]}",
+        "options": {}
+      },
+      "id": "14",
+      "name": "Generate DALL-E Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/image",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"dalle_prompt\":$node[\"Generate DALL-E Prompt\"].json[\"dalle_prompt\"],\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"],\"quality\":\"standard\"}",
+        "options": {}
+      },
+      "id": "15",
+      "name": "Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/image-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"],\"image_url\":$node[\"Generate Image\"].json[\"image_url\"],\"phrase\":$node[\"Fetch Card After Phrase Approval\"].json[\"phrase\"],\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"]}",
+        "options": {}
+      },
+      "id": "16",
+      "name": "Send Image Approval to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => ({ json: { ...item.json, image_deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } }));"
+      },
+      "id": "17",
+      "name": "Set Image Gate Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "18",
+      "name": "Wait for Image Approval Gate",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://ecard-factory:8000/cards/{{ $node[\"Create Card Record\"].json[\"card_id\"] }}",
+        "options": {}
+      },
+      "id": "19",
+      "name": "Fetch Card After Image Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "20a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "image_approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "20",
+      "name": "Image Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "21a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "rejected",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "21",
+      "name": "Image Rejected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deadline = $node[\"Set Image Gate Context\"].json[\"image_deadline\"]; return items.map((item) => ({ json: { ...item.json, timed_out: new Date().toISOString() >= deadline ? \"true\" : \"false\" } }));"
+      },
+      "id": "22",
+      "name": "Check Image Timeout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "23a",
+              "leftValue": "={{ $json.timed_out }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "23",
+      "name": "Image Approval Timed Out?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"message\":\"No image approval received for Card #\" + $node[\"Create Card Record\"].json[\"card_id\"] + \" within 24 hours. Skipping today's card.\"}",
+        "options": {}
+      },
+      "id": "24",
+      "name": "Send Image Timeout Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2480,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/assembly/preview",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"image_url\":$node[\"Fetch Card After Image Approval\"].json[\"image_url\"],\"phrase\":$node[\"Fetch Card After Image Approval\"].json[\"phrase\"],\"color_palette\":$node[\"Resolve Today's Theme\"].json[\"color_palette\"],\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"]}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "25",
+      "name": "Assemble Preview Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first(); const previewBase64 = item.binary?.data?.data || \"\"; return [{ json: { card_id: $node[\"Create Card Record\"].json[\"card_id\"], preview_base64: previewBase64, phrase: $node[\"Fetch Card After Image Approval\"].json[\"phrase\"], theme_name: $node[\"Resolve Today's Theme\"].json[\"theme_name\"], estimated_cost: $node[\"Generate Image\"].json[\"cost_estimate\"] } }];"
+      },
+      "id": "26",
+      "name": "Prepare Final Approval Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/final-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"card_id\":$json[\"card_id\"],\"preview_base64\":$json[\"preview_base64\"],\"phrase\":$json[\"phrase\"],\"theme_name\":$json[\"theme_name\"],\"estimated_cost\":$json[\"estimated_cost\"]}",
+        "options": {}
+      },
+      "id": "27",
+      "name": "Send Final Card for Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => ({ json: { ...item.json, final_deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() } }));"
+      },
+      "id": "28",
+      "name": "Set Final Gate Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "29",
+      "name": "Wait for Final Approval Gate",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2720,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://ecard-factory:8000/cards/{{ $node[\"Create Card Record\"].json[\"card_id\"] }}",
+        "options": {}
+      },
+      "id": "30",
+      "name": "Fetch Card After Final Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2960,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "31a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "published",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "31",
+      "name": "Final Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3200,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "32a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "rejected",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "32",
+      "name": "Final Rejected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3440,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const deadline = $node[\"Set Final Gate Context\"].json[\"final_deadline\"]; return items.map((item) => ({ json: { ...item.json, timed_out: new Date().toISOString() >= deadline ? \"true\" : \"false\" } }));"
+      },
+      "id": "33",
+      "name": "Check Final Timeout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3680,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "34a",
+              "leftValue": "={{ $json.timed_out }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "34",
+      "name": "Final Approval Timed Out?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3920,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"message\":\"No final approval received for Card #\" + $node[\"Create Card Record\"].json[\"card_id\"] + \" within 24 hours. Skipping today's card.\"}",
+        "options": {}
+      },
+      "id": "35",
+      "name": "Send Final Timeout Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/assembly/card",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"image_url\":$node[\"Fetch Card After Final Approval\"].json[\"image_url\"],\"phrase\":$node[\"Fetch Card After Final Approval\"].json[\"phrase\"],\"theme_name\":$node[\"Resolve Today's Theme\"].json[\"theme_name\"],\"color_palette\":$node[\"Resolve Today's Theme\"].json[\"color_palette\"],\"visual_style\":$node[\"Resolve Today's Theme\"].json[\"visual_style\"],\"card_id\":$node[\"Create Card Record\"].json[\"card_id\"]}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "36",
+      "name": "Assemble Full Quality Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://ecard-factory:8000/cards/{{ $node[\"Create Card Record\"].json[\"card_id\"] }}/status",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"status\":\"published\"}",
+        "options": {}
+      },
+      "id": "37",
+      "name": "Update Card Status Published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3680,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"message\":\"Card #\" + $node[\"Create Card Record\"].json[\"card_id\"] + \" ready for publishing!\\nTheme: \" + $node[\"Resolve Today's Theme\"].json[\"theme_name\"] + \"\\nPhrase: \" + $node[\"Fetch Card After Final Approval\"].json[\"phrase\"] + \"\\nCost: $\" + $node[\"Generate Image\"].json[\"cost_estimate\"]}",
+        "options": {}
+      },
+      "id": "38",
+      "name": "Send Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3920,
+        -64
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Resolve Today's Theme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Today's Theme": {
+      "main": [
+        [
+          {
+            "node": "Create Card Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Card Record": {
+      "main": [
+        [
+          {
+            "node": "Generate Phrases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Phrases": {
+      "main": [
+        [
+          {
+            "node": "Send Phrase Approval to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Phrase Approval to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Set Phrase Gate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Phrase Gate Context": {
+      "main": [
+        [
+          {
+            "node": "Wait for Phrase Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Phrase Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Fetch Card After Phrase Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Card After Phrase Approval": {
+      "main": [
+        [
+          {
+            "node": "Phrase Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phrase Approved?": {
+      "main": [
+        [
+          {
+            "node": "Generate DALL-E Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phrase Rejected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phrase Rejected?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check Phrase Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Phrase Timeout": {
+      "main": [
+        [
+          {
+            "node": "Phrase Approval Timed Out?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phrase Approval Timed Out?": {
+      "main": [
+        [
+          {
+            "node": "Send Phrase Timeout Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for Phrase Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate DALL-E Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Send Image Approval to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Image Approval to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Set Image Gate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Image Gate Context": {
+      "main": [
+        [
+          {
+            "node": "Wait for Image Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Image Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Fetch Card After Image Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Card After Image Approval": {
+      "main": [
+        [
+          {
+            "node": "Image Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Approved?": {
+      "main": [
+        [
+          {
+            "node": "Assemble Preview Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Image Rejected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Rejected?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check Image Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Image Timeout": {
+      "main": [
+        [
+          {
+            "node": "Image Approval Timed Out?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Approval Timed Out?": {
+      "main": [
+        [
+          {
+            "node": "Send Image Timeout Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for Image Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Preview Card": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Approval Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Approval Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Final Card for Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Final Card for Approval": {
+      "main": [
+        [
+          {
+            "node": "Set Final Gate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Final Gate Context": {
+      "main": [
+        [
+          {
+            "node": "Wait for Final Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Final Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Fetch Card After Final Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Card After Final Approval": {
+      "main": [
+        [
+          {
+            "node": "Final Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Approved?": {
+      "main": [
+        [
+          {
+            "node": "Assemble Full Quality Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Rejected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Rejected?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check Final Timeout",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Final Timeout": {
+      "main": [
+        [
+          {
+            "node": "Final Approval Timed Out?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Approval Timed Out?": {
+      "main": [
+        [
+          {
+            "node": "Send Final Timeout Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait for Final Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Full Quality Card": {
+      "main": [
+        [
+          {
+            "node": "Update Card Status Published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Card Status Published": {
+      "main": [
+        [
+          {
+            "node": "Send Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "executionOrder": "v1"
+  },
+  "versionId": "daily-card-generation-v1",
+  "meta": {
+    "instanceId": "ecard-factory"
+  },
+  "id": "daily-card-generation",
+  "pinData": {},
+  "tags": []
+}
