@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8">
+  <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+    <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+      <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">Total Spend</p>
+      <p class="mt-3 text-3xl font-semibold text-emerald-300">${{ '%.4f'|format(total_spend_month) }}</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+      <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">Avg Cost / Card</p>
+      <p class="mt-3 text-3xl font-semibold text-white">${{ '%.4f'|format(average_cost_per_card) }}</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+      <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">LLM Spend</p>
+      <p class="mt-3 text-3xl font-semibold text-sky-300">${{ '%.4f'|format(llm_cost_month) }}</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+      <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">Image Spend</p>
+      <p class="mt-3 text-3xl font-semibold text-fuchsia-300">${{ '%.4f'|format(image_cost_month) }}</p>
+    </div>
+    <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+      <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">Projected Month</p>
+      <p class="mt-3 text-3xl font-semibold text-amber-300">${{ '%.4f'|format(projected_monthly_cost) }}</p>
+    </div>
+  </section>
+
+  <section class="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/80">
+    <div class="border-b border-white/10 px-5 py-4">
+      <h2 class="text-lg font-semibold text-white">Daily Cost Table</h2>
+      <p class="text-sm text-zinc-400">{{ card_count_month }} cards included this month.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-zinc-950/70 text-left text-zinc-500">
+          <tr>
+            <th class="px-4 py-3">Date</th>
+            <th class="px-4 py-3">LLM</th>
+            <th class="px-4 py-3">Image</th>
+            <th class="px-4 py-3">Total</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/5">
+          {% for row in daily_costs %}
+            <tr>
+              <td class="px-4 py-3 text-white">{{ row.date }}</td>
+              <td class="px-4 py-3 text-zinc-300">${{ '%.4f'|format(row.llm) }}</td>
+              <td class="px-4 py-3 text-zinc-300">${{ '%.4f'|format(row.image) }}</td>
+              <td class="px-4 py-3 text-emerald-300">${{ '%.4f'|format(row.total) }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="px-4 py-10 text-center text-zinc-500">No cost data yet this month.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

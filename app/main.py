@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import settings
 from app.database import close_database, engine
+from app.routers.admin import router as admin_router
 from app.routers.assembly import router as assembly_router
 from app.routers.cards import router as cards_router
 from app.routers.events import router as events_router
@@ -21,6 +24,7 @@ from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
 
 logger = logging.getLogger(__name__)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 async def get_database_version() -> str:
@@ -60,6 +64,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+app.include_router(admin_router)
 app.include_router(assembly_router)
 app.include_router(cards_router)
 app.include_router(events_router)

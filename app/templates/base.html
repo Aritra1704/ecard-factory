@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-zinc-950">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page_title or "eCard Factory Admin" }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-full bg-zinc-950 text-zinc-100">
+  <div class="min-h-screen">
+    <header class="border-b border-white/10 bg-zinc-950/90 backdrop-blur">
+      <div class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+        <div>
+          <p class="text-xs uppercase tracking-[0.3em] text-zinc-500">eCard Factory</p>
+          <h1 class="text-xl font-semibold text-white">Internal Admin</h1>
+        </div>
+        <nav class="flex flex-wrap gap-2 text-sm">
+          {% for item in nav_items %}
+            <a
+              href="{{ item.url }}"
+              class="rounded-full px-4 py-2 transition {% if request.url.path == item.url or (item.url != '/admin/' and request.url.path.startswith(item.url)) %}bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30{% else %}bg-white/5 text-zinc-300 hover:bg-white/10{% endif %}"
+            >
+              {{ item.label }}
+            </a>
+          {% endfor %}
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
