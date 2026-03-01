@@ -1,0 +1,457 @@
+{
+  "name": "Daily Card Generation",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "timezone": "Asia/Kolkata",
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Resolve Today's Theme",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        420,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/theme/today",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Create Card Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        640,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/cards/create",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"phrase\": \"\",\n  \"theme_name\": \"={{ $json.theme_name }}\",\n  \"theme_source\": \"={{ $json.source }}\"\n}"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Generate Phrases",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/phrases",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"theme_name\": \"={{ $('Resolve Today\\'s Theme').item.json.theme_name }}\",\n  \"tone_funny_pct\": ={{ $('Resolve Today\\'s Theme').item.json.tone_funny_pct }},\n  \"tone_emotion_pct\": ={{ $('Resolve Today\\'s Theme').item.json.tone_emotion_pct }},\n  \"prompt_keywords\": ={{ $('Resolve Today\\'s Theme').item.json.prompt_keywords }},\n  \"visual_style\": \"={{ $('Resolve Today\\'s Theme').item.json.visual_style }}\",\n  \"count\": 5,\n  \"card_id\": ={{ $('Create Card Record').item.json.card_id }}\n}"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Notify Phrase Options",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1080,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"=Daily Card Generation\\nTheme: {{$('Resolve Today\\'s Theme').item.json.theme_name}}\\n\\nPhrases:\\n{{$json.phrases.map((phrase, index) => (index + 1) + '. ' + phrase.text + ' [' + phrase.tone + ']').join('\\\\n')}}\\n\\nApprove via Telegram webhook commands for card {{$('Create Card Record').item.json.card_id}}.\"\n}"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Phrase Approved Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ],
+      "parameters": {
+        "path": "phrase-approved",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "7",
+      "name": "Generate DALL-E Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1520,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/dalle-prompt",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"phrase\": \"={{ $json.approved_phrase }}\",\n  \"theme_name\": \"={{ $('Resolve Today\\'s Theme').item.json.theme_name }}\",\n  \"color_palette\": ={{ $('Resolve Today\\'s Theme').item.json.color_palette }},\n  \"visual_style\": \"={{ $('Resolve Today\\'s Theme').item.json.visual_style }}\",\n  \"prompt_keywords\": ={{ $('Resolve Today\\'s Theme').item.json.prompt_keywords }},\n  \"card_id\": ={{ $('Create Card Record').item.json.card_id }}\n}"
+      }
+    },
+    {
+      "id": "8",
+      "name": "Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1740,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/generation/image",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"dalle_prompt\": \"={{ $json.dalle_prompt }}\",\n  \"card_id\": ={{ $('Create Card Record').item.json.card_id }},\n  \"quality\": \"standard\"\n}"
+      }
+    },
+    {
+      "id": "9",
+      "name": "Notify Image Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1960,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"=Image ready for approval for card {{$('Create Card Record').item.json.card_id}}. Approve with /approve_image_{{$('Create Card Record').item.json.card_id}}\\n{{$json.image_url}}\"\n}"
+      }
+    },
+    {
+      "id": "10",
+      "name": "Image Approved Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        300
+      ],
+      "parameters": {
+        "path": "image-approved",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "11",
+      "name": "Assemble Preview Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2400,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/assembly/preview",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"image_url\": \"={{ $('Generate Image').item.json.image_url }}\",\n  \"phrase\": \"={{ $('Phrase Approved Webhook').item.json.approved_phrase }}\",\n  \"color_palette\": ={{ $('Resolve Today\\'s Theme').item.json.color_palette }},\n  \"card_id\": ={{ $('Create Card Record').item.json.card_id }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "12",
+      "name": "Notify Final Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2620,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"=Final preview ready for card {{$('Create Card Record').item.json.card_id}}. Approve with /approve_final_{{$('Create Card Record').item.json.card_id}}\"\n}"
+      }
+    },
+    {
+      "id": "13",
+      "name": "Final Approved Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        300
+      ],
+      "parameters": {
+        "path": "final-approved",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "14",
+      "name": "Assemble Full Quality Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3060,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/assembly/card",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"image_url\": \"={{ $('Generate Image').item.json.image_url }}\",\n  \"phrase\": \"={{ $('Final Approved Webhook').item.json.approved_phrase || $('Phrase Approved Webhook').item.json.approved_phrase }}\",\n  \"theme_name\": \"={{ $('Resolve Today\\'s Theme').item.json.theme_name }}\",\n  \"color_palette\": ={{ $('Resolve Today\\'s Theme').item.json.color_palette }},\n  \"visual_style\": \"={{ $('Resolve Today\\'s Theme').item.json.visual_style }}\",\n  \"card_id\": ={{ $('Create Card Record').item.json.card_id }}\n}"
+      }
+    },
+    {
+      "id": "15",
+      "name": "Update Card Status Published",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3280,
+        300
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://ecard-factory:8000/cards/{{$('Create Card Record').item.json.card_id}}/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"assembly_approved\"\n}"
+      }
+    },
+    {
+      "id": "16",
+      "name": "Notify Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3500,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://ecard-factory:8000/telegram/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"=Card #{{$('Create Card Record').item.json.card_id}} ready for publishing!\\nTheme: {{$('Resolve Today\\'s Theme').item.json.theme_name}}\\nPhrase: {{$('Phrase Approved Webhook').item.json.approved_phrase}}\\nCost: ${{$('Generate Image').item.json.cost_estimate}}\"\n}"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Resolve Today's Theme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Today's Theme": {
+      "main": [
+        [
+          {
+            "node": "Create Card Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Card Record": {
+      "main": [
+        [
+          {
+            "node": "Generate Phrases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Phrases": {
+      "main": [
+        [
+          {
+            "node": "Notify Phrase Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Phrase Options": {
+      "main": [
+        [
+          {
+            "node": "Phrase Approved Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phrase Approved Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate DALL-E Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate DALL-E Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Notify Image Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Image Approval": {
+      "main": [
+        [
+          {
+            "node": "Image Approved Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Approved Webhook": {
+      "main": [
+        [
+          {
+            "node": "Assemble Preview Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Preview Card": {
+      "main": [
+        [
+          {
+            "node": "Notify Final Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Final Approval": {
+      "main": [
+        [
+          {
+            "node": "Final Approved Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Approved Webhook": {
+      "main": [
+        [
+          {
+            "node": "Assemble Full Quality Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Full Quality Card": {
+      "main": [
+        [
+          {
+            "node": "Update Card Status Published",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Card Status Published": {
+      "main": [
+        [
+          {
+            "node": "Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinData": {},
+  "version": "1.0"
+}
