@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
 
-from app.config import settings
-from app.database import close_database, engine
 from app.routers.admin import router as admin_router
 from app.routers.assembly import router as assembly_router
 from app.routers.cards import router as cards_router
 from app.routers.events import router as events_router
 from app.routers.generation import router as generation_router
+from app.routers.health import router as health_router
 from app.routers.planning import router as planning_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
@@ -52,19 +51,12 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+app.include_router(health_router)
+app.include_router(theme_router, prefix="/theme")
+app.include_router(assembly_router, prefix="/assembly")
+app.include_router(cards_router, prefix="/cards")
+app.include_router(generation_router, prefix="/generation")
+app.include_router(telegram_router, prefix="/telegram")
 app.include_router(admin_router)
-app.include_router(assembly_router)
-app.include_router(cards_router)
 app.include_router(events_router)
-app.include_router(generation_router)
 app.include_router(planning_router)
-app.include_router(telegram_router)
-app.include_router(theme_router)
-
-app.include_router(health.router)
-app.include_router(theme.router, prefix="/theme")
-app.include_router(assembly.router, prefix="/assembly")
-app.include_router(cards.router, prefix="/cards")
-app.include_router(generation.router, prefix="/generation")
-app.include_router(telegram.router, prefix="/telegram")
-app.include_router(admin.router, prefix="/admin")
