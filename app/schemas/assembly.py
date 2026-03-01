@@ -22,3 +22,4 @@ class PreviewRequest(BaseModel):
     image_url: str
     phrase: str
     color_palette: list[str] = Field(default_factory=list)
+    card_id: int

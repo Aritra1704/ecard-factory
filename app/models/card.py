@@ -27,9 +27,9 @@ class Card(Base):
     __table_args__ = {"schema": settings.db_schema}
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    event_id: Mapped[int] = mapped_column(
+    event_id: Mapped[int | None] = mapped_column(
         ForeignKey(f"{settings.db_schema}.events.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     theme_name: Mapped[str] = mapped_column(String(100), nullable=False)
