@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div>
+      <h2 class="text-2xl font-semibold text-white">Cards</h2>
+      <p class="text-sm text-zinc-400">Monitor the full card pipeline and drill into individual records.</p>
+    </div>
+    <form method="get" action="/admin/cards" class="flex flex-col gap-3 sm:flex-row">
+      <select name="status" class="rounded-xl border border-white/10 bg-zinc-900 px-4 py-3 text-sm text-white">
+        <option value="">All statuses</option>
+        {% for option in status_options %}
+          <option value="{{ option }}" {% if status_filter == option %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="rounded-xl bg-white/10 px-4 py-3 text-sm font-medium text-white hover:bg-white/15">Apply Filter</button>
+    </form>
+  </div>
+
+  <div class="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/80">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-zinc-950/70 text-left text-zinc-500">
+          <tr>
+            <th class="px-4 py-3">ID</th>
+            <th class="px-4 py-3">Date</th>
+            <th class="px-4 py-3">Theme</th>
+            <th class="px-4 py-3">Phrase</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Cost</th>
+            <th class="px-4 py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/5">
+          {% for card in cards %}
+            <tr class="cursor-pointer hover:bg-white/5" onclick="window.location='/admin/cards/{{ card.id }}'">
+              <td class="px-4 py-3 font-medium text-white">#{{ card.id }}</td>
+              <td class="px-4 py-3 text-zinc-400">{{ card.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+              <td class="px-4 py-3 text-zinc-300">{{ card.theme_name }}</td>
+              <td class="max-w-sm px-4 py-3 text-zinc-400">{{ card.phrase[:72] }}{% if card.phrase|length > 72 %}...{% endif %}</td>
+              <td class="px-4 py-3">
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-medium ring-1 {{ status_badge_class(card.status) }}">
+                  {{ card.status }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-zinc-300">${{ '%.4f'|format(card.cost_llm + card.cost_image) }}</td>
+              <td class="px-4 py-3">
+                <a href="/admin/cards/{{ card.id }}" class="text-emerald-300 hover:text-emerald-200">Open</a>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="7" class="px-4 py-10 text-center text-zinc-500">No cards matched this filter.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

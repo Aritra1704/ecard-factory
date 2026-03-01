@@ -210,6 +210,20 @@ class TelegramService:
 
         return {"action": "ignored", "reason": "unknown_command"}
 
+    async def setup_webhook(self, public_base_url: str) -> dict[str, Any]:
+        """Register the Telegram bot webhook against the deployed application URL."""
+
+        webhook_url = f"{public_base_url.rstrip('/')}/telegram/webhook"
+        result = await self._post_telegram(
+            "setWebhook",
+            data={
+                "url": webhook_url,
+                "allowed_updates": '["message","edited_message"]',
+            },
+        )
+        result["webhook_url"] = webhook_url
+        return result
+
     async def _send_message(self, text: str, parse_mode: str = "HTML") -> dict[str, int | bool]:
         """Send a plain Telegram text message and return the platform message id."""
 

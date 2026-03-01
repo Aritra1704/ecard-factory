@@ -49,7 +49,7 @@ class TelegramWebhookRequest(BaseModel):
 
 
 class TelegramSetupWebhookRequest(BaseModel):
-    """Request body for registering the public Telegram webhook URL."""
+    """Request body for registering the Telegram webhook against a public app URL."""
 
     public_base_url: str
 
@@ -62,7 +62,7 @@ class TelegramSendResponse(BaseModel):
 
 
 class TelegramSetupWebhookResponse(BaseModel):
-    """Response returned after a successful Telegram webhook registration."""
+    """Response returned after Telegram webhook registration."""
 
     message_id: int
     sent: bool

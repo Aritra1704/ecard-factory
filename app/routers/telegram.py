@@ -70,7 +70,9 @@ async def send_notification(payload: TelegramNotificationRequest) -> TelegramSen
 
 
 @router.post("/setup-webhook", response_model=TelegramSetupWebhookResponse)
-async def setup_telegram_webhook(payload: TelegramSetupWebhookRequest) -> TelegramSetupWebhookResponse:
+async def setup_telegram_webhook(
+    payload: TelegramSetupWebhookRequest,
+) -> TelegramSetupWebhookResponse:
     """Register the deployed app URL as the Telegram webhook target."""
 
     result = await service.setup_webhook(payload.public_base_url)

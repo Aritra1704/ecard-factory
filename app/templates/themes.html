@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-8">
+  <section class="rounded-2xl border border-emerald-500/20 bg-zinc-900/80 p-5">
+    <p class="text-xs uppercase tracking-[0.2em] text-emerald-300">Today's Active Theme</p>
+    <h2 class="mt-2 text-2xl font-semibold text-white">{{ today_theme.theme_name }}</h2>
+    <p class="mt-2 text-sm text-zinc-400">Source: {{ today_theme.source }} | Funny {{ today_theme.tone_funny_pct }}% | Emotional {{ today_theme.tone_emotion_pct }}%</p>
+  </section>
+
+  <section class="grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+    <div class="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/80">
+      <div class="border-b border-white/10 px-5 py-4">
+        <h3 class="text-lg font-semibold text-white">Weekly Rotation</h3>
+        <p class="text-sm text-zinc-400">All active rotation rows across the 9-month cycle.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-zinc-950/70 text-left text-zinc-500">
+            <tr>
+              <th class="px-4 py-3">Rotation</th>
+              <th class="px-4 py-3">Day</th>
+              <th class="px-4 py-3">Theme</th>
+              <th class="px-4 py-3">Funny</th>
+              <th class="px-4 py-3">Emotional</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            {% for theme in weekly_themes %}
+              <tr class="{% if theme.theme_name == today_theme.theme_name %}bg-emerald-500/5{% endif %}">
+                <td class="px-4 py-3 text-zinc-300">{{ theme.rotation_month }}</td>
+                <td class="px-4 py-3 capitalize text-zinc-300">{{ theme.day_of_week }}</td>
+                <td class="px-4 py-3 text-white">{{ theme.theme_name }}</td>
+                <td class="px-4 py-3 text-zinc-400">{{ theme.tone_funny_pct }}%</td>
+                <td class="px-4 py-3 text-zinc-400">{{ theme.tone_emotion_pct }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+        <h3 class="text-lg font-semibold text-white">Upcoming 7 Days</h3>
+        <div class="mt-4 space-y-3">
+          {% for item in upcoming_days %}
+            <div class="rounded-xl border border-white/10 bg-zinc-950/60 px-4 py-3">
+              <p class="text-xs uppercase tracking-[0.2em] text-zinc-500">{{ item.date.strftime('%a, %d %b') }}</p>
+              <p class="mt-1 font-medium text-white">{{ item.theme_name }}</p>
+              <p class="text-sm text-zinc-400">Source: {{ item.source }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-white/10 bg-zinc-900/80 p-5">
+        <h3 class="text-lg font-semibold text-white">Add Theme Override</h3>
+        <form method="post" action="/admin/theme/override" class="mt-4 grid gap-3">
+          <input name="override_type" placeholder="Override type" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+          <input name="event_id" placeholder="Event ID (optional)" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white">
+          <input name="theme_name" placeholder="Theme name" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <input type="number" name="tone_funny_pct" min="0" max="100" value="50" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+            <input type="number" name="tone_emotion_pct" min="0" max="100" value="50" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+          </div>
+          <input name="prompt_keywords" placeholder="Prompt keywords, comma separated" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white">
+          <input name="color_palette" placeholder="Color palette, comma separated" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white">
+          <input name="visual_style" placeholder="Visual style" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+          <input name="instagram_hashtags" placeholder="Instagram hashtags, comma separated" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <input type="date" name="start_date" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+            <input type="date" name="end_date" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white" required>
+          </div>
+          <input type="number" name="priority" value="10" class="rounded-xl border border-white/10 bg-zinc-950 px-4 py-3 text-sm text-white">
+          <button type="submit" class="rounded-xl bg-emerald-500 px-4 py-3 font-medium text-zinc-950 hover:bg-emerald-400">Create Override</button>
+        </form>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
