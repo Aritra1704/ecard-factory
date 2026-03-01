@@ -1,4 +1,4 @@
-"""HTTP tests for the FastAPI health endpoint."""
+"""HTTP tests for the standalone FastAPI health endpoint."""
 
 from __future__ import annotations
 
@@ -21,18 +21,9 @@ def reload_main_module():
 
 
 def test_health_endpoint_returns_200(configured_env: dict[str, str], monkeypatch) -> None:
-    """The health endpoint should return service metadata and a database version."""
+    """The health endpoint should return static service metadata without hitting the DB."""
 
     main_module = reload_main_module()
-
-    async def fake_close_database() -> None:
-        return None
-
-    async def fake_get_database_version() -> str:
-        return "16.9"
-
-    monkeypatch.setattr(main_module, "close_database", fake_close_database)
-    monkeypatch.setattr(main_module, "get_database_version", fake_get_database_version)
 
     with TestClient(main_module.app) as client:
         response = client.get("/health")
@@ -42,5 +33,5 @@ def test_health_endpoint_returns_200(configured_env: dict[str, str], monkeypatch
         "status": "ok",
         "env": configured_env["APP_ENV"],
         "schema": configured_env["DB_SCHEMA"],
-        "db_version": "16.9",
+        "version": "1.0.0",
     }

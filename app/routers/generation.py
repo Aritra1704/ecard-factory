@@ -19,7 +19,7 @@ from app.schemas.generation import (
 from app.services.dalle_service import DalleService
 from app.services.groq_service import GroqService
 
-router = APIRouter(prefix="/generation", tags=["generation"])
+router = APIRouter(tags=["generation"])
 groq_service = GroqService()
 dalle_service = DalleService()
 

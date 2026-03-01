@@ -2,88 +2,46 @@
 
 from __future__ import annotations
 
-import logging
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
-
-from app.config import settings
-from app.database import close_database, engine
-from app.routers.assembly import router as assembly_router
-from app.routers.cards import router as cards_router
-from app.routers.events import router as events_router
-from app.routers.generation import router as generation_router
-from app.routers.planning import router as planning_router
-from app.routers.telegram import router as telegram_router
-from app.routers.theme import router as theme_router
 
 logger = logging.getLogger(__name__)
 
 
-async def get_database_version() -> str:
-    """Fetch the PostgreSQL server version for health reporting."""
-
-    async with engine.connect() as connection:
-        result = await connection.execute(text("SELECT current_setting('server_version')"))
-        return str(result.scalar_one())
-
-
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Run startup and shutdown hooks for the FastAPI application."""
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown without touching the DB on boot."""
 
-    logger.info("Application is starting")
+    logger.info("eCard Factory starting up")
+    yield
+    from app.database import close_database
 
-    try:
-        yield
-    finally:
-        logger.info("Application is shutting down")
-        await close_database()
+    await close_database()
+    logger.info("eCard Factory shut down")
 
 
 app = FastAPI(
     title="eCard Factory API",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
-# The API is expected to power web clients and automation workflows, so broad
-# development-friendly CORS defaults keep local integration simple.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(assembly_router)
-app.include_router(cards_router)
-app.include_router(events_router)
-app.include_router(generation_router)
-app.include_router(planning_router)
-app.include_router(telegram_router)
-app.include_router(theme_router)
+from app.routers import admin, assembly, cards, generation, health, telegram, theme
 
-
-@app.get("/health", tags=["system"])
-async def healthcheck() -> dict[str, str]:
-    """Return a lightweight service health payload for operators and CI."""
-
-    try:
-        db_version = await get_database_version()
-        status = "ok"
-    except Exception as exc:  # pragma: no cover - exercised indirectly in tests.
-        logger.warning("Database version check failed: %s", exc)
-        db_version = "unavailable"
-        status = "degraded"
-
-    return {
-        "status": status,
-        "env": settings.app_env,
-        "schema": settings.db_schema,
-        "db_version": db_version,
-    }
+app.include_router(health.router)
+app.include_router(theme.router, prefix="/theme")
+app.include_router(assembly.router, prefix="/assembly")
+app.include_router(cards.router, prefix="/cards")
+app.include_router(generation.router, prefix="/generation")
+app.include_router(telegram.router, prefix="/telegram")
+app.include_router(admin.router, prefix="/admin")

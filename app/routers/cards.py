@@ -16,7 +16,7 @@ from app.schemas.cards import (
     CardUrlUpdate,
 )
 
-router = APIRouter(prefix="/cards", tags=["cards"])
+router = APIRouter(tags=["cards"])
 
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)

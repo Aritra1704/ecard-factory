@@ -10,7 +10,7 @@ from app.schemas.assembly import CardAssemblyRequest, PreviewRequest
 from app.schemas.cards import CardStatusUpdate
 from app.services.pillow_service import PillowService
 
-router = APIRouter(prefix="/assembly", tags=["assembly"])
+router = APIRouter(tags=["assembly"])
 service = PillowService()
 
 

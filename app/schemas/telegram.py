@@ -48,11 +48,25 @@ class TelegramWebhookRequest(BaseModel):
     update: dict[str, Any]
 
 
+class TelegramSetupWebhookRequest(BaseModel):
+    """Request body for registering the public Telegram webhook URL."""
+
+    public_base_url: str
+
+
 class TelegramSendResponse(BaseModel):
     """Response returned after sending a Telegram message or photo."""
 
     message_id: int
     sent: bool
+
+
+class TelegramSetupWebhookResponse(BaseModel):
+    """Response returned after a successful Telegram webhook registration."""
+
+    message_id: int
+    sent: bool
+    webhook_url: str
 
 
 class TelegramWebhookResponse(BaseModel):

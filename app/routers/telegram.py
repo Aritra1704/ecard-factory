@@ -10,12 +10,14 @@ from app.schemas.telegram import (
     PhraseApprovalRequest,
     TelegramNotificationRequest,
     TelegramSendResponse,
+    TelegramSetupWebhookRequest,
+    TelegramSetupWebhookResponse,
     TelegramWebhookRequest,
     TelegramWebhookResponse,
 )
 from app.services.telegram_service import TelegramService, decode_preview_base64
 
-router = APIRouter(prefix="/telegram", tags=["telegram"])
+router = APIRouter(tags=["telegram"])
 service = TelegramService()
 
 
@@ -65,6 +67,14 @@ async def send_notification(payload: TelegramNotificationRequest) -> TelegramSen
 
     result = await service.send_notification(message=payload.message, parse_mode=payload.parse_mode)
     return TelegramSendResponse(**result)
+
+
+@router.post("/setup-webhook", response_model=TelegramSetupWebhookResponse)
+async def setup_telegram_webhook(payload: TelegramSetupWebhookRequest) -> TelegramSetupWebhookResponse:
+    """Register the deployed app URL as the Telegram webhook target."""
+
+    result = await service.setup_webhook(payload.public_base_url)
+    return TelegramSetupWebhookResponse(**result)
 
 
 @router.post("/webhook", response_model=TelegramWebhookResponse)

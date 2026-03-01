@@ -17,7 +17,7 @@ from app.schemas.theme import (
 )
 from app.services.theme_resolver import ThemeResolver
 
-router = APIRouter(prefix="/theme", tags=["theme"])
+router = APIRouter(tags=["theme"])
 resolver = ThemeResolver()
 
 
