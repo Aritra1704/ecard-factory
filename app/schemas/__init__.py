@@ -5,6 +5,10 @@ from app.schemas.cards import CardContentUpdate, CardCreate, CardResponse, CardS
 from app.schemas.generation import (
     DallePromptRequest,
     DallePromptResponse,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ImageValidationRequest,
+    ImageValidationResponse,
     PhraseGenerationRequest,
     PhraseGenerationResponse,
 )
@@ -24,6 +28,10 @@ __all__ = [
     "CardUrlUpdate",
     "DallePromptRequest",
     "DallePromptResponse",
+    "ImageGenerationRequest",
+    "ImageGenerationResponse",
+    "ImageValidationRequest",
+    "ImageValidationResponse",
     "PhraseGenerationRequest",
     "PhraseGenerationResponse",
     "PreviewRequest",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -44,3 +45,38 @@ class DallePromptResponse(BaseModel):
 
     dalle_prompt: str
     card_id: int | None = None
+
+
+class ImageGenerationRequest(BaseModel):
+    """Request body for generating a DALL-E image from an approved prompt."""
+
+    dalle_prompt: str
+    card_id: int | None = None
+    quality: Literal["standard", "hd"] = "standard"
+    size: Literal["1024x1024", "1792x1024", "1024x1792"] = "1024x1024"
+
+
+class ImageGenerationResponse(BaseModel):
+    """Response payload for a generated DALL-E image."""
+
+    image_url: str
+    revised_prompt: str
+    cost_estimate: float
+    card_id: int | None = None
+
+
+class ImageValidationRequest(BaseModel):
+    """Request body for validating a generated image URL."""
+
+    image_url: str
+
+
+class ImageValidationResponse(BaseModel):
+    """Response payload describing the result of image validation."""
+
+    valid: bool
+    width: int
+    height: int
+    file_size_kb: float
+    content_type: str
+    error: str | None = None

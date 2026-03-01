@@ -12,6 +12,7 @@ CardStatus = Literal[
     "pending_phrase_approval",
     "phrase_approved",
     "pending_image",
+    "pending_image_approval",
     "image_approved",
     "pending_assembly",
     "assembly_approved",

@@ -9,13 +9,19 @@ from app.schemas.cards import CardContentUpdate, CardStatusUpdate
 from app.schemas.generation import (
     DallePromptRequest,
     DallePromptResponse,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ImageValidationRequest,
+    ImageValidationResponse,
     PhraseGenerationRequest,
     PhraseGenerationResponse,
 )
+from app.services.dalle_service import DalleService
 from app.services.groq_service import GroqService
 
 router = APIRouter(prefix="/generation", tags=["generation"])
-service = GroqService()
+groq_service = GroqService()
+dalle_service = DalleService()
 
 
 async def _patch_cards_api(
@@ -40,7 +46,7 @@ async def _patch_cards_api(
 async def generate_phrases(payload: PhraseGenerationRequest, request: Request) -> PhraseGenerationResponse:
     """Generate multiple phrase options and return the highest-scoring candidate."""
 
-    phrases = await service.generate_phrases(
+    phrases = await groq_service.generate_phrases(
         theme_name=payload.theme_name,
         tone_funny_pct=payload.tone_funny_pct,
         tone_emotion_pct=payload.tone_emotion_pct,
@@ -49,7 +55,7 @@ async def generate_phrases(payload: PhraseGenerationRequest, request: Request) -
         event_name=payload.event_name,
         count=payload.count,
     )
-    best_phrase = await service.select_best_phrase(
+    best_phrase = await groq_service.select_best_phrase(
         phrases=phrases,
         theme_name=payload.theme_name,
         tone_funny_pct=payload.tone_funny_pct,
@@ -84,7 +90,7 @@ async def generate_dalle_prompt(
 ) -> DallePromptResponse:
     """Generate a DALL-E-ready prompt and optionally store it on the card record."""
 
-    dalle_prompt = await service.generate_dalle_prompt(
+    dalle_prompt = await groq_service.generate_dalle_prompt(
         phrase=payload.phrase,
         theme_name=payload.theme_name,
         color_palette=payload.color_palette,
@@ -101,3 +107,28 @@ async def generate_dalle_prompt(
         )
 
     return DallePromptResponse(dalle_prompt=dalle_prompt, card_id=payload.card_id)
+
+
+@router.post("/image", response_model=ImageGenerationResponse)
+async def generate_image(payload: ImageGenerationRequest) -> ImageGenerationResponse:
+    """Generate a DALL-E image, then validate it before returning the result."""
+
+    generation_result = await dalle_service.generate_image(
+        dalle_prompt=payload.dalle_prompt,
+        card_id=payload.card_id,
+        size=payload.size,
+        quality=payload.quality,
+    )
+    validation = await dalle_service.validate_image(generation_result["image_url"])
+    if not validation["valid"]:
+        raise HTTPException(status_code=422, detail=validation)
+
+    return ImageGenerationResponse(**generation_result)
+
+
+@router.post("/image/validate", response_model=ImageValidationResponse)
+async def validate_generated_image(payload: ImageValidationRequest) -> ImageValidationResponse:
+    """Validate an image URL against the production rules used for generated assets."""
+
+    validation = await dalle_service.validate_image(payload.image_url)
+    return ImageValidationResponse(**validation)
