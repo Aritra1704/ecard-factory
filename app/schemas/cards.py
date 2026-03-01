@@ -51,6 +51,7 @@ class CardContentUpdate(BaseModel):
 
     phrase: str | None = None
     dalle_prompt: str | None = None
+    candidate_phrases: list[dict[str, object]] | None = None
 
 
 class CardResponse(BaseModel):

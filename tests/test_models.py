@@ -132,6 +132,7 @@ def test_model_defaults_are_configured(configured_env: dict[str, str]) -> None:
     assert models.DailyContentPlan.__table__.c.cards_generated.default.arg == 0
     assert models.DailyContentPlan.__table__.c.status.default.arg == "pending"
     assert models.Card.__table__.c.status.default.arg == "pending_phrase_approval"
+    assert models.Card.__table__.c.candidate_phrases.default.arg.__name__ == "list"
     assert models.Card.__table__.c.cost_llm.default.arg == Decimal("0.0000")
     assert models.Card.__table__.c.cost_image.default.arg == Decimal("0.0400")
     assert models.SocialPost.__table__.c.reach.default.arg == 0

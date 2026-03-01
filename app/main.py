@@ -17,6 +17,7 @@ from app.routers.cards import router as cards_router
 from app.routers.events import router as events_router
 from app.routers.generation import router as generation_router
 from app.routers.planning import router as planning_router
+from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ app.include_router(cards_router)
 app.include_router(events_router)
 app.include_router(generation_router)
 app.include_router(planning_router)
+app.include_router(telegram_router)
 app.include_router(theme_router)
 
 

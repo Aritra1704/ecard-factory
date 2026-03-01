@@ -18,6 +18,15 @@ from app.schemas.theme import (
     ThemeOverrideResponse,
     ThemeResolved,
 )
+from app.schemas.telegram import (
+    FinalApprovalRequest,
+    ImageApprovalRequest,
+    PhraseApprovalRequest,
+    TelegramNotificationRequest,
+    TelegramSendResponse,
+    TelegramWebhookRequest,
+    TelegramWebhookResponse,
+)
 
 __all__ = [
     "CardAssemblyRequest",
@@ -35,6 +44,13 @@ __all__ = [
     "PhraseGenerationRequest",
     "PhraseGenerationResponse",
     "PreviewRequest",
+    "FinalApprovalRequest",
+    "ImageApprovalRequest",
+    "PhraseApprovalRequest",
+    "TelegramNotificationRequest",
+    "TelegramSendResponse",
+    "TelegramWebhookRequest",
+    "TelegramWebhookResponse",
     "ThemeHistoryItem",
     "ThemeOverrideCreate",
     "ThemeOverrideResponse",

@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config import settings
@@ -35,6 +36,12 @@ class Card(Base):
     theme_name: Mapped[str] = mapped_column(String(100), nullable=False)
     theme_source: Mapped[str] = mapped_column(String(50), nullable=False)
     phrase: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_phrases: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     dalle_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     canva_url: Mapped[str | None] = mapped_column(Text, nullable=True)

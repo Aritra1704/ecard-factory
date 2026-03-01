@@ -66,7 +66,10 @@ async def generate_phrases(payload: PhraseGenerationRequest, request: Request) -
         await _patch_cards_api(
             request,
             f"/cards/{payload.card_id}/content",
-            CardContentUpdate(phrase=str(best_phrase["text"])).model_dump(exclude_none=True),
+            CardContentUpdate(
+                phrase=str(best_phrase["text"]),
+                candidate_phrases=phrases,
+            ).model_dump(exclude_none=True),
             failure_message=f"Failed to update phrase for card {payload.card_id}.",
         )
         await _patch_cards_api(
