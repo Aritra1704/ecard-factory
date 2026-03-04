@@ -26,11 +26,13 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handle application startup and shutdown without touching the DB on boot."""
+    """Handle application startup and shutdown, including optional DB bootstrap."""
 
     logger.info("eCard Factory starting up")
+    from app.database import close_database, ensure_database_ready
+
+    await ensure_database_ready()
     yield
-    from app.database import close_database
 
     await close_database()
     logger.info("eCard Factory shut down")

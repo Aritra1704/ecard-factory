@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, validation_alias="APP_PORT")
     log_level: str = Field(default="info", validation_alias="LOG_LEVEL")
     db_schema: str = Field(default="ecard_factory", validation_alias="DB_SCHEMA")
+    auto_init_db_on_startup: bool = Field(default=True, validation_alias="AUTO_INIT_DB_ON_STARTUP")
+    judge_backend: str = Field(default="ollama", validation_alias="JUDGE_BACKEND")
+    judge_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="JUDGE_MODEL")
+    judge_timeout_seconds: float = Field(default=20.0, validation_alias="JUDGE_TIMEOUT_SECONDS")
 
     @property
     def active_db_url(self) -> str:

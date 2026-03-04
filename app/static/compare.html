@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>eCard Factory — Model Comparison</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: "#020617",
+              panel: "#0f172a",
+              line: "#1e293b",
+              accent: "#22c55e",
+              danger: "#ef4444",
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-full bg-slate-950 text-slate-100">
+    <main class="mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-10 sm:px-6 lg:px-8">
+      <header class="mb-8">
+        <p class="text-sm uppercase tracking-[0.3em] text-cyan-400">Comparison Console</p>
+        <h1 class="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+          eCard Factory — Model Comparison
+        </h1>
+        <p class="mt-3 max-w-2xl text-sm text-slate-400 sm:text-base">
+          Compare the same phrase-generation prompt across all configured LLM backends.
+        </p>
+      </header>
+
+      <section class="rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-cyan-950/30">
+        <div class="grid gap-5 md:grid-cols-2">
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Theme Name</span>
+            <input
+              id="themeName"
+              type="text"
+              value="Motivational Monday"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Keywords</span>
+            <input
+              id="keywords"
+              type="text"
+              value="strength, monday, energy"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            />
+          </label>
+
+          <div class="grid gap-5 sm:grid-cols-2">
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-200">Funny %</span>
+              <input
+                id="funnyPct"
+                type="number"
+                value="30"
+                min="0"
+                max="100"
+                class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+              />
+            </label>
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-200">Emotion %</span>
+              <input
+                id="emotionPct"
+                type="number"
+                value="70"
+                min="0"
+                max="100"
+                class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+              />
+            </label>
+          </div>
+
+          <div class="grid gap-5 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-200">Visual Style</span>
+              <input
+                id="visualStyle"
+                type="text"
+                value="warm photography"
+                class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+              />
+            </label>
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-200">Phrases per model</span>
+              <input
+                id="count"
+                type="number"
+                value="3"
+                min="1"
+                class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+              />
+            </label>
+          </div>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Max Words Per Phrase</span>
+            <input
+              id="maxWords"
+              type="number"
+              value="16"
+              min="1"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Audience</span>
+            <input
+              id="audience"
+              type="text"
+              value="general"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Emoji Policy</span>
+            <select
+              id="emojiPolicy"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            >
+              <option value="none" selected>none</option>
+              <option value="light">light</option>
+              <option value="expressive">expressive</option>
+            </select>
+          </label>
+
+          <label class="block">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Tone Style</span>
+            <select
+              id="toneStyle"
+              class="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400"
+            >
+              <option value="minimal">minimal</option>
+              <option value="poetic">poetic</option>
+              <option value="conversational" selected>conversational</option>
+              <option value="witty">witty</option>
+              <option value="inspirational">inspirational</option>
+            </select>
+          </label>
+
+          <label class="block md:col-span-2">
+            <span class="mb-2 block text-sm font-medium text-slate-200">Avoid Cliches</span>
+            <span class="inline-flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3">
+              <input
+                id="avoidCliches"
+                type="checkbox"
+                checked
+                class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+              />
+              <span class="text-sm text-slate-200">Enable anti-cliche filtering</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="mt-6">
+          <button
+            id="generateButton"
+            type="button"
+            class="inline-flex w-full items-center justify-center rounded-2xl bg-cyan-400 px-6 py-4 text-base font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+          >
+            Generate &amp; Compare
+          </button>
+        </div>
+      </section>
+
+      <section
+        id="errorBanner"
+        class="mt-6 hidden rounded-2xl border border-red-500/40 bg-red-500/10 px-5 py-4 text-sm text-red-100"
+      >
+        <div class="font-semibold">LLM Comparator not running.</div>
+        <div class="mt-1 text-red-200">
+          Start it with:
+          <code class="rounded bg-red-950/50 px-2 py-1 text-red-100">uvicorn app.main:app --port 8001</code>
+        </div>
+      </section>
+
+      <section
+        id="statusSection"
+        class="mt-6 hidden rounded-2xl border border-slate-800 bg-slate-900/90 px-5 py-4"
+      >
+        <div class="flex items-center gap-3">
+          <div
+            id="spinner"
+            class="h-5 w-5 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-400"
+          ></div>
+          <p id="statusText" class="text-sm font-medium text-slate-200">Preparing request...</p>
+        </div>
+      </section>
+
+      <section
+        id="resultsSection"
+        class="mt-6 hidden rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-cyan-950/20"
+      >
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-800 text-left text-sm">
+            <thead class="text-slate-400">
+              <tr>
+                <th class="px-4 py-3 font-medium">Model</th>
+                <th class="px-4 py-3 font-medium">Backend</th>
+                <th class="px-4 py-3 font-medium">Status</th>
+                <th class="px-4 py-3 font-medium">Time</th>
+                <th class="px-4 py-3 font-medium">Phrases</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+
+        <div class="mt-6 flex flex-col gap-2 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+          <p id="winnerSummary">Winner: -</p>
+          <p id="fastestSummary">Fastest: -</p>
+          <p id="totalTimeSummary">Total time: -</p>
+        </div>
+      </section>
+
+      <section
+        id="historySection"
+        class="mt-6 rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-cyan-950/10"
+      >
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm uppercase tracking-[0.3em] text-cyan-400">History</p>
+            <h2 class="mt-2 text-2xl font-semibold text-white">Recent comparison runs</h2>
+            <p class="mt-2 text-sm text-slate-400">Showing the latest 5 stored runs.</p>
+          </div>
+          <button
+            id="refreshHistoryButton"
+            type="button"
+            class="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-cyan-400 hover:text-white"
+          >
+            Refresh
+          </button>
+        </div>
+        <div id="historyMessage" class="mt-5 text-sm text-slate-500">Loading history...</div>
+        <div id="historyList" class="mt-5 space-y-4"></div>
+      </section>
+    </main>
+
+    <script>
+      const API_URL = "http://localhost:8000/generation/compare-models";
+      const HISTORY_URL = "http://localhost:8000/generation/compare-results";
+      const FETCH_TIMEOUT_MS = 400000;
+      const STATUS_STEPS = [
+        { delayMs: 0, label: "Calling groq (llama-3.3-70b)..." },
+        { delayMs: 92000, label: "Calling ollama (qwen2.5:7b)..." },
+        { delayMs: 184000, label: "Calling ollama (llama3.1:8b)..." },
+        { delayMs: 276000, label: "Calling ollama (mistral:7b)..." },
+      ];
+
+      const generateButton = document.getElementById("generateButton");
+      const themeNameInput = document.getElementById("themeName");
+      const funnyPctInput = document.getElementById("funnyPct");
+      const emotionPctInput = document.getElementById("emotionPct");
+      const keywordsInput = document.getElementById("keywords");
+      const visualStyleInput = document.getElementById("visualStyle");
+      const countInput = document.getElementById("count");
+      const maxWordsInput = document.getElementById("maxWords");
+      const emojiPolicyInput = document.getElementById("emojiPolicy");
+      const toneStyleInput = document.getElementById("toneStyle");
+      const audienceInput = document.getElementById("audience");
+      const avoidClichesInput = document.getElementById("avoidCliches");
+      const errorBanner = document.getElementById("errorBanner");
+      const statusSection = document.getElementById("statusSection");
+      const statusText = document.getElementById("statusText");
+      const spinner = document.getElementById("spinner");
+      const resultsSection = document.getElementById("resultsSection");
+      const resultsBody = document.getElementById("resultsBody");
+      const winnerSummary = document.getElementById("winnerSummary");
+      const fastestSummary = document.getElementById("fastestSummary");
+      const totalTimeSummary = document.getElementById("totalTimeSummary");
+      const historyList = document.getElementById("historyList");
+      const historyMessage = document.getElementById("historyMessage");
+      const refreshHistoryButton = document.getElementById("refreshHistoryButton");
+
+      let statusTimers = [];
+      const historyCache = new Map();
+
+      function clearStatusTimers() {
+        statusTimers.forEach((timer) => window.clearTimeout(timer));
+        statusTimers = [];
+      }
+
+      function setStatus(message, done = false) {
+        statusText.textContent = message;
+        spinner.classList.toggle("hidden", done);
+      }
+
+      function scheduleStatusUpdates() {
+        clearStatusTimers();
+        STATUS_STEPS.forEach((step) => {
+          const timer = window.setTimeout(() => setStatus(step.label), step.delayMs);
+          statusTimers.push(timer);
+        });
+      }
+
+      function buildPayload() {
+        return {
+          theme_name: themeNameInput.value.trim(),
+          tone_funny_pct: Number(funnyPctInput.value || 0),
+          tone_emotion_pct: Number(emotionPctInput.value || 0),
+          prompt_keywords: keywordsInput.value
+            .split(",")
+            .map((keyword) => keyword.trim())
+            .filter(Boolean),
+          visual_style: visualStyleInput.value.trim(),
+          count: Number(countInput.value || 3),
+          max_words: Number(maxWordsInput.value || 16),
+          emoji_policy: emojiPolicyInput.value,
+          tone_style: toneStyleInput.value,
+          audience: audienceInput.value.trim() || "general",
+          avoid_cliches: Boolean(avoidClichesInput.checked),
+        };
+      }
+
+      function buildLegacyPayload(payload) {
+        const {
+          max_words,
+          emoji_policy,
+          tone_style,
+          audience,
+          avoid_cliches,
+          ...legacyPayload
+        } = payload;
+        return legacyPayload;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function stripLeadingListMarker(value) {
+        const text = String(value || "").trim();
+        return text.replace(/^(?:\d+\s*[\.\)\-:]\s*)+/, "").trim();
+      }
+
+      function renderPhrases(result) {
+        if (result.phrases && result.phrases.length > 0) {
+          const items = result.phrases
+            .map((phrase) => `<li class="leading-6 text-slate-200">${escapeHtml(stripLeadingListMarker(phrase))}</li>`)
+            .join("");
+          return `<ol class="list-decimal space-y-1 pl-5">${items}</ol>`;
+        }
+
+        if (result.error) {
+          return `<p class="text-sm text-red-300">${escapeHtml(result.error)}</p>`;
+        }
+
+        return `<p class="text-sm text-slate-500">No phrases</p>`;
+      }
+
+      function formatDuration(milliseconds) {
+        const totalMs = Math.max(0, Number(milliseconds) || 0);
+        const minutes = Math.floor(totalMs / 60000);
+        const seconds = Math.floor((totalMs % 60000) / 1000);
+        const ms = totalMs % 1000;
+
+        if (minutes > 0) {
+          return `${minutes}m ${seconds}s ${ms}ms`;
+        }
+
+        if (seconds > 0) {
+          return `${seconds}s ${ms}ms`;
+        }
+
+        return `${ms}ms`;
+      }
+
+      function resolvePromptSettings(data, requestedPayload) {
+        return {
+          max_words: Number(data.max_words ?? requestedPayload.max_words ?? 16),
+          emoji_policy: String(data.emoji_policy ?? requestedPayload.emoji_policy ?? "none"),
+          tone_style: String(data.tone_style ?? requestedPayload.tone_style ?? "conversational"),
+          avoid_cliches: Boolean(data.avoid_cliches ?? requestedPayload.avoid_cliches ?? true),
+        };
+      }
+
+      function renderPromptBadges(settings) {
+        const badges = [
+          `max_words: ${settings.max_words}`,
+          `emoji: ${settings.emoji_policy}`,
+          `tone: ${settings.tone_style}`,
+          `avoid_cliches: ${settings.avoid_cliches ? "on" : "off"}`,
+        ];
+
+        return badges
+          .map(
+            (badge) =>
+              `<span class="inline-flex rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-200">${escapeHtml(
+                badge
+              )}</span>`
+          )
+          .join("");
+      }
+
+      function renderResults(data, requestedPayload) {
+        const promptSettings = resolvePromptSettings(data, requestedPayload);
+        const successfulLatencies = data.results
+          .filter((result) => result.success && Number(result.latency_ms) > 0)
+          .map((result) => Number(result.latency_ms));
+        const fastestLatency = successfulLatencies.length > 0 ? Math.min(...successfulLatencies) : 0;
+
+        resultsBody.innerHTML = data.results
+          .map((result) => {
+            const hasConstraintIssues = Boolean(result.constraint_issues);
+            const statusBadge = result.success
+              ? '<span class="inline-flex rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300">✓ Success</span>'
+              : '<span class="inline-flex rounded-full bg-red-500/15 px-3 py-1 text-xs font-semibold text-red-300">✗ Failed</span>';
+            const barWidth = result.success && fastestLatency > 0 && Number(result.latency_ms) > 0
+              ? Math.round((fastestLatency / Number(result.latency_ms)) * 100)
+              : 100;
+            const barColor = result.success ? "bg-emerald-400" : "bg-red-400";
+            const issueBanner = hasConstraintIssues
+              ? '<div class="mt-2 text-xs font-medium text-amber-300">⚠️ constraint issues</div>'
+              : "";
+
+            return `
+              <tr class="align-top">
+                <td class="px-4 py-4">
+                  <div class="font-medium text-white">${escapeHtml(result.model)}</div>
+                  <div class="mt-2 flex flex-wrap gap-1">${renderPromptBadges(promptSettings)}</div>
+                </td>
+                <td class="px-4 py-4 text-slate-300">${escapeHtml(result.backend)}</td>
+                <td class="px-4 py-4">
+                  ${statusBadge}${issueBanner}
+                  <div class="mt-2 text-xs text-slate-300">score: ${escapeHtml(Number(result.score || 0).toFixed(2))}</div>
+                </td>
+                <td class="px-4 py-4 text-slate-300">
+                  <div>${escapeHtml(formatDuration(result.latency_ms))}</div>
+                  <div class="mt-2 h-2 w-full rounded-full bg-slate-800">
+                    <div class="h-2 rounded-full ${barColor}" style="width: ${barWidth}%"></div>
+                  </div>
+                </td>
+                <td class="px-4 py-4">${renderPhrases(result)}</td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        if (data.winner && data.winner.model) {
+          const reason = data.winner.reason ? ` — ${data.winner.reason}` : "";
+          winnerSummary.textContent = `Winner: ${data.winner.model} (${Number(data.winner.score || 0).toFixed(2)})${reason}`;
+        } else {
+          winnerSummary.textContent = "Winner: -";
+        }
+        fastestSummary.textContent = `Fastest: ${data.fastest_model || "-"}`;
+        totalTimeSummary.textContent = `Total time: ${formatDuration(data.total_time_ms)}`;
+      }
+
+      function formatRunDate(value) {
+        if (!value) {
+          return "Unknown date";
+        }
+
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {
+          return value;
+        }
+
+        return parsed.toLocaleString();
+      }
+
+      function renderHistorySummary(runs) {
+        if (!runs.length) {
+          historyList.innerHTML = "";
+          historyMessage.textContent = "No comparison history yet.";
+          return;
+        }
+
+        historyMessage.textContent = "";
+        historyList.innerHTML = runs
+          .map((run) => {
+            const successfulModels = run.results
+              .filter((result) => result.success)
+              .map((result) => result.model_name)
+              .join(", ");
+
+            return `
+              <article class="rounded-2xl border border-slate-800 bg-slate-950/70" data-history-item>
+                <div class="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500">${escapeHtml(formatRunDate(run.created_at))}</p>
+                    <h3 class="mt-2 text-lg font-medium text-white">${escapeHtml(run.theme_name)}</h3>
+                    <p class="mt-2 text-sm text-slate-400">
+                      Succeeded:
+                      <span class="text-slate-200">${escapeHtml(successfulModels || "None")}</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    data-history-toggle
+                    data-run-id="${escapeHtml(run.run_id)}"
+                    class="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-cyan-400 hover:text-white"
+                  >
+                    View
+                  </button>
+                </div>
+                <div class="hidden border-t border-slate-800 px-5 py-4" data-history-detail></div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function renderHistoryDetail(detail) {
+        return detail.results
+          .map((result) => {
+            const phrasesHtml = result.phrases.length
+              ? `<ol class="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-200">${result.phrases
+                  .map((phrase) => `<li>${escapeHtml(stripLeadingListMarker(phrase))}</li>`)
+                  .join("")}</ol>`
+              : `<p class="mt-2 text-sm text-slate-500">${escapeHtml(result.error_message || "No phrases")}</p>`;
+
+            return `
+              <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p class="text-sm font-semibold text-white">${escapeHtml(result.model_name)}</p>
+                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500">${escapeHtml(result.backend)}</p>
+                  </div>
+                  <p class="text-sm ${result.success ? "text-emerald-300" : "text-red-300"}">
+                    ${result.success ? "Success" : "Failed"} • ${escapeHtml(formatDuration(result.latency_ms))}
+                  </p>
+                </div>
+                ${phrasesHtml}
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      async function loadHistory() {
+        historyMessage.textContent = "Loading history...";
+        historyList.innerHTML = "";
+
+        try {
+          const response = await fetch(HISTORY_URL, { headers: { Accept: "application/json" } });
+          if (!response.ok) {
+            throw new Error(`History request failed with status ${response.status}`);
+          }
+
+          const runs = await response.json();
+          renderHistorySummary(runs.slice(0, 5));
+        } catch (error) {
+          historyMessage.textContent = "Unable to load comparison history.";
+        }
+      }
+
+      async function toggleHistoryDetail(button) {
+        const article = button.closest("[data-history-item]");
+        const detailContainer = article ? article.querySelector("[data-history-detail]") : null;
+        const runId = button.dataset.runId;
+
+        if (!article || !detailContainer || !runId) {
+          return;
+        }
+
+        if (!detailContainer.classList.contains("hidden")) {
+          detailContainer.classList.add("hidden");
+          button.textContent = "View";
+          return;
+        }
+
+        button.textContent = "Hide";
+        detailContainer.classList.remove("hidden");
+
+        if (!historyCache.has(runId)) {
+          detailContainer.innerHTML = '<p class="text-sm text-slate-400">Loading run details...</p>';
+          try {
+            const response = await fetch(`${HISTORY_URL}/${encodeURIComponent(runId)}`, {
+              headers: { Accept: "application/json" },
+            });
+            if (!response.ok) {
+              throw new Error(`Detail request failed with status ${response.status}`);
+            }
+
+            historyCache.set(runId, await response.json());
+          } catch (error) {
+            detailContainer.innerHTML =
+              '<p class="text-sm text-red-300">Unable to load run details.</p>';
+            return;
+          }
+        }
+
+        detailContainer.innerHTML = renderHistoryDetail(historyCache.get(runId));
+      }
+
+      async function fetchWithTimeout(url, options, timeoutMs) {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      }
+
+      function showComparatorError() {
+        errorBanner.classList.remove("hidden");
+      }
+
+      function hideTransientSections() {
+        errorBanner.classList.add("hidden");
+        resultsSection.classList.add("hidden");
+      }
+
+      async function generateComparison() {
+        hideTransientSections();
+        statusSection.classList.remove("hidden");
+        setStatus("Calling groq (llama-3.3-70b)...");
+        scheduleStatusUpdates();
+
+        generateButton.disabled = true;
+        generateButton.textContent = "Generating...";
+
+        try {
+          const requestedPayload = buildPayload();
+          let response = await fetchWithTimeout(
+            API_URL,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(requestedPayload),
+            },
+            FETCH_TIMEOUT_MS
+          );
+
+          if (response.status === 400 || response.status === 422) {
+            response = await fetchWithTimeout(
+              API_URL,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(buildLegacyPayload(requestedPayload)),
+              },
+              FETCH_TIMEOUT_MS
+            );
+          }
+
+          if (!response.ok) {
+            if (response.status === 503) {
+              throw new Error("503");
+            }
+
+            throw new Error(`Request failed with status ${response.status}`);
+          }
+
+          const data = await response.json();
+          clearStatusTimers();
+          renderResults(data, requestedPayload);
+          resultsSection.classList.remove("hidden");
+          setStatus("All done!", true);
+          historyCache.clear();
+          await loadHistory();
+        } catch (error) {
+          clearStatusTimers();
+          showComparatorError();
+          if (error && error.name === "AbortError") {
+            setStatus("Request timed out.", true);
+          } else if (error instanceof Error && error.message.includes("503")) {
+            setStatus("LLM comparator unavailable.", true);
+          } else {
+            setStatus("Unable to reach comparison service.", true);
+          }
+        } finally {
+          generateButton.disabled = false;
+          generateButton.textContent = "Generate & Compare";
+        }
+      }
+
+      historyList.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-history-toggle]");
+        if (!button) {
+          return;
+        }
+
+        await toggleHistoryDetail(button);
+      });
+
+      refreshHistoryButton.addEventListener("click", async () => {
+        historyCache.clear();
+        await loadHistory();
+      });
+
+      generateButton.addEventListener("click", generateComparison);
+      loadHistory();
+    </script>
+  </body>
+</html>

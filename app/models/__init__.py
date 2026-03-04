@@ -6,6 +6,7 @@ from app.models.competitor import Competitor
 from app.models.daily_plan import DailyContentPlan
 from app.models.event import Event
 from app.models.listing import Listing
+from app.models.llm_comparison_run import LLMComparisonRun
 from app.models.sale import Sale
 from app.models.social_post import SocialPost
 from app.models.theme import ThemeOverride, WeeklyTheme
@@ -18,6 +19,7 @@ __all__ = [
     "DailyContentPlan",
     "Event",
     "Listing",
+    "LLMComparisonRun",
     "Sale",
     "SocialPost",
     "ThemeOverride",

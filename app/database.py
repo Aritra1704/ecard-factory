@@ -4,7 +4,10 @@ The project uses a dedicated PostgreSQL schema so multiple applications can
 share a single database instance without table-name collisions.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
+import logging
+from pathlib import Path
 
 from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import (
@@ -16,6 +19,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # A naming convention keeps Alembic autogeneration stable and produces readable
 # constraint names across development, CI, and production environments.
@@ -106,6 +112,66 @@ async def init_database() -> None:
         await connection.execute(
             text(f'CREATE SCHEMA IF NOT EXISTS "{safe_schema_name}"')
         )
+
+
+async def _application_tables_exist() -> bool:
+    """Return True when the core application tables already exist in the target schema."""
+
+    required_tables = (
+        "alembic_version",
+        "events",
+        "weekly_themes",
+        "theme_overrides",
+        "daily_content_plan",
+        "cards",
+        "llm_comparison_runs",
+    )
+    placeholders = ", ".join(f":table_{index}" for index, _ in enumerate(required_tables))
+    params = {"schema_name": settings.db_schema}
+    params.update({f"table_{index}": table_name for index, table_name in enumerate(required_tables)})
+
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = :schema_name
+                  AND table_name IN ({placeholders})
+                """
+            ),
+            params,
+        )
+        existing_count = int(result.scalar_one())
+
+    return existing_count == len(required_tables)
+
+
+def _run_alembic_upgrade_head() -> None:
+    """Run Alembic upgrades using the application's current environment configuration."""
+
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_config = Config(str(BASE_DIR / "alembic.ini"))
+    command.upgrade(alembic_config, "head")
+
+
+async def ensure_database_ready() -> None:
+    """Create the schema and apply migrations automatically when the schema is still empty."""
+
+    if not settings.auto_init_db_on_startup:
+        logger.info("Automatic database initialization on startup is disabled.")
+        return
+
+    await init_database()
+
+    if await _application_tables_exist():
+        logger.info("Database schema '%s' already contains the required application tables.", settings.db_schema)
+        return
+
+    logger.info("Application tables missing in schema '%s'; running Alembic upgrade head.", settings.db_schema)
+    await asyncio.to_thread(_run_alembic_upgrade_head)
 
 
 async def close_database() -> None:

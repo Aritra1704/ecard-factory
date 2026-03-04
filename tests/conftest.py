@@ -17,6 +17,7 @@ TEST_ENV_VARS = {
     "APP_PORT": "8000",
     "LOG_LEVEL": "info",
     "DB_SCHEMA": "ecard_factory",
+    "AUTO_INIT_DB_ON_STARTUP": "false",
 }
 
 
