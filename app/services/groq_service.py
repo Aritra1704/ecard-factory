@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 import httpx
 
 from app.config import settings
+from app.services.phrase_prompt import get_style_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class GroqService:
         visual_style: str,
         event_name: str | None = None,
         count: int = 5,
+        tone_style: str = "conversational",
+        emoji_policy: str = "none",
+        style_anchor_enabled: bool = True,
     ) -> list[dict[str, Any]]:
         """Generate structured greeting card phrases for the provided theme."""
 
@@ -58,6 +62,9 @@ class GroqService:
             prompt_keywords=prompt_keywords,
             visual_style=visual_style,
             count=count,
+            tone_style=tone_style,
+            emoji_policy=emoji_policy,
+            style_anchor_enabled=style_anchor_enabled,
         )
         content = await self._chat_completion(
             payload={
@@ -192,6 +199,9 @@ class GroqService:
         prompt_keywords: list[str],
         visual_style: str,
         count: int,
+        tone_style: str,
+        emoji_policy: str,
+        style_anchor_enabled: bool,
     ) -> str:
         """Build the phrase-generation user prompt from the theme inputs."""
 
@@ -203,6 +213,18 @@ class GroqService:
 
         event_line = f"Event or occasion: {event_name}\n" if event_name else ""
         keywords_text = ", ".join(prompt_keywords) if prompt_keywords else "none supplied"
+        style_anchor_lines = (
+            get_style_anchor(tone_style=tone_style, emoji_policy=emoji_policy)
+            if style_anchor_enabled
+            else []
+        )
+        style_anchor_block = ""
+        if style_anchor_lines:
+            style_anchor_text = "\n".join(f"- {line}" for line in style_anchor_lines)
+            style_anchor_block = (
+                "Style reference (do not copy; match the vibe):\n"
+                f"{style_anchor_text}\n"
+            )
 
         return (
             f"{tone_instruction}\n"
@@ -210,8 +232,10 @@ class GroqService:
             f"{event_line}"
             f"Prompt keywords: {keywords_text}\n"
             f"Visual style reference: {visual_style}\n"
-            f"Create exactly {count} greeting card phrases for the Indian market.\n"
-            "Each phrase must be 8-20 words and feel personal, warm, and highly shareable.\n"
+            f"GUIDELINES:\n"
+            f"- Create exactly {count} greeting card phrases for the Indian market.\n"
+            "- Each phrase must be 8-20 words and feel personal, warm, and highly shareable.\n"
+            f"{style_anchor_block}"
             "Return valid JSON only in this exact format:\n"
             '{"phrases": [{"text": "...", "tone": "funny|emotional|balanced", '
             '"occasion": "...", "word_count": 12}]}'

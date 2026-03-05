@@ -18,6 +18,9 @@ class PhraseGenerationRequest(BaseModel):
     visual_style: str
     event_name: str | None = None
     count: int = Field(default=5, ge=1, le=10)
+    tone_style: Literal["minimal", "poetic", "conversational", "witty", "inspirational"] = "conversational"
+    emoji_policy: Literal["none", "light", "expressive"] = "none"
+    style_anchor_enabled: bool = True
     card_id: int | None = None
 
 

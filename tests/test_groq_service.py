@@ -163,6 +163,32 @@ async def test_generate_phrases_falls_back_when_json_is_invalid(
     assert phrases[0]["text"].startswith("May your home glow")
 
 
+def test_build_phrase_prompt_includes_style_anchor_for_minimal(
+    configured_env: dict[str, str],
+) -> None:
+    """Minimal tone prompts should include the style reference anchor block."""
+
+    service_module = reload_groq_service_module()
+    service = service_module.GroqService()
+
+    prompt = service._build_phrase_prompt(  # noqa: SLF001
+        theme_name="Morning Focus",
+        event_name=None,
+        tone_funny_pct=20,
+        tone_emotion_pct=80,
+        prompt_keywords=["focus", "calm"],
+        visual_style="soft editorial",
+        count=3,
+        tone_style="minimal",
+        emoji_policy="none",
+        style_anchor_enabled=True,
+    )
+
+    assert "Style reference (do not copy; match the vibe):" in prompt
+    assert "- Quiet focus, clear intent." in prompt
+    assert "- Warm but compact." in prompt
+
+
 def test_score_phrase_applies_all_rules(
     configured_env: dict[str, str],
 ) -> None:

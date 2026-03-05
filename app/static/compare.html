@@ -36,8 +36,8 @@
       </header>
 
       <section class="rounded-3xl border border-line bg-panel p-5 shadow-2xl shadow-cyan-950/20 sm:p-6">
-        <div class="grid gap-6 lg:grid-cols-[35%_65%]">
-          <aside>
+        <div class="grid gap-6 lg:grid-cols-[65%_35%]">
+          <aside class="lg:order-2">
             <label class="block">
               <span class="mb-2 block text-sm font-medium text-slate-200">Import Theme JSON</span>
               <textarea
@@ -71,7 +71,7 @@
             </div>
           </aside>
 
-          <div>
+          <div class="lg:order-1">
             <div class="space-y-4">
               <div class="grid gap-3 md:grid-cols-4">
                 <label class="block">
@@ -210,6 +210,84 @@
       </section>
 
       <section id="liveSection" class="mt-6 rounded-3xl border border-line bg-panel p-5 sm:p-6">
+        <div class="mb-4 rounded-2xl border border-line bg-panelSoft p-4">
+          <p class="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Quick Inputs</p>
+          <div class="overflow-x-auto">
+            <div class="flex min-w-max items-end gap-2">
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Theme</span>
+                <input
+                  id="quickThemeName"
+                  type="text"
+                  class="w-48 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Keywords</span>
+                <input
+                  id="quickKeywords"
+                  type="text"
+                  class="w-72 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Funny%</span>
+                <input
+                  id="quickFunnyPct"
+                  type="number"
+                  min="0"
+                  max="100"
+                  class="w-20 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Emotion%</span>
+                <input
+                  id="quickEmotionPct"
+                  type="number"
+                  min="0"
+                  max="100"
+                  class="w-20 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Visual</span>
+                <input
+                  id="quickVisualStyle"
+                  type="text"
+                  class="w-44 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Count</span>
+                <input
+                  id="quickCount"
+                  type="number"
+                  min="1"
+                  class="w-16 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Max Words</span>
+                <input
+                  id="quickMaxWords"
+                  type="number"
+                  min="1"
+                  class="w-20 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Audience</span>
+                <input
+                  id="quickAudience"
+                  type="text"
+                  class="w-44 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div id="statusSection" class="hidden rounded-2xl border border-line bg-panelSoft px-4 py-3">
           <div class="flex items-center gap-3">
             <div
@@ -303,6 +381,15 @@
       const emojiPolicyInput = document.getElementById("emojiPolicy");
       const toneStyleInput = document.getElementById("toneStyle");
       const avoidClichesInput = document.getElementById("avoidCliches");
+
+      const quickThemeNameInput = document.getElementById("quickThemeName");
+      const quickKeywordsInput = document.getElementById("quickKeywords");
+      const quickFunnyPctInput = document.getElementById("quickFunnyPct");
+      const quickEmotionPctInput = document.getElementById("quickEmotionPct");
+      const quickVisualStyleInput = document.getElementById("quickVisualStyle");
+      const quickCountInput = document.getElementById("quickCount");
+      const quickMaxWordsInput = document.getElementById("quickMaxWords");
+      const quickAudienceInput = document.getElementById("quickAudience");
 
       const statusSection = document.getElementById("statusSection");
       const statusText = document.getElementById("statusText");
@@ -498,6 +585,31 @@
         if (Object.prototype.hasOwnProperty.call(raw, "avoid_cliches")) {
           avoidClichesInput.checked = Boolean(raw.avoid_cliches);
         }
+      }
+
+      function bindMirroredInputs(mainInput, quickInput, eventName = "input") {
+        if (!mainInput || !quickInput) {
+          return;
+        }
+
+        mainInput.addEventListener(eventName, () => {
+          quickInput.value = mainInput.value;
+        });
+
+        quickInput.addEventListener(eventName, () => {
+          mainInput.value = quickInput.value;
+        });
+      }
+
+      function syncQuickInputsFromMain() {
+        quickThemeNameInput.value = themeNameInput.value;
+        quickKeywordsInput.value = keywordsInput.value;
+        quickFunnyPctInput.value = funnyPctInput.value;
+        quickEmotionPctInput.value = emotionPctInput.value;
+        quickVisualStyleInput.value = visualStyleInput.value;
+        quickCountInput.value = countInput.value;
+        quickMaxWordsInput.value = maxWordsInput.value;
+        quickAudienceInput.value = audienceInput.value;
       }
 
       function clearStatusTimers() {
@@ -853,11 +965,21 @@
             throw new Error("Invalid JSON");
           }
           populateFieldsFromJson(parsed);
+          syncQuickInputsFromMain();
           setImportStatus("✓ Populated", "success");
         } catch (error) {
           setImportStatus("✗ Invalid JSON", "error");
         }
       });
+
+      bindMirroredInputs(themeNameInput, quickThemeNameInput);
+      bindMirroredInputs(keywordsInput, quickKeywordsInput);
+      bindMirroredInputs(funnyPctInput, quickFunnyPctInput);
+      bindMirroredInputs(emotionPctInput, quickEmotionPctInput);
+      bindMirroredInputs(visualStyleInput, quickVisualStyleInput);
+      bindMirroredInputs(countInput, quickCountInput);
+      bindMirroredInputs(maxWordsInput, quickMaxWordsInput);
+      bindMirroredInputs(audienceInput, quickAudienceInput);
 
       generateButton.addEventListener("click", generateComparison);
 
@@ -891,6 +1013,7 @@
         await loadHistory({ reset: false });
       });
 
+      syncQuickInputsFromMain();
       loadHistory({ reset: true });
     </script>
   </body>
