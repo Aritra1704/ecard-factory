@@ -124,7 +124,8 @@ async def _application_tables_exist() -> bool:
         "theme_overrides",
         "daily_content_plan",
         "cards",
-        "llm_comparison_runs",
+        "comparison_runs",
+        "comparison_run_results",
     )
     placeholders = ", ".join(f":table_{index}" for index, _ in enumerate(required_tables))
     params = {"schema_name": settings.db_schema}

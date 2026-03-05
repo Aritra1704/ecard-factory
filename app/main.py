@@ -6,10 +6,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
 from app.routers.admin import router as admin_router
 from app.routers.assembly import router as assembly_router
 from app.routers.cards import router as cards_router
@@ -24,12 +27,28 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def run_migrations() -> None:
+    """Apply the latest Alembic migrations on startup."""
+
+    if not settings.auto_init_db_on_startup:
+        logger.info("Skipping startup migrations because AUTO_INIT_DB_ON_STARTUP is disabled.")
+        return
+
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown, including optional DB bootstrap."""
 
     logger.info("eCard Factory starting up")
     from app.database import close_database, ensure_database_ready
+
+    try:
+        run_migrations()
+    except Exception:  # noqa: BLE001
+        logger.exception("Startup migration failed. Continuing app startup.")
 
     await ensure_database_ready()
     yield

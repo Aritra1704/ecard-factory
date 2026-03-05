@@ -4,21 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import defaultdict
-from time import perf_counter
+import logging
 from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.database import get_db
-from app.models.llm_comparison_run import LLMComparisonRun
+from app.models.comparison import ComparisonRun, ComparisonRunResult
 from app.schemas.cards import CardContentUpdate, CardStatusUpdate
 from app.schemas.generation import (
     DallePromptRequest,
@@ -35,6 +34,7 @@ from app.services.groq_service import GroqService
 from src.validation.scorer import score_result
 
 router = APIRouter(tags=["generation"])
+logger = logging.getLogger(__name__)
 groq_service = GroqService()
 dalle_service = DalleService()
 
@@ -67,6 +67,7 @@ class CompareModelsRequest(BaseModel):
     audience: str = "general"
     avoid_cliches: bool = True
     avoid_phrases: list[str] = Field(default_factory=list)
+    style_anchor_enabled: bool = True
 
 
 class CompareModelsResult(BaseModel):
@@ -111,42 +112,35 @@ class CompareModelsResponse(BaseModel):
     total_time_ms: int
 
 
-class CompareResultsSummaryItem(BaseModel):
-    """One persisted model result as returned in compare history summaries."""
+class CompareResultsItem(BaseModel):
+    """One child backend result row for a persisted comparison run."""
 
     model_name: str
-    success: bool
-    latency_ms: int
-    phrases: list[str]
-
-
-class CompareResultsSummaryResponse(BaseModel):
-    """One grouped comparison run returned in the history list."""
-
-    run_id: str
-    theme_name: str
-    created_at: str
-    results: list[CompareResultsSummaryItem]
-
-
-class CompareResultsDetailItem(BaseModel):
-    """Full stored detail for one model result within a comparison run."""
-
     backend: str
-    model_name: str
     success: bool
-    latency_ms: int
+    score: float | None
     phrases: list[str]
-    error_message: str | None = None
+    latency_ms: int | None
+    error: str | None
 
 
-class CompareResultsDetailResponse(BaseModel):
-    """Full persisted detail for one comparison run."""
+class CompareResultsRunResponse(BaseModel):
+    """One master comparison run with all child backend results."""
 
     run_id: str
     theme_name: str
     created_at: str
-    results: list[CompareResultsDetailItem]
+    tone_funny_pct: int
+    tone_emotion_pct: int
+    prompt_keywords: list[str]
+    visual_style: str | None
+    total_time_ms: int | None
+    backends_succeeded: int | None
+    winner_model: str | None
+    winner_backend: str | None
+    winner_score: float | None
+    winner_phrases: list[str]
+    results: list[CompareResultsItem]
 
 
 async def _patch_cards_api(
@@ -200,6 +194,7 @@ async def _call_llm_comparator(
                 "audience": payload.audience,
                 "avoid_cliches": payload.avoid_cliches,
                 "avoid_phrases": payload.avoid_phrases,
+                "style_anchor_enabled": payload.style_anchor_enabled,
             }
         )
 
@@ -338,151 +333,37 @@ def _has_constraint_issues(result: dict[str, Any]) -> bool:
     return False
 
 
-def _build_tie_break_prompt(
-    payload: CompareModelsRequest,
-    candidate_a: CompareModelsResult,
-    candidate_b: CompareModelsResult,
-) -> str:
-    """Build a compact, deterministic tie-break prompt for the local judge model."""
+def _extract_model_score(meta: Any, latency_ms: int) -> float:
+    """Resolve comparison score from comparator metadata with latency fallback."""
 
-    request_snapshot = {
-        "theme_name": payload.theme_name,
-        "prompt_keywords": payload.prompt_keywords,
-        "tone_funny_pct": payload.tone_funny_pct,
-        "tone_emotion_pct": payload.tone_emotion_pct,
-        "tone_style": payload.tone_style,
-        "audience": payload.audience,
-        "visual_style": payload.visual_style,
-        "max_words": payload.max_words,
-        "emoji_policy": payload.emoji_policy,
-        "avoid_cliches": payload.avoid_cliches,
-        "avoid_phrases": payload.avoid_phrases,
-        "count": payload.count,
-    }
-    return (
-        "Evaluate two candidate phrase sets for the same prompt constraints.\n"
-        "Return strict JSON only: {\"winner\":\"A|B\",\"reason\":\"<short reason>\"}\n\n"
-        f"Request:\n{json.dumps(request_snapshot, ensure_ascii=True)}\n\n"
-        f"Candidate A ({candidate_a.backend}/{candidate_a.model}):\n"
-        f"{json.dumps(candidate_a.phrases, ensure_ascii=True)}\n\n"
-        f"Candidate B ({candidate_b.backend}/{candidate_b.model}):\n"
-        f"{json.dumps(candidate_b.phrases, ensure_ascii=True)}\n"
-    )
+    if isinstance(meta, dict) and "score" in meta:
+        try:
+            return float(meta["score"])
+        except (TypeError, ValueError):
+            pass
 
-
-def _parse_json_from_judge_content(content: str) -> dict[str, Any] | None:
-    """Parse judge output JSON robustly even if wrapped with extra text."""
-
-    candidate = content.strip()
-    if not candidate:
-        return None
-
-    try:
-        parsed = json.loads(candidate)
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        pass
-
-    start = candidate.find("{")
-    end = candidate.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-
-    try:
-        parsed = json.loads(candidate[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-async def _run_tie_break_judge(
-    payload: CompareModelsRequest,
-    candidate_a: CompareModelsResult,
-    candidate_b: CompareModelsResult,
-) -> tuple[str | None, str | None]:
-    """Use a local judge model only when top deterministic scores are too close."""
-
-    if settings.judge_backend.strip().lower() != "ollama":
-        return None, None
-
-    prompt = _build_tie_break_prompt(payload, candidate_a, candidate_b)
-    judge_url = "http://localhost:11434/api/chat"
-    body = {
-        "model": settings.judge_model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are an evaluation judge for greeting-card phrases. "
-                    "Respond with valid JSON only."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=settings.judge_timeout_seconds) as client:
-            response = await client.post(judge_url, json=body)
-            response.raise_for_status()
-            payload_json = response.json()
-    except (httpx.HTTPError, ValueError):
-        return None, None
-
-    if not isinstance(payload_json, dict):
-        return None, None
-
-    message = payload_json.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str):
-        return None, None
-
-    parsed = _parse_json_from_judge_content(content)
-    if not isinstance(parsed, dict):
-        return None, None
-
-    winner = str(parsed.get("winner", "")).strip().upper()
-    if winner not in {"A", "B"}:
-        return None, None
-
-    reason = str(parsed.get("reason", "")).strip() or None
-    return winner, reason
+    return 100.0 - (float(latency_ms) / 1000.0)
 
 
 async def _select_winner(
     payload: CompareModelsRequest,
     results: list[CompareModelsResult],
 ) -> CompareModelsWinner | None:
-    """Pick the best scored result, with optional judge tie-break when very close."""
+    """Pick the best scored successful result."""
 
+    _ = payload
     successful_results = [result for result in results if result.success]
     if not successful_results:
         return None
 
-    ranked = sorted(successful_results, key=lambda result: result.score, reverse=True)
-    selected = ranked[0]
-    reason: str | None = None
-    if len(ranked) >= 2 and abs(ranked[0].score - ranked[1].score) <= 5.0:
-        judge_winner, judge_reason = await _run_tie_break_judge(payload, ranked[0], ranked[1])
-        if judge_winner == "B":
-            selected = ranked[1]
-        if judge_winner in {"A", "B"}:
-            reason = judge_reason or f"Tie-break judge selected candidate {judge_winner}."
+    selected = max(successful_results, key=lambda result: result.score)
 
     return CompareModelsWinner(
         backend=selected.backend,
         model=selected.model,
         score=round(float(selected.score), 2),
-        reason=reason,
+        reason=None,
     )
-
-
-def _comparison_backend_key(result: CompareModelsResult) -> str:
-    """Build the persisted backend key for one compare-model result row."""
-
-    return f"{result.backend}_{result.model.replace(':', '').replace('.', '')}"
 
 
 def _parse_json_list(value: str | None) -> list[str]:
@@ -502,8 +383,8 @@ def _parse_json_list(value: str | None) -> list[str]:
     return [str(item) for item in parsed]
 
 
-def _sort_comparison_rows(rows: list[LLMComparisonRun]) -> list[LLMComparisonRun]:
-    """Return stored comparison rows in the configured model display order."""
+def _sort_comparison_results(rows: list[ComparisonRunResult]) -> list[ComparisonRunResult]:
+    """Return stored comparison child rows in configured model display order."""
 
     return sorted(
         rows,
@@ -517,88 +398,93 @@ async def _persist_compare_results(
     run_id: str,
     payload: CompareModelsRequest,
     results: list[CompareModelsResult],
+    total_time_ms: int,
+    winner: CompareModelsWinner | None,
 ) -> None:
-    """Persist one comparison run as four separate rows."""
+    """Persist one comparison run (master + children) in a single transaction."""
 
-    db.add_all(
-        [
-            LLMComparisonRun(
-                run_id=run_id,
-                theme_name=payload.theme_name,
-                tone_funny_pct=payload.tone_funny_pct,
-                tone_emotion_pct=payload.tone_emotion_pct,
-                prompt_keywords=json.dumps(payload.prompt_keywords),
-                visual_style=payload.visual_style,
-                phrase_count=payload.count,
-                backend=_comparison_backend_key(result),
-                model_name=result.model,
-                success=result.success,
-                phrases=json.dumps(result.phrases) if result.success else None,
-                latency_ms=result.latency_ms if result.success else None,
-                error_message=result.error,
-            )
-            for result in results
-        ]
+    successful_results = [result for result in results if result.success]
+    winner_result = None
+    if winner is not None:
+        winner_result = next(
+            (
+                result
+                for result in successful_results
+                if result.model == winner.model and result.backend == winner.backend
+            ),
+            None,
+        )
+
+    run = ComparisonRun(
+        run_id=run_id,
+        theme_name=payload.theme_name,
+        tone_funny_pct=payload.tone_funny_pct,
+        tone_emotion_pct=payload.tone_emotion_pct,
+        prompt_keywords=json.dumps(payload.prompt_keywords),
+        visual_style=payload.visual_style,
+        audience=payload.audience,
+        phrase_count=payload.count,
+        max_words=payload.max_words,
+        emoji_policy=payload.emoji_policy,
+        tone_style=payload.tone_style,
+        avoid_cliches=payload.avoid_cliches,
+        total_time_ms=total_time_ms,
+        backends_succeeded=len(successful_results),
+        winner_model=winner.model if winner else None,
+        winner_backend=winner.backend if winner else None,
+        winner_score=winner.score if winner else None,
+        winner_phrases=json.dumps(winner_result.phrases) if winner_result else None,
     )
+    run.results = [
+        ComparisonRunResult(
+            run_id=run_id,
+            model_name=result.model,
+            backend=result.backend,
+            success=result.success,
+            score=result.score if result.success else None,
+            phrases=json.dumps(result.phrases) if result.success else None,
+            latency_ms=result.latency_ms,
+            error_message=result.error,
+        )
+        for result in results
+    ]
 
     try:
-        await db.commit()
-    except SQLAlchemyError as exc:
+        async with db.begin():
+            db.add(run)
+    except SQLAlchemyError:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save comparison results.",
-        ) from exc
+        logger.exception("Failed to persist comparison run '%s'. Returning live response anyway.", run_id)
 
 
-def _build_history_summary(
-    *,
-    run_id: str,
-    theme_name: str,
-    created_at: str,
-    rows: list[LLMComparisonRun],
-) -> CompareResultsSummaryResponse:
-    """Build one grouped history response from persisted rows."""
+def _build_compare_run_response(row: ComparisonRun) -> CompareResultsRunResponse:
+    """Build one comparison-run response from master + child ORM rows."""
 
-    return CompareResultsSummaryResponse(
-        run_id=run_id,
-        theme_name=theme_name,
-        created_at=created_at,
+    return CompareResultsRunResponse(
+        run_id=row.run_id,
+        theme_name=row.theme_name,
+        created_at=row.created_at.isoformat() if row.created_at is not None else "",
+        tone_funny_pct=row.tone_funny_pct,
+        tone_emotion_pct=row.tone_emotion_pct,
+        prompt_keywords=_parse_json_list(row.prompt_keywords),
+        visual_style=row.visual_style,
+        total_time_ms=row.total_time_ms,
+        backends_succeeded=row.backends_succeeded,
+        winner_model=row.winner_model,
+        winner_backend=row.winner_backend,
+        winner_score=row.winner_score,
+        winner_phrases=_parse_json_list(row.winner_phrases),
         results=[
-            CompareResultsSummaryItem(
-                model_name=row.model_name,
-                success=row.success,
-                latency_ms=row.latency_ms or 0,
-                phrases=_parse_json_list(row.phrases),
+            CompareResultsItem(
+                model_name=result.model_name,
+                backend=result.backend,
+                success=result.success,
+                score=result.score,
+                phrases=_parse_json_list(result.phrases),
+                latency_ms=result.latency_ms,
+                error=result.error_message,
             )
-            for row in _sort_comparison_rows(rows)
-        ],
-    )
-
-
-def _build_detail_response(rows: list[LLMComparisonRun]) -> CompareResultsDetailResponse:
-    """Build the detail payload for a single persisted comparison run."""
-
-    ordered_rows = _sort_comparison_rows(rows)
-    created_at = max(
-        (row.created_at for row in ordered_rows if row.created_at is not None),
-        default=None,
-    )
-
-    return CompareResultsDetailResponse(
-        run_id=ordered_rows[0].run_id,
-        theme_name=ordered_rows[0].theme_name,
-        created_at=created_at.isoformat() if created_at is not None else "",
-        results=[
-            CompareResultsDetailItem(
-                backend=row.backend,
-                model_name=row.model_name,
-                success=row.success,
-                latency_ms=row.latency_ms or 0,
-                phrases=_parse_json_list(row.phrases),
-                error_message=row.error_message,
-            )
-            for row in ordered_rows
+            for result in _sort_comparison_results(row.results)
         ],
     )
 
@@ -615,6 +501,9 @@ async def generate_phrases(payload: PhraseGenerationRequest, request: Request) -
         visual_style=payload.visual_style,
         event_name=payload.event_name,
         count=payload.count,
+        tone_style=payload.tone_style,
+        emoji_policy=payload.emoji_policy,
+        style_anchor_enabled=payload.style_anchor_enabled,
     )
     best_phrase = await groq_service.select_best_phrase(
         phrases=phrases,
@@ -706,7 +595,6 @@ async def compare_models(
     """Compare phrase generation responses across the configured LLM backends."""
 
     run_id = str(uuid4())
-    started_at = perf_counter()
     results: list[CompareModelsResult] = []
     send_extended_prompt_options = True
     async with httpx.AsyncClient(timeout=LLM_COMPARATOR_TIMEOUT_SECONDS) as client:
@@ -808,7 +696,7 @@ async def compare_models(
             latency_ms = int(meta.get("latency_ms", 0)) if isinstance(meta, dict) else 0
             phrases = [str(item) for item in items] if isinstance(items, list) else []
             scoring = score_result(payload.model_dump(), phrases)
-            score = float(scoring.get("score", 0.0))
+            score = _extract_model_score(meta, latency_ms)
             constraint_issues = bool(scoring.get("constraint_issues", False)) or _has_constraint_issues(result)
             results.append(
                 CompareModelsResult(
@@ -832,13 +720,15 @@ async def compare_models(
     slowest_model = (
         max(successful_results, key=lambda result: result.latency_ms).model if successful_results else None
     )
-    total_time_ms = int((perf_counter() - started_at) * 1000)
+    total_time_ms = sum(max(0, int(result.latency_ms or 0)) for result in results)
     winner = await _select_winner(payload, results)
     await _persist_compare_results(
         db,
         run_id=run_id,
         payload=payload,
         results=results,
+        total_time_ms=total_time_ms,
+        winner=winner,
     )
 
     return CompareModelsResponse(
@@ -859,62 +749,39 @@ async def compare_models(
     )
 
 
-@router.get("/compare-results", response_model=list[CompareResultsSummaryResponse])
+@router.get("/compare-results", response_model=list[CompareResultsRunResponse])
 async def get_compare_results(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-) -> list[CompareResultsSummaryResponse]:
-    """Return the most recent grouped comparison runs."""
+) -> list[CompareResultsRunResponse]:
+    """Return persisted comparison runs (master + children), newest first."""
 
-    summary_statement = (
-        select(
-            LLMComparisonRun.run_id.label("run_id"),
-            func.max(LLMComparisonRun.theme_name).label("theme_name"),
-            func.max(LLMComparisonRun.created_at).label("created_at"),
-        )
-        .group_by(LLMComparisonRun.run_id)
-        .order_by(func.max(LLMComparisonRun.created_at).desc())
-        .limit(20)
+    statement = (
+        select(ComparisonRun)
+        .options(selectinload(ComparisonRun.results))
+        .order_by(ComparisonRun.created_at.desc(), ComparisonRun.id.desc())
+        .offset(offset)
+        .limit(limit)
     )
-    summary_rows = (await db.execute(summary_statement)).all()
-    run_ids = [str(row.run_id) for row in summary_rows]
-    if not run_ids:
-        return []
-
-    detail_statement = (
-        select(LLMComparisonRun)
-        .where(LLMComparisonRun.run_id.in_(run_ids))
-        .order_by(LLMComparisonRun.created_at.desc(), LLMComparisonRun.id.desc())
-    )
-    persisted_rows = (await db.execute(detail_statement)).scalars().all()
-    grouped_rows: dict[str, list[LLMComparisonRun]] = defaultdict(list)
-    for row in persisted_rows:
-        grouped_rows[row.run_id].append(row)
-
-    return [
-        _build_history_summary(
-            run_id=str(row.run_id),
-            theme_name=str(row.theme_name),
-            created_at=row.created_at.isoformat() if row.created_at is not None else "",
-            rows=grouped_rows.get(str(row.run_id), []),
-        )
-        for row in summary_rows
-    ]
+    rows = (await db.execute(statement)).scalars().all()
+    return [_build_compare_run_response(row) for row in rows]
 
 
-@router.get("/compare-results/{run_id}", response_model=CompareResultsDetailResponse)
+@router.get("/compare-results/{run_id}", response_model=CompareResultsRunResponse)
 async def get_compare_result_detail(
     run_id: str,
     db: AsyncSession = Depends(get_db),
-) -> CompareResultsDetailResponse:
-    """Return the full persisted detail for one comparison run."""
+) -> CompareResultsRunResponse:
+    """Return one persisted comparison run (master + children)."""
 
     statement = (
-        select(LLMComparisonRun)
-        .where(LLMComparisonRun.run_id == run_id)
-        .order_by(LLMComparisonRun.created_at.desc(), LLMComparisonRun.id.desc())
+        select(ComparisonRun)
+        .options(selectinload(ComparisonRun.results))
+        .where(ComparisonRun.run_id == run_id)
     )
-    rows = (await db.execute(statement)).scalars().all()
-    if not rows:
+    row = (await db.execute(statement)).scalars().first()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comparison run not found.")
 
-    return _build_detail_response(rows)
+    return _build_compare_run_response(row)
