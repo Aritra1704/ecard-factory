@@ -50,11 +50,15 @@
   "tone_emotion_pct": 95,
   "prompt_keywords": ["light", "diyas", "family", "home"],
   "visual_style": "warm golden photography",
+  "targets": [
+    { "backend": "ollama", "model": "qwen2.5:7b-instruct" },
+    { "backend": "ollama", "model": "mistral:7b" }
+  ],
   "audience": "general Indian family",
   "count": 3,
-  "max_words": 15,
-  "emoji_policy": "none",
-  "tone_style": "conversational",
+  "max_tokens": 120,
+  "temperature": 0.8,
+  "output_spec": {"format": "one_liner", "items": 3},
   "avoid_cliches": true
 }'
               ></textarea>
@@ -181,6 +185,20 @@
                     <option value="playful">playful</option>
                   </select>
                 </label>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Output Format</span>
+                  <select
+                    id="outputFormat"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  >
+                    <option value="one_liner" selected>one_liner</option>
+                    <option value="paragraph">paragraph</option>
+                    <option value="one_page">one_page</option>
+                    <option value="pros_cons">pros_cons</option>
+                    <option value="verse">verse</option>
+                    <option value="story">story</option>
+                  </select>
+                </label>
                 <label
                   class="flex h-full items-center gap-2 rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-slate-100"
                 >
@@ -192,7 +210,103 @@
                   />
                   Avoid Clich&eacute;s
                 </label>
+              </div>
+
+              <div class="grid gap-3 md:grid-cols-4">
+                <label
+                  class="flex h-full items-center justify-between gap-3 rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-slate-100"
+                >
+                  <span class="text-xs font-medium text-slate-300">Enable OpenAI Judge</span>
+                  <input
+                    id="judgeEnabled"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+                  />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Judge Mode</span>
+                  <select
+                    id="judgeMode"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  >
+                    <option value="tie_break" selected>tie_break</option>
+                    <option value="always">always</option>
+                  </select>
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Temperature</span>
+                  <input
+                    id="temperature"
+                    type="number"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value="0.8"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
                 <div></div>
+              </div>
+
+              <div class="rounded-xl border border-line bg-slate-950 p-3">
+                <p class="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">Model Targets</p>
+                <div id="targetsContainer" class="mt-3 space-y-3"></div>
+                <p class="mt-2 text-xs text-slate-400">
+                  If none selected, defaults to configured targets.
+                </p>
+              </div>
+
+              <div class="grid gap-3 md:grid-cols-4">
+                <label id="outputItemsField" class="hidden">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Items</span>
+                  <input
+                    id="outputItems"
+                    type="number"
+                    min="1"
+                    value="3"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
+                <label id="outputTargetWordsField" class="hidden">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Target Words</span>
+                  <input
+                    id="outputTargetWords"
+                    type="number"
+                    min="1"
+                    value="80"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
+                <label id="outputItemsPerSectionField" class="hidden">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Items Per Section</span>
+                  <input
+                    id="outputItemsPerSection"
+                    type="number"
+                    min="1"
+                    value="4"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
+                <label id="outputLineCountField" class="hidden">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Line Count</span>
+                  <input
+                    id="outputLineCount"
+                    type="number"
+                    min="1"
+                    value="10"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
+                <label id="outputMaxWordsPerLineField" class="hidden">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Max Words Per Line</span>
+                  <input
+                    id="outputMaxWordsPerLine"
+                    type="number"
+                    min="1"
+                    value="8"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  />
+                </label>
               </div>
             </div>
 
@@ -301,7 +415,19 @@
         <div id="errorBanner" class="mt-4 hidden rounded-2xl border border-danger/50 bg-danger/10 px-4 py-3 text-sm text-red-100"></div>
 
         <div id="resultsSection" class="mt-4 hidden">
+          <div
+            id="judgeFallbackBanner"
+            class="mb-4 hidden rounded-2xl border border-amber-400/40 bg-amber-400/15 px-4 py-3 text-sm font-medium text-amber-100"
+          >
+            Judge unavailable - used baseline scoring
+          </div>
           <div id="winnerBanner" class="mb-4 rounded-2xl border border-amber-300/40 bg-amber-300/20 px-4 py-3 text-sm font-semibold text-amber-100"></div>
+          <p id="winnerSourceLine" class="mb-3 text-xs uppercase tracking-[0.16em] text-slate-400">Winner source: baseline</p>
+          <div id="judgeVerdictSection" class="mb-4 hidden rounded-2xl border border-line bg-panelSoft px-4 py-3">
+            <p class="text-sm font-semibold text-cyan-200">OpenAI Judge Verdict</p>
+            <div id="judgeRanking" class="mt-2 text-sm text-slate-200"></div>
+            <div id="judgePerModel" class="mt-3 space-y-2"></div>
+          </div>
 
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-line text-left text-sm">
@@ -311,6 +437,7 @@
                   <th class="px-3 py-3 font-medium">Backend</th>
                   <th class="px-3 py-3 font-medium">Status</th>
                   <th class="px-3 py-3 font-medium">Score</th>
+                  <th class="px-3 py-3 font-medium">Quality</th>
                   <th class="px-3 py-3 font-medium">Time</th>
                   <th class="px-3 py-3 font-medium">Phrases</th>
                 </tr>
@@ -380,7 +507,22 @@
       const maxWordsInput = document.getElementById("maxWords");
       const emojiPolicyInput = document.getElementById("emojiPolicy");
       const toneStyleInput = document.getElementById("toneStyle");
+      const outputFormatInput = document.getElementById("outputFormat");
+      const outputItemsField = document.getElementById("outputItemsField");
+      const outputTargetWordsField = document.getElementById("outputTargetWordsField");
+      const outputItemsPerSectionField = document.getElementById("outputItemsPerSectionField");
+      const outputLineCountField = document.getElementById("outputLineCountField");
+      const outputMaxWordsPerLineField = document.getElementById("outputMaxWordsPerLineField");
+      const outputItemsInput = document.getElementById("outputItems");
+      const outputTargetWordsInput = document.getElementById("outputTargetWords");
+      const outputItemsPerSectionInput = document.getElementById("outputItemsPerSection");
+      const outputLineCountInput = document.getElementById("outputLineCount");
+      const outputMaxWordsPerLineInput = document.getElementById("outputMaxWordsPerLine");
       const avoidClichesInput = document.getElementById("avoidCliches");
+      const judgeEnabledInput = document.getElementById("judgeEnabled");
+      const judgeModeInput = document.getElementById("judgeMode");
+      const temperatureInput = document.getElementById("temperature");
+      const targetsContainer = document.getElementById("targetsContainer");
 
       const quickThemeNameInput = document.getElementById("quickThemeName");
       const quickKeywordsInput = document.getElementById("quickKeywords");
@@ -396,7 +538,12 @@
       const spinner = document.getElementById("spinner");
       const errorBanner = document.getElementById("errorBanner");
       const resultsSection = document.getElementById("resultsSection");
+      const judgeFallbackBanner = document.getElementById("judgeFallbackBanner");
       const winnerBanner = document.getElementById("winnerBanner");
+      const winnerSourceLine = document.getElementById("winnerSourceLine");
+      const judgeVerdictSection = document.getElementById("judgeVerdictSection");
+      const judgeRanking = document.getElementById("judgeRanking");
+      const judgePerModel = document.getElementById("judgePerModel");
       const resultsBody = document.getElementById("resultsBody");
       const winnerSummary = document.getElementById("winnerSummary");
       const fastestSummary = document.getElementById("fastestSummary");
@@ -413,6 +560,128 @@
       let historyHasMore = true;
       const historyRuns = [];
       const expandedRunIds = new Set();
+      const OUTPUT_SPEC_FORMATS = ["one_liner", "paragraph", "one_page", "pros_cons", "verse", "story"];
+      const TARGET_BACKENDS = ["ollama", "groq", "openai"];
+      const DEFAULT_TARGETS = [
+        { backend: "ollama", model: "qwen2.5:7b-instruct" },
+        { backend: "ollama", model: "mistral:7b" },
+      ];
+      const DEFAULT_MODEL_CATALOG = {
+        ollama: ["qwen2.5:7b-instruct", "mistral:7b", "llama3.1:8b"],
+        groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+        openai: ["gpt-4o-mini", "gpt-4.1-mini"],
+      };
+      const MODEL_CATALOG = (() => {
+        const fromWindow = window.CONTENTFORGE_MODEL_CONFIG;
+        if (!fromWindow || typeof fromWindow !== "object") {
+          return DEFAULT_MODEL_CATALOG;
+        }
+
+        const normalized = {};
+        TARGET_BACKENDS.forEach((backend) => {
+          const values = fromWindow[backend];
+          const asList = Array.isArray(values) ? values.map((item) => String(item).trim()).filter(Boolean) : [];
+          normalized[backend] = asList.length ? asList : DEFAULT_MODEL_CATALOG[backend];
+        });
+        return normalized;
+      })();
+
+      function normalizeTarget(rawTarget) {
+        if (!rawTarget || typeof rawTarget !== "object" || Array.isArray(rawTarget)) {
+          return null;
+        }
+
+        const backend = String(rawTarget.backend || "")
+          .trim()
+          .toLowerCase();
+        const model = String(rawTarget.model || "").trim();
+        if (!TARGET_BACKENDS.includes(backend) || !model) {
+          return null;
+        }
+        return { backend, model };
+      }
+
+      function normalizeTargets(rawTargets) {
+        if (!Array.isArray(rawTargets)) {
+          return [];
+        }
+
+        const deduped = new Map();
+        rawTargets.forEach((rawTarget) => {
+          const target = normalizeTarget(rawTarget);
+          if (!target) {
+            return;
+          }
+          deduped.set(`${target.backend}::${target.model}`, target);
+        });
+        return Array.from(deduped.values());
+      }
+
+      function defaultTargets() {
+        return DEFAULT_TARGETS.filter(
+          (target) =>
+            Array.isArray(MODEL_CATALOG[target.backend]) && MODEL_CATALOG[target.backend].includes(target.model)
+        );
+      }
+
+      function selectedTargetsFromPicker() {
+        const checked = Array.from(targetsContainer.querySelectorAll('input[type="checkbox"][data-target-backend][data-target-model]:checked'))
+          .map((node) => ({
+            backend: String(node.getAttribute("data-target-backend") || "").trim().toLowerCase(),
+            model: String(node.getAttribute("data-target-model") || "").trim(),
+          }));
+        return normalizeTargets(checked);
+      }
+
+      function applyTargetsToPicker(rawTargets) {
+        const normalized = normalizeTargets(rawTargets);
+        const selected = new Set(normalized.map((target) => `${target.backend}::${target.model}`));
+        targetsContainer
+          .querySelectorAll('input[type="checkbox"][data-target-backend][data-target-model]')
+          .forEach((node) => {
+            const key = `${String(node.getAttribute("data-target-backend") || "").trim().toLowerCase()}::${String(
+              node.getAttribute("data-target-model") || ""
+            ).trim()}`;
+            node.checked = selected.has(key);
+          });
+      }
+
+      function renderTargetsPicker() {
+        const backendBlocks = TARGET_BACKENDS.map((backend) => {
+          const models = Array.isArray(MODEL_CATALOG[backend]) ? MODEL_CATALOG[backend] : [];
+          const options = models
+            .map(
+              (model) => `
+                <label class="inline-flex items-center gap-2 rounded-lg border border-line bg-panelSoft px-2.5 py-1.5 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    data-target-backend="${escapeHtml(backend)}"
+                    data-target-model="${escapeHtml(model)}"
+                    class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+                  />
+                  <span class="font-medium">${escapeHtml(model)}</span>
+                </label>
+              `
+            )
+            .join("");
+          return `
+            <div>
+              <p class="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">${escapeHtml(backend)}</p>
+              <div class="flex flex-wrap gap-2">${options}</div>
+            </div>
+          `;
+        }).join("");
+
+        targetsContainer.innerHTML = backendBlocks;
+        const defaults = defaultTargets();
+        applyTargetsToPicker(defaults.length ? defaults : DEFAULT_TARGETS);
+      }
+
+      function createTraceId() {
+        const timestamp = Date.now();
+        const randomSuffix = Math.random().toString(36).slice(2, 8);
+        return `ecard-${timestamp}-${randomSuffix}`;
+      }
 
       function escapeHtml(value) {
         return String(value)
@@ -443,6 +712,174 @@
         } catch (error) {
           return [];
         }
+      }
+
+      function parseResultPhrases(value) {
+        if (Array.isArray(value)) {
+          return value.map((item) => String(item));
+        }
+
+        if (typeof value !== "string") {
+          return [];
+        }
+
+        const raw = value;
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed.map((item) => String(item));
+          }
+        } catch (error) {
+          // non-JSON plain text; preserve as one block
+        }
+
+        return raw.trim() ? [raw] : [];
+      }
+
+      function normalizeOutputFormat(value) {
+        const normalized = String(value || "")
+          .trim()
+          .toLowerCase();
+        return OUTPUT_SPEC_FORMATS.includes(normalized) ? normalized : null;
+      }
+
+      function resolveResultOutputFormat(result) {
+        return (
+          normalizeOutputFormat(result.output_format) ||
+          normalizeOutputFormat(result.outputFormat) ||
+          normalizeOutputFormat(result.OutputSpec && result.OutputSpec.format) ||
+          normalizeOutputFormat(result.output_spec && result.output_spec.format) ||
+          normalizeOutputFormat(result.outputSpec && result.outputSpec.format)
+        );
+      }
+
+      function splitLinesFromRawText(rawText) {
+        return String(rawText || "")
+          .replaceAll("\r\n", "\n")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+      }
+
+      function parseProsConsSections(rawText, phrases) {
+        const lines = splitLinesFromRawText(rawText);
+        let mode = null;
+        const pros = [];
+        const cons = [];
+
+        lines.forEach((line) => {
+          if (/^pros?\b/i.test(line)) {
+            mode = "pros";
+            const content = line.replace(/^pros?\s*[:\-]?\s*/i, "").trim();
+            if (content) {
+              pros.push(stripLeadingListMarker(content));
+            }
+            return;
+          }
+
+          if (/^cons?\b/i.test(line)) {
+            mode = "cons";
+            const content = line.replace(/^cons?\s*[:\-]?\s*/i, "").trim();
+            if (content) {
+              cons.push(stripLeadingListMarker(content));
+            }
+            return;
+          }
+
+          if (mode === "pros") {
+            pros.push(stripLeadingListMarker(line));
+          } else if (mode === "cons") {
+            cons.push(stripLeadingListMarker(line));
+          }
+        });
+
+        if (pros.length || cons.length) {
+          return { pros: pros.filter(Boolean), cons: cons.filter(Boolean) };
+        }
+
+        const cleaned = phrases.map((phrase) => stripLeadingListMarker(phrase)).filter(Boolean);
+        if (!cleaned.length) {
+          return { pros: [], cons: [] };
+        }
+
+        const midpoint = Math.ceil(cleaned.length / 2);
+        return { pros: cleaned.slice(0, midpoint), cons: cleaned.slice(midpoint) };
+      }
+
+      function renderOutputByFormat(result, phrases, rawText, errorText) {
+        const outputFormat = resolveResultOutputFormat(result);
+
+        if (!phrases.length) {
+          return {
+            formatLabel: outputFormat || "default",
+            contentHtml: `<p class="text-xs text-slate-400">${escapeHtml(errorText || "No phrases")}</p>`,
+          };
+        }
+
+        if (outputFormat === "paragraph" || outputFormat === "one_page" || outputFormat === "story") {
+          return {
+            formatLabel: outputFormat,
+            contentHtml: `<div class="whitespace-pre-wrap leading-7 text-slate-200">${escapeHtml(rawText)}</div>`,
+          };
+        }
+
+        if (outputFormat === "verse") {
+          return {
+            formatLabel: outputFormat,
+            contentHtml: `<pre class="whitespace-pre-wrap break-words text-slate-200">${escapeHtml(rawText)}</pre>`,
+          };
+        }
+
+        if (outputFormat === "pros_cons") {
+          const sections = parseProsConsSections(rawText, phrases);
+          const prosHtml = sections.pros.length
+            ? `<ul class="mt-1 list-disc space-y-1 pl-5">${sections.pros
+                .map((item) => `<li class="text-slate-200">${escapeHtml(item)}</li>`)
+                .join("")}</ul>`
+            : '<p class="mt-1 text-xs text-slate-400">No pros listed.</p>';
+          const consHtml = sections.cons.length
+            ? `<ul class="mt-1 list-disc space-y-1 pl-5">${sections.cons
+                .map((item) => `<li class="text-slate-200">${escapeHtml(item)}</li>`)
+                .join("")}</ul>`
+            : '<p class="mt-1 text-xs text-slate-400">No cons listed.</p>';
+
+          return {
+            formatLabel: outputFormat,
+            contentHtml: `
+              <div class="grid gap-3 md:grid-cols-2">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Pros</p>
+                  ${prosHtml}
+                </div>
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.16em] text-red-300">Cons</p>
+                  ${consHtml}
+                </div>
+              </div>
+            `,
+          };
+        }
+
+        if (outputFormat === "one_liner") {
+          const lines = phrases
+            .flatMap((phrase) => splitLinesFromRawText(phrase))
+            .map((line) => stripLeadingListMarker(line))
+            .filter(Boolean);
+          const lineItems = lines.length ? lines : phrases.map((phrase) => stripLeadingListMarker(phrase)).filter(Boolean);
+          return {
+            formatLabel: outputFormat,
+            contentHtml: `<ol class="list-decimal space-y-1 pl-5">${lineItems
+              .map((line) => `<li class="leading-6 text-slate-200">${escapeHtml(line)}</li>`)
+              .join("")}</ol>`,
+          };
+        }
+
+        return {
+          formatLabel: "default",
+          contentHtml: `<ol class="list-decimal space-y-1 pl-5">${phrases
+            .map((phrase) => `<li class="leading-6 text-slate-200">${escapeHtml(stripLeadingListMarker(phrase))}</li>`)
+            .join("")}</ol>`,
+        };
       }
 
       function formatDuration(ms) {
@@ -517,6 +954,11 @@
       }
 
       function buildPayload() {
+        const outputSpec = buildOutputSpec();
+        const selectedTargets = selectedTargetsFromPicker();
+        const fallbackTargets = defaultTargets();
+        const targets = selectedTargets.length ? selectedTargets : fallbackTargets.length ? fallbackTargets : DEFAULT_TARGETS;
+        const temperatureValue = Number(temperatureInput.value);
         return {
           theme_name: themeNameInput.value.trim(),
           tone_funny_pct: Number(funnyPctInput.value || 0),
@@ -526,14 +968,88 @@
             .map((item) => item.trim())
             .filter(Boolean),
           visual_style: visualStyleInput.value.trim(),
-          audience: audienceInput.value.trim() || "general",
+          targets,
           count: Number(countInput.value || 3),
-          max_words: Number(maxWordsInput.value || 16),
-          emoji_policy: toApiEmojiPolicy(emojiPolicyInput.value),
-          tone_style: toApiToneStyle(toneStyleInput.value),
-          avoid_cliches: Boolean(avoidClichesInput.checked),
-          style_anchor_enabled: true,
+          max_tokens: Number(maxWordsInput.value || 120),
+          temperature: Number.isFinite(temperatureValue) ? temperatureValue : 0.8,
+          output_spec: outputSpec,
+          trace_id: createTraceId(),
         };
+      }
+
+      function buildOutputSpec() {
+        const format = OUTPUT_SPEC_FORMATS.includes(outputFormatInput.value)
+          ? outputFormatInput.value
+          : "one_liner";
+        const outputSpec = { format };
+
+        if (format === "one_liner") {
+          outputSpec.items = Number(outputItemsInput.value || 3);
+        } else if (format === "paragraph") {
+          outputSpec.target_words = Number(outputTargetWordsInput.value || 80);
+        } else if (format === "one_page") {
+          outputSpec.target_words = Number(outputTargetWordsInput.value || 250);
+        } else if (format === "pros_cons") {
+          outputSpec.items_per_section = Number(outputItemsPerSectionInput.value || 4);
+        } else if (format === "verse") {
+          outputSpec.line_count = Number(outputLineCountInput.value || 10);
+          outputSpec.max_words_per_line = Number(outputMaxWordsPerLineInput.value || 8);
+        } else if (format === "story") {
+          outputSpec.target_words = Number(outputTargetWordsInput.value || 450);
+        }
+
+        return outputSpec;
+      }
+
+      function setOutputFieldDefaults(format, force = false) {
+        if (format === "one_liner" && (force || !outputItemsInput.value)) {
+          outputItemsInput.value = "3";
+        }
+        if (format === "paragraph" && (force || !outputTargetWordsInput.value)) {
+          outputTargetWordsInput.value = "80";
+        }
+        if (format === "one_page" && (force || !outputTargetWordsInput.value)) {
+          outputTargetWordsInput.value = "250";
+        }
+        if (format === "pros_cons" && (force || !outputItemsPerSectionInput.value)) {
+          outputItemsPerSectionInput.value = "4";
+        }
+        if (format === "verse") {
+          if (force || !outputLineCountInput.value) {
+            outputLineCountInput.value = "10";
+          }
+          if (force || !outputMaxWordsPerLineInput.value) {
+            outputMaxWordsPerLineInput.value = "8";
+          }
+        }
+        if (format === "story" && (force || !outputTargetWordsInput.value)) {
+          outputTargetWordsInput.value = "450";
+        }
+      }
+
+      function renderOutputSpecFields(resetDefaults = false) {
+        const format = OUTPUT_SPEC_FORMATS.includes(outputFormatInput.value)
+          ? outputFormatInput.value
+          : "one_liner";
+
+        outputItemsField.classList.add("hidden");
+        outputTargetWordsField.classList.add("hidden");
+        outputItemsPerSectionField.classList.add("hidden");
+        outputLineCountField.classList.add("hidden");
+        outputMaxWordsPerLineField.classList.add("hidden");
+
+        if (format === "one_liner") {
+          outputItemsField.classList.remove("hidden");
+        } else if (format === "paragraph" || format === "one_page" || format === "story") {
+          outputTargetWordsField.classList.remove("hidden");
+        } else if (format === "pros_cons") {
+          outputItemsPerSectionField.classList.remove("hidden");
+        } else if (format === "verse") {
+          outputLineCountField.classList.remove("hidden");
+          outputMaxWordsPerLineField.classList.remove("hidden");
+        }
+
+        setOutputFieldDefaults(format, resetDefaults);
       }
 
       function setImportStatus(text, type) {
@@ -573,14 +1089,61 @@
         if (Object.prototype.hasOwnProperty.call(raw, "count")) {
           countInput.value = String(raw.count ?? "");
         }
+        if (Object.prototype.hasOwnProperty.call(raw, "targets")) {
+          applyTargetsToPicker(raw.targets);
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "max_tokens")) {
+          maxWordsInput.value = String(raw.max_tokens ?? "");
+        }
         if (Object.prototype.hasOwnProperty.call(raw, "max_words")) {
           maxWordsInput.value = String(raw.max_words ?? "");
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "temperature")) {
+          temperatureInput.value = String(raw.temperature ?? "");
         }
         if (Object.prototype.hasOwnProperty.call(raw, "emoji_policy")) {
           setEmojiPolicySelect(raw.emoji_policy);
         }
         if (Object.prototype.hasOwnProperty.call(raw, "tone_style")) {
           setToneStyleSelect(raw.tone_style);
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "judge_enabled")) {
+          judgeEnabledInput.checked = Boolean(raw.judge_enabled);
+          setJudgeModeState();
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "judge_mode")) {
+          const mode = normalizeJudgeMode(String(raw.judge_mode || "").trim().toLowerCase());
+          judgeModeInput.value = mode;
+        }
+        const importedOutputSpec =
+          raw.output_spec && typeof raw.output_spec === "object" && !Array.isArray(raw.output_spec)
+            ? raw.output_spec
+            : raw.OutputSpec && typeof raw.OutputSpec === "object" && !Array.isArray(raw.OutputSpec)
+            ? raw.OutputSpec
+            : null;
+        if (importedOutputSpec) {
+          const importedFormat = String(importedOutputSpec.format || "")
+            .trim()
+            .toLowerCase();
+          if (OUTPUT_SPEC_FORMATS.includes(importedFormat)) {
+            outputFormatInput.value = importedFormat;
+          }
+          renderOutputSpecFields(true);
+          if (Object.prototype.hasOwnProperty.call(importedOutputSpec, "items")) {
+            outputItemsInput.value = String(importedOutputSpec.items ?? "");
+          }
+          if (Object.prototype.hasOwnProperty.call(importedOutputSpec, "target_words")) {
+            outputTargetWordsInput.value = String(importedOutputSpec.target_words ?? "");
+          }
+          if (Object.prototype.hasOwnProperty.call(importedOutputSpec, "items_per_section")) {
+            outputItemsPerSectionInput.value = String(importedOutputSpec.items_per_section ?? "");
+          }
+          if (Object.prototype.hasOwnProperty.call(importedOutputSpec, "line_count")) {
+            outputLineCountInput.value = String(importedOutputSpec.line_count ?? "");
+          }
+          if (Object.prototype.hasOwnProperty.call(importedOutputSpec, "max_words_per_line")) {
+            outputMaxWordsPerLineInput.value = String(importedOutputSpec.max_words_per_line ?? "");
+          }
         }
         if (Object.prototype.hasOwnProperty.call(raw, "avoid_cliches")) {
           avoidClichesInput.checked = Boolean(raw.avoid_cliches);
@@ -641,6 +1204,28 @@
         });
       }
 
+      async function copyTextToClipboard(text) {
+        if (!text) {
+          return false;
+        }
+
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+
+        const fallback = document.createElement("textarea");
+        fallback.value = text;
+        fallback.setAttribute("readonly", "");
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.appendChild(fallback);
+        fallback.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(fallback);
+        return copied;
+      }
+
       function resolveScore(result) {
         if (result && typeof result.score === "number" && Number.isFinite(result.score)) {
           return result.score;
@@ -648,11 +1233,354 @@
         return null;
       }
 
+      function toPercent(value) {
+        if (typeof value !== "number" || Number.isNaN(value)) {
+          return null;
+        }
+        return Math.max(0, Math.min(100, Math.round(value * 100)));
+      }
+
+      function clampPercent(value) {
+        if (typeof value !== "number" || Number.isNaN(value)) {
+          return null;
+        }
+        return Math.max(0, Math.min(100, Math.round(value)));
+      }
+
+      function toFiniteNumber(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function normalizeJudgeMode(value) {
+        return value === "always" ? "always" : "tie_break";
+      }
+
+      function parseJudgeEntries(bucket) {
+        const entries = [];
+
+        if (Array.isArray(bucket)) {
+          bucket.forEach((item) => {
+            if (!item || typeof item !== "object") {
+              return;
+            }
+            const model = String(item.model || item.model_name || "").trim();
+            if (!model) {
+              return;
+            }
+            const backend = item.backend ? String(item.backend) : null;
+            const totalCandidate =
+              item.total !== undefined && item.total !== null
+                ? item.total
+                : item.score !== undefined && item.score !== null
+                ? item.score
+                : item.judge_total;
+            const total = toFiniteNumber(totalCandidate);
+            const reason = item.reason ? String(item.reason).trim() : null;
+            entries.push({ model, backend, total, reason });
+          });
+          return entries;
+        }
+
+        if (bucket && typeof bucket === "object") {
+          Object.entries(bucket).forEach(([key, value]) => {
+            if (value && typeof value === "object" && !Array.isArray(value)) {
+              const model = String(value.model || value.model_name || key).trim();
+              if (!model) {
+                return;
+              }
+              const backend = value.backend ? String(value.backend) : null;
+              const totalCandidate =
+                value.total !== undefined && value.total !== null
+                  ? value.total
+                  : value.score !== undefined && value.score !== null
+                  ? value.score
+                  : value.judge_total;
+              const total = toFiniteNumber(totalCandidate);
+              const reason = value.reason ? String(value.reason).trim() : null;
+              entries.push({ model, backend, total, reason });
+              return;
+            }
+
+            const total = toFiniteNumber(value);
+            if (total === null) {
+              return;
+            }
+            entries.push({ model: String(key), backend: null, total, reason: null });
+          });
+        }
+
+        return entries;
+      }
+
+      function normalizeJudgeResult(payload, results) {
+        const rawJudge =
+          payload && payload.judge_result && typeof payload.judge_result === "object" && !Array.isArray(payload.judge_result)
+            ? payload.judge_result
+            : null;
+        if (!rawJudge) {
+          return null;
+        }
+
+        const perModelMap = new Map();
+        const upsertEntry = (entry) => {
+          if (!entry || !entry.model) {
+            return;
+          }
+          const model = String(entry.model).trim();
+          if (!model) {
+            return;
+          }
+          const backend = entry.backend ? String(entry.backend).trim() : "";
+          const key = `${model}__${backend}`;
+          const existing = perModelMap.get(key);
+          if (!existing) {
+            perModelMap.set(key, {
+              model,
+              backend: backend || null,
+              total: entry.total !== null && entry.total !== undefined ? Number(entry.total) : null,
+              reason: entry.reason ? String(entry.reason).trim() : null,
+            });
+            return;
+          }
+          if ((existing.total === null || existing.total === undefined) && entry.total !== null && entry.total !== undefined) {
+            existing.total = Number(entry.total);
+          }
+          if (!existing.reason && entry.reason) {
+            existing.reason = String(entry.reason).trim();
+          }
+          if (!existing.backend && backend) {
+            existing.backend = backend;
+          }
+        };
+
+        const buckets = [
+          rawJudge.per_model,
+          rawJudge.models,
+          rawJudge.model_totals,
+          rawJudge.ranking,
+          rawJudge.scores,
+        ];
+        buckets.forEach((bucket) => {
+          parseJudgeEntries(bucket).forEach(upsertEntry);
+        });
+
+        if (Array.isArray(results)) {
+          results.forEach((result) => {
+            const judgeTotal =
+              result && result.judge_total !== undefined && result.judge_total !== null
+                ? toFiniteNumber(result.judge_total)
+                : null;
+            const judgeReason = result && result.judge_reason ? String(result.judge_reason).trim() : null;
+            if (judgeTotal === null && !judgeReason) {
+              return;
+            }
+            upsertEntry({
+              model: result.model || result.model_name,
+              backend: result.backend || null,
+              total: judgeTotal,
+              reason: judgeReason,
+            });
+          });
+        }
+
+        const perModel = Array.from(perModelMap.values()).sort((a, b) => {
+          const aScore = a.total === null || a.total === undefined ? -Infinity : a.total;
+          const bScore = b.total === null || b.total === undefined ? -Infinity : b.total;
+          return bScore - aScore;
+        });
+
+        let ranking = parseJudgeEntries(rawJudge.ranking)
+          .filter((entry) => entry.total !== null)
+          .sort((a, b) => Number(b.total) - Number(a.total))
+          .map((entry, index) => ({
+            rank: index + 1,
+            model: entry.model,
+            backend: entry.backend,
+            total: Number(entry.total),
+            reason: entry.reason || null,
+          }));
+
+        if (!ranking.length) {
+          ranking = perModel
+            .filter((entry) => entry.total !== null && entry.total !== undefined)
+            .map((entry, index) => ({
+              rank: index + 1,
+              model: entry.model,
+              backend: entry.backend,
+              total: Number(entry.total),
+              reason: entry.reason || null,
+            }));
+        }
+
+        const winnerModel =
+          rawJudge.winner_model ||
+          (rawJudge.winner && typeof rawJudge.winner === "object" ? rawJudge.winner.model || rawJudge.winner.model_name : null) ||
+          (ranking[0] ? ranking[0].model : null);
+        const winnerBackend =
+          rawJudge.winner_backend ||
+          (rawJudge.winner && typeof rawJudge.winner === "object" ? rawJudge.winner.backend : null) ||
+          (ranking[0] ? ranking[0].backend : null);
+        const winnerReason =
+          rawJudge.winner_reason ||
+          (rawJudge.winner && typeof rawJudge.winner === "object" ? rawJudge.winner.reason : null) ||
+          null;
+
+        return {
+          provider: rawJudge.provider || "openai",
+          mode: normalizeJudgeMode(rawJudge.mode || payload.judge_mode),
+          winnerModel: winnerModel ? String(winnerModel) : null,
+          winnerBackend: winnerBackend ? String(winnerBackend) : null,
+          winnerReason: winnerReason ? String(winnerReason) : null,
+          ranking,
+          perModel,
+        };
+      }
+
+      function renderJudgeVerdict(payload, results) {
+        const winnerSource = payload.winner_source === "openai_judge" ? "OpenAI Judge" : "baseline";
+        winnerSourceLine.textContent = `Winner source: ${winnerSource}`;
+
+        if (payload.judge_fallback) {
+          judgeFallbackBanner.classList.remove("hidden");
+        } else {
+          judgeFallbackBanner.classList.add("hidden");
+        }
+
+        const judge = normalizeJudgeResult(payload, results);
+        if (!judge) {
+          judgeVerdictSection.classList.add("hidden");
+          judgeRanking.innerHTML = "";
+          judgePerModel.innerHTML = "";
+          return;
+        }
+
+        judgeVerdictSection.classList.remove("hidden");
+        if (judge.ranking.length) {
+          judgeRanking.innerHTML = `
+            <p class="text-xs uppercase tracking-[0.14em] text-slate-400">Ranking</p>
+            <ol class="mt-1 list-decimal space-y-1 pl-5">
+              ${judge.ranking
+                .map(
+                  (entry) => `
+                    <li>
+                      <span class="font-medium text-slate-100">${escapeHtml(entry.model)}</span>
+                      <span class="text-slate-400">${entry.backend ? `(${escapeHtml(entry.backend)})` : ""}</span>
+                      <span class="text-emerald-300">- ${escapeHtml(Number(entry.total).toFixed(2))}</span>
+                    </li>
+                  `
+                )
+                .join("")}
+            </ol>
+          `;
+        } else {
+          judgeRanking.innerHTML = '<p class="text-xs text-slate-400">Judge returned no ranking.</p>';
+        }
+
+        const detailRows = (judge.perModel.length ? judge.perModel : judge.ranking).map((entry) => {
+          const reason = entry.reason ? String(entry.reason).trim() : "";
+          return `
+            <details class="rounded-xl border border-line bg-slate-950/50 px-3 py-2">
+              <summary class="cursor-pointer text-sm font-medium text-slate-100">
+                ${escapeHtml(entry.model)}
+                ${entry.backend ? `<span class="text-slate-400">(${escapeHtml(entry.backend)})</span>` : ""}
+                <span class="text-emerald-300">${entry.total !== null && entry.total !== undefined ? `- ${escapeHtml(Number(entry.total).toFixed(2))}` : ""}</span>
+              </summary>
+              <p class="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-300">${escapeHtml(reason || "No reason provided.")}</p>
+            </details>
+          `;
+        });
+
+        const winnerReasonText = judge.winnerReason
+          ? `<p class="mb-2 text-xs text-emerald-200">Winner reason: ${escapeHtml(judge.winnerReason)}</p>`
+          : "";
+        judgePerModel.innerHTML = `
+          ${winnerReasonText}
+          ${detailRows.join("")}
+        `;
+      }
+
+      function setJudgeModeState() {
+        const enabled = Boolean(judgeEnabledInput.checked);
+        judgeModeInput.disabled = !enabled;
+        judgeModeInput.classList.toggle("opacity-60", !enabled);
+      }
+
+      function extractQualityBreakdown(result, outputFormat, rawText) {
+        const metrics = result && result.metrics && typeof result.metrics === "object" ? result.metrics : null;
+        const totalQuality = metrics && typeof metrics.score === "number" ? metrics.score : resolveScore(result);
+
+        let formatCompliance = null;
+        let originality = null;
+        let clarity = null;
+        let toneAlignment = null;
+        let policyCleanliness = null;
+        const warnings = [];
+
+        if (metrics) {
+          originality = toPercent(Number(metrics.uniqueness_score));
+          toneAlignment = toPercent(Number(metrics.tone_style_hint));
+
+          let formatScore = 100;
+          if (metrics.count_ok === false) {
+            formatScore -= 35;
+            warnings.push("structure mismatch");
+          }
+          if (Number(metrics.max_words_violations || 0) > 0) {
+            formatScore -= Math.min(35, Number(metrics.max_words_violations) * 15);
+          }
+          if (metrics.json_leak) {
+            formatScore -= 40;
+            if (!warnings.includes("structure mismatch")) {
+              warnings.push("structure mismatch");
+            }
+          }
+          if (outputFormat === "pros_cons" && !/\bpros?\b|\bcons?\b/i.test(String(rawText || ""))) {
+            formatScore -= 20;
+            if (!warnings.includes("structure mismatch")) {
+              warnings.push("structure mismatch");
+            }
+          }
+          formatCompliance = clampPercent(formatScore);
+
+          let clarityScore = 100;
+          clarityScore -= Math.min(30, Number(metrics.max_words_violations || 0) * 15);
+          if (metrics.json_leak) {
+            clarityScore -= 35;
+          }
+          if (Number(metrics.keyword_coverage || 0) < 0.45) {
+            clarityScore -= 15;
+            warnings.push("too generic");
+          }
+          clarity = clampPercent(clarityScore);
+
+          let policyScore = 100;
+          policyScore -= Math.min(40, Number(metrics.emoji_violations || 0) * 20);
+          policyScore -= Math.min(40, Number(metrics.cliche_hits || 0) * 10);
+          if (metrics.json_leak) {
+            policyScore -= 25;
+          }
+          policyCleanliness = clampPercent(policyScore);
+
+          if (Number(metrics.cliche_hits || 0) > 0) {
+            warnings.push("cliché hit");
+          }
+        }
+
+        return {
+          totalQuality: totalQuality !== null && totalQuality !== undefined ? Number(totalQuality) : null,
+          formatCompliance,
+          originality,
+          clarity,
+          toneAlignment,
+          policyCleanliness,
+          warnings: Array.from(new Set(warnings)),
+        };
+      }
+
       function buildResultRows(results, winnerModel) {
         const successful = results.filter((result) => result.success && Number(result.latency_ms) > 0);
         const fastestLatency = successful.length ? Math.min(...successful.map((item) => Number(item.latency_ms))) : 0;
-        const winnerResult = results.find((result) => result.model === winnerModel || result.model_name === winnerModel);
-        const winnerLatency = winnerResult && Number(winnerResult.latency_ms) > 0 ? Number(winnerResult.latency_ms) : fastestLatency;
 
         return results
           .map((result) => {
@@ -663,17 +1591,20 @@
             const latency = Number(result.latency_ms || 0);
             const isSuccess = Boolean(result.success);
             const hasConstraintIssues = Boolean(result.constraint_issues);
-            const phrases = parseJsonList(result.phrases);
+            const phrases = parseResultPhrases(result.phrases);
             const errorText = result.error || result.error_message || null;
+            const rawText = phrases.join("\n");
+            const outputFormat = resolveResultOutputFormat(result);
+            const quality = extractQualityBreakdown(result, outputFormat, rawText);
 
             let barWidth = 8;
             let barColor = "bg-red-400";
             if (isSuccess) {
-              barColor = isWinner ? "bg-emerald-400" : "bg-cyan-400";
-              if (latency > 0 && winnerLatency > 0) {
-                barWidth = isWinner ? 100 : Math.max(10, Math.min(100, Math.round((winnerLatency / latency) * 100)));
+              barColor = latency > 0 && latency === fastestLatency ? "bg-emerald-400" : "bg-cyan-400";
+              if (latency > 0 && fastestLatency > 0) {
+                barWidth = Math.max(10, Math.min(100, Math.round((fastestLatency / latency) * 100)));
               } else {
-                barWidth = isWinner ? 100 : 30;
+                barWidth = 30;
               }
             }
 
@@ -681,11 +1612,28 @@
               ? '<span class="inline-flex rounded-full bg-emerald-500/15 px-2 py-1 text-xs font-semibold text-emerald-300">✓ Success</span>'
               : '<span class="inline-flex rounded-full bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-300">✗ Failed</span>';
 
-            const phrasesHtml = phrases.length
-              ? `<ol class="list-decimal space-y-1 pl-5">${phrases
-                  .map((phrase) => `<li class="leading-6 text-slate-200">${escapeHtml(stripLeadingListMarker(phrase))}</li>`)
-                  .join("")}</ol>`
-              : `<p class="text-xs text-slate-400">${escapeHtml(errorText || "No phrases")}</p>`;
+            const formattedOutput = renderOutputByFormat(result, phrases, rawText, errorText);
+            const encodedRawText = rawText ? encodeURIComponent(rawText) : "";
+            const copyButton = rawText
+              ? `<button
+                    type="button"
+                    data-copy-output="${escapeHtml(encodedRawText)}"
+                    class="rounded-lg border border-line px-2 py-1 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400 hover:text-white"
+                  >
+                    Copy
+                  </button>`
+              : "";
+            const warningTooltip = quality.warnings.length
+              ? `title="${escapeHtml(quality.warnings.join(", "))}"`
+              : 'title="No warnings"';
+            const warningsBadge = quality.warnings.length
+              ? `<span class="inline-flex rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200" ${warningTooltip}>⚠ ${quality.warnings.length}</span>`
+              : `<span class="inline-flex rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-200" ${warningTooltip}>clean</span>`;
+            const metricOrDash = (value) => (value === null || value === undefined ? "-" : `${value}`);
+            const qualityScoreDisplay =
+              quality.totalQuality === null || Number.isNaN(quality.totalQuality)
+                ? "-"
+                : Number(quality.totalQuality).toFixed(2);
 
             return `
               <tr class="align-top">
@@ -705,13 +1653,34 @@
                 <td class="px-3 py-3 ${isWinner ? "font-semibold text-emerald-300" : "text-slate-200"}">
                   ${scoreValue !== null ? escapeHtml(scoreValue.toFixed(2)) : "-"}
                 </td>
+                <td class="px-3 py-3 text-xs text-slate-200">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-semibold text-cyan-200">total: ${escapeHtml(qualityScoreDisplay)}</span>
+                    ${warningsBadge}
+                  </div>
+                  <div class="mt-2 space-y-1 text-[11px] text-slate-300">
+                    <div>format: ${escapeHtml(metricOrDash(quality.formatCompliance))}</div>
+                    <div>originality: ${escapeHtml(metricOrDash(quality.originality))}</div>
+                    <div>clarity: ${escapeHtml(metricOrDash(quality.clarity))}</div>
+                    <div>tone: ${escapeHtml(metricOrDash(quality.toneAlignment))}</div>
+                    <div>policy: ${escapeHtml(metricOrDash(quality.policyCleanliness))}</div>
+                  </div>
+                </td>
                 <td class="px-3 py-3 text-slate-200">
                   <p>${latency > 0 ? escapeHtml(formatDuration(latency)) : "-"}</p>
                   <div class="mt-2 h-2 w-full rounded-full bg-slate-800">
                     <div class="h-2 rounded-full ${barColor}" style="width: ${barWidth}%"></div>
                   </div>
                 </td>
-                <td class="px-3 py-3">${phrasesHtml}</td>
+                <td class="px-3 py-3">
+                  <div class="mb-2 flex items-center justify-between gap-2">
+                    <span class="text-[11px] uppercase tracking-[0.16em] text-slate-500">${escapeHtml(
+                      formattedOutput.formatLabel
+                    )}</span>
+                    ${copyButton}
+                  </div>
+                  ${formattedOutput.contentHtml}
+                </td>
               </tr>
             `;
           })
@@ -721,14 +1690,21 @@
       function renderLiveResults(payload) {
         const results = Array.isArray(payload.results) ? payload.results : [];
         const winnerModel = payload.winner && payload.winner.model ? payload.winner.model : null;
+        const winnerReason =
+          payload.winner && typeof payload.winner.reason === "string" && payload.winner.reason.trim()
+            ? payload.winner.reason.trim()
+            : null;
+        const winnerSourceLabel = payload.winner_source === "openai_judge" ? "OpenAI Judge" : "baseline";
 
         if (winnerModel) {
-          winnerBanner.textContent = `🏆 Winner: ${winnerModel} (score: ${Number(payload.winner.score || 0).toFixed(2)})`;
+          const reasonSuffix = winnerReason ? ` — ${winnerReason}` : "";
+          winnerBanner.textContent = `🏆 Winner: ${winnerModel} (score: ${Number(payload.winner.score || 0).toFixed(2)})${reasonSuffix} [${winnerSourceLabel}]`;
         } else {
           winnerBanner.textContent = "🏆 Winner: No successful backend";
         }
 
         resultsBody.innerHTML = buildResultRows(results, winnerModel);
+        renderJudgeVerdict(payload, results);
 
         const successful = results.filter((item) => item.success && Number(item.latency_ms) > 0);
         const fastest = successful.length
@@ -737,7 +1713,9 @@
             )
           : null;
 
-        winnerSummary.textContent = `🏆 Winner: ${winnerModel || "-"}`;
+        winnerSummary.textContent = winnerReason
+          ? `🏆 Winner: ${winnerModel || "-"} — ${winnerReason}`
+          : `🏆 Winner: ${winnerModel || "-"}`;
         fastestSummary.textContent = `⚡ Fastest: ${fastest ? fastest.model || fastest.model_name : "-"}`;
         totalSummary.textContent = `⏱ Total: ${formatDuration(payload.total_time_ms || 0)}`;
         resultsSection.classList.remove("hidden");
@@ -759,7 +1737,7 @@
           ? run.results.map((result) => ({
               ...result,
               model: result.model_name,
-              phrases: Array.isArray(result.phrases) ? result.phrases : parseJsonList(result.phrases),
+              phrases: parseResultPhrases(result.phrases),
               error: result.error || result.error_message || null,
             }))
           : [];
@@ -810,6 +1788,7 @@
                           <th class="px-3 py-3 font-medium">Backend</th>
                           <th class="px-3 py-3 font-medium">Status</th>
                           <th class="px-3 py-3 font-medium">Score</th>
+                          <th class="px-3 py-3 font-medium">Quality</th>
                           <th class="px-3 py-3 font-medium">Time</th>
                           <th class="px-3 py-3 font-medium">Phrases</th>
                         </tr>
@@ -919,6 +1898,8 @@
       async function generateComparison() {
         errorBanner.classList.add("hidden");
         resultsSection.classList.add("hidden");
+        judgeFallbackBanner.classList.add("hidden");
+        judgeVerdictSection.classList.add("hidden");
         statusSection.classList.remove("hidden");
         setStatus(STATUS_STEPS[0], false);
         scheduleStatusProgress();
@@ -980,8 +1961,40 @@
       bindMirroredInputs(countInput, quickCountInput);
       bindMirroredInputs(maxWordsInput, quickMaxWordsInput);
       bindMirroredInputs(audienceInput, quickAudienceInput);
+      outputFormatInput.addEventListener("change", () => renderOutputSpecFields(true));
+      judgeEnabledInput.addEventListener("change", setJudgeModeState);
 
       generateButton.addEventListener("click", generateComparison);
+
+      document.addEventListener("click", async (event) => {
+        const copyButton = event.target.closest("[data-copy-output]");
+        if (!copyButton) {
+          return;
+        }
+
+        const encodedText = copyButton.getAttribute("data-copy-output") || "";
+        let rawText = "";
+        try {
+          rawText = decodeURIComponent(encodedText);
+        } catch (error) {
+          rawText = "";
+        }
+
+        if (!rawText) {
+          return;
+        }
+
+        const originalLabel = copyButton.textContent || "Copy";
+        try {
+          const copied = await copyTextToClipboard(rawText);
+          copyButton.textContent = copied ? "Copied" : "Copy failed";
+        } catch (error) {
+          copyButton.textContent = "Copy failed";
+        }
+        window.setTimeout(() => {
+          copyButton.textContent = originalLabel;
+        }, 1400);
+      });
 
       historyList.addEventListener("click", (event) => {
         const toggleButton = event.target.closest("[data-toggle-run]");
@@ -1013,6 +2026,9 @@
         await loadHistory({ reset: false });
       });
 
+      renderTargetsPicker();
+      renderOutputSpecFields(true);
+      setJudgeModeState();
       syncQuickInputsFromMain();
       loadHistory({ reset: true });
     </script>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -52,6 +53,17 @@ LLM_COMPARATOR_MODEL_ORDER = {
 }
 
 
+class CompareOutputSpec(BaseModel):
+    """Structured output configuration passed to the comparator."""
+
+    format: Literal["one_liner", "paragraph", "one_page", "pros_cons", "verse", "story"] = "one_liner"
+    items: int | None = Field(default=None, ge=1)
+    target_words: int | None = Field(default=None, ge=1)
+    items_per_section: int | None = Field(default=None, ge=1)
+    line_count: int | None = Field(default=None, ge=1)
+    max_words_per_line: int | None = Field(default=None, ge=1)
+
+
 class CompareModelsRequest(BaseModel):
     """Request body for comparing phrase generation across configured LLM backends."""
 
@@ -68,6 +80,36 @@ class CompareModelsRequest(BaseModel):
     avoid_cliches: bool = True
     avoid_phrases: list[str] = Field(default_factory=list)
     style_anchor_enabled: bool = True
+    output_spec: CompareOutputSpec | None = None
+    judge_enabled: bool = False
+    judge_mode: Literal["tie_break", "always"] = "tie_break"
+    judge_provider: Literal["openai"] = "openai"
+
+
+def _resolve_output_spec(payload: CompareModelsRequest) -> dict[str, Any]:
+    """Resolve output spec defaults and normalize to one comparator payload shape."""
+
+    raw_spec = payload.output_spec.model_dump(exclude_none=True) if payload.output_spec else {}
+    output_format = str(raw_spec.get("format") or "one_liner")
+    if output_format not in {"one_liner", "paragraph", "one_page", "pros_cons", "verse", "story"}:
+        output_format = "one_liner"
+
+    output_spec: dict[str, Any] = {"format": output_format}
+    if output_format == "one_liner":
+        output_spec["items"] = int(raw_spec.get("items") or payload.count or 3)
+    elif output_format == "paragraph":
+        output_spec["target_words"] = int(raw_spec.get("target_words") or 80)
+    elif output_format == "one_page":
+        output_spec["target_words"] = int(raw_spec.get("target_words") or 250)
+    elif output_format == "pros_cons":
+        output_spec["items_per_section"] = int(raw_spec.get("items_per_section") or 4)
+    elif output_format == "verse":
+        output_spec["line_count"] = int(raw_spec.get("line_count") or 10)
+        output_spec["max_words_per_line"] = int(raw_spec.get("max_words_per_line") or 8)
+    elif output_format == "story":
+        output_spec["target_words"] = int(raw_spec.get("target_words") or 450)
+
+    return output_spec
 
 
 class CompareModelsResult(BaseModel):
@@ -81,6 +123,8 @@ class CompareModelsResult(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     score: float = 0.0
     constraint_issues: bool = False
+    judge_total: float | None = None
+    judge_reason: str | None = None
     error: str | None = None
 
 
@@ -107,6 +151,9 @@ class CompareModelsResponse(BaseModel):
     succeeded: int
     results: list[CompareModelsResult]
     winner: CompareModelsWinner | None
+    winner_source: Literal["baseline", "openai_judge"] = "baseline"
+    judge_result: dict[str, Any] | None = None
+    judge_fallback: bool = False
     slowest_model: str | None
     fastest_model: str | None
     total_time_ms: int
@@ -195,6 +242,10 @@ async def _call_llm_comparator(
                 "avoid_cliches": payload.avoid_cliches,
                 "avoid_phrases": payload.avoid_phrases,
                 "style_anchor_enabled": payload.style_anchor_enabled,
+                "output_spec": _resolve_output_spec(payload),
+                "judge_enabled": payload.judge_enabled,
+                "judge_mode": payload.judge_mode,
+                "judge_provider": payload.judge_provider,
             }
         )
 
@@ -343,6 +394,421 @@ def _extract_model_score(meta: Any, latency_ms: int) -> float:
             pass
 
     return 100.0 - (float(latency_ms) / 1000.0)
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Convert score-like values into finite floats."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _coerce_reason(value: Any) -> str | None:
+    """Normalize judge reason content into a non-empty string."""
+
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _nested_get(mapping: Any, *keys: str) -> Any:
+    """Safely traverse a nested dictionary path."""
+
+    current = mapping
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _extract_model_entry_from_bucket(
+    bucket: Any,
+    *,
+    model: str,
+    backend: str,
+) -> tuple[float | None, str | None]:
+    """Extract one model's judge total/reason from list or dict shaped metadata."""
+
+    if isinstance(bucket, list):
+        for item in bucket:
+            if not isinstance(item, dict):
+                continue
+            item_model = str(item.get("model") or item.get("model_name") or "").strip()
+            item_backend = str(item.get("backend") or "").strip()
+            if item_model != model:
+                continue
+            if item_backend and item_backend != backend:
+                continue
+            total = _coerce_float(item.get("total"))
+            if total is None:
+                total = _coerce_float(item.get("score"))
+            if total is None:
+                total = _coerce_float(item.get("judge_total"))
+            reason = _coerce_reason(item.get("reason"))
+            return total, reason
+        return None, None
+
+    if isinstance(bucket, dict):
+        direct = bucket.get(model)
+        if isinstance(direct, dict):
+            total = _coerce_float(direct.get("total"))
+            if total is None:
+                total = _coerce_float(direct.get("score"))
+            if total is None:
+                total = _coerce_float(direct.get("judge_total"))
+            reason = _coerce_reason(direct.get("reason"))
+            return total, reason
+        direct_total = _coerce_float(direct)
+        if direct_total is not None:
+            return direct_total, None
+
+        for key, value in bucket.items():
+            if not isinstance(value, dict):
+                continue
+            item_model = str(value.get("model") or value.get("model_name") or key).strip()
+            item_backend = str(value.get("backend") or "").strip()
+            if item_model != model:
+                continue
+            if item_backend and item_backend != backend:
+                continue
+            total = _coerce_float(value.get("total"))
+            if total is None:
+                total = _coerce_float(value.get("score"))
+            if total is None:
+                total = _coerce_float(value.get("judge_total"))
+            reason = _coerce_reason(value.get("reason"))
+            return total, reason
+
+    return None, None
+
+
+def _extract_judge_metadata(
+    result: dict[str, Any],
+    *,
+    model: str,
+    backend: str,
+) -> tuple[float | None, str | None]:
+    """Extract per-model judge total and reason from comparator payload shapes."""
+
+    meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+    score_candidates = [
+        result.get("judge_total"),
+        result.get("judge_score"),
+        _nested_get(result, "judge", "total"),
+        _nested_get(result, "judge", "score"),
+        _nested_get(result, "judge_result", "total"),
+        _nested_get(result, "judge_result", "score"),
+        meta.get("judge_total"),
+        meta.get("judge_score"),
+        _nested_get(meta, "judge", "total"),
+        _nested_get(meta, "judge", "score"),
+        _nested_get(meta, "judge_result", "total"),
+        _nested_get(meta, "judge_result", "score"),
+    ]
+    reason_candidates = [
+        result.get("judge_reason"),
+        _nested_get(result, "judge", "reason"),
+        _nested_get(result, "judge_result", "reason"),
+        meta.get("judge_reason"),
+        _nested_get(meta, "judge", "reason"),
+        _nested_get(meta, "judge_result", "reason"),
+    ]
+    judge_total = next((value for value in (_coerce_float(candidate) for candidate in score_candidates) if value is not None), None)
+    judge_reason = next((value for value in (_coerce_reason(candidate) for candidate in reason_candidates) if value is not None), None)
+
+    bucket_candidates: list[Any] = [
+        result.get("judge_result"),
+        meta.get("judge_result"),
+        result.get("judge"),
+        meta.get("judge"),
+        _nested_get(result, "judge_result", "ranking"),
+        _nested_get(result, "judge_result", "models"),
+        _nested_get(result, "judge_result", "model_totals"),
+        _nested_get(result, "judge_result", "scores"),
+        _nested_get(meta, "judge_result", "ranking"),
+        _nested_get(meta, "judge_result", "models"),
+        _nested_get(meta, "judge_result", "model_totals"),
+        _nested_get(meta, "judge_result", "scores"),
+    ]
+    for bucket in bucket_candidates:
+        extracted_total, extracted_reason = _extract_model_entry_from_bucket(
+            bucket,
+            model=model,
+            backend=backend,
+        )
+        if judge_total is None and extracted_total is not None:
+            judge_total = extracted_total
+        if judge_reason is None and extracted_reason is not None:
+            judge_reason = extracted_reason
+
+    return judge_total, judge_reason
+
+
+def _extract_judge_result_payload(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Return top-level judge result metadata when present."""
+
+    meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+    for candidate in (result.get("judge_result"), meta.get("judge_result")):
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return None
+
+
+def _judge_failure_signaled(result: dict[str, Any]) -> bool:
+    """Infer whether comparator reported judge failure/fallback for a response."""
+
+    meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+    containers: list[dict[str, Any]] = [result, meta]
+    if isinstance(result.get("judge_result"), dict):
+        containers.append(result["judge_result"])
+    if isinstance(meta.get("judge_result"), dict):
+        containers.append(meta["judge_result"])
+
+    truthy_keys = (
+        "judge_fallback",
+        "judge_failed",
+        "judge_unavailable",
+        "fallback_to_baseline",
+        "baseline_fallback",
+        "used_baseline",
+    )
+    text_keys = ("judge_error", "judge_failure", "judge_message")
+
+    for container in containers:
+        for key in truthy_keys:
+            if bool(container.get(key)):
+                return True
+        for key in text_keys:
+            if _coerce_reason(container.get(key)):
+                return True
+
+    return False
+
+
+def _parse_judge_entries(bucket: Any) -> list[dict[str, Any]]:
+    """Normalize judge model entries from flexible payload structures."""
+
+    entries: list[dict[str, Any]] = []
+
+    if isinstance(bucket, list):
+        for item in bucket:
+            if not isinstance(item, dict):
+                continue
+            model = str(item.get("model") or item.get("model_name") or "").strip()
+            if not model:
+                continue
+            total = _coerce_float(item.get("total"))
+            if total is None:
+                total = _coerce_float(item.get("score"))
+            if total is None:
+                total = _coerce_float(item.get("judge_total"))
+            entries.append(
+                {
+                    "model": model,
+                    "backend": _coerce_reason(item.get("backend")),
+                    "total": total,
+                    "reason": _coerce_reason(item.get("reason")),
+                }
+            )
+        return entries
+
+    if isinstance(bucket, dict):
+        for key, value in bucket.items():
+            if isinstance(value, dict):
+                model = str(value.get("model") or value.get("model_name") or key).strip()
+                if not model:
+                    continue
+                total = _coerce_float(value.get("total"))
+                if total is None:
+                    total = _coerce_float(value.get("score"))
+                if total is None:
+                    total = _coerce_float(value.get("judge_total"))
+                entries.append(
+                    {
+                        "model": model,
+                        "backend": _coerce_reason(value.get("backend")),
+                        "total": total,
+                        "reason": _coerce_reason(value.get("reason")),
+                    }
+                )
+                continue
+
+            total = _coerce_float(value)
+            if total is None:
+                continue
+            entries.append({"model": str(key), "backend": None, "total": total, "reason": None})
+        return entries
+
+    return entries
+
+
+def _build_judge_result(
+    *,
+    payload: CompareModelsRequest,
+    results: list[CompareModelsResult],
+    raw_judge_result: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build one normalized judge payload for the frontend from model results + raw metadata."""
+
+    per_model_map: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def upsert_entry(model: str, backend: str | None, total: float | None, reason: str | None) -> None:
+        model_name = str(model).strip()
+        if not model_name:
+            return
+        backend_name = str(backend or "").strip()
+        key = (model_name, backend_name)
+        if key not in per_model_map:
+            per_model_map[key] = {"model": model_name, "backend": backend_name or None, "total": total, "reason": reason}
+            return
+
+        entry = per_model_map[key]
+        if entry.get("total") is None and total is not None:
+            entry["total"] = total
+        if not entry.get("reason") and reason:
+            entry["reason"] = reason
+        if not entry.get("backend") and backend_name:
+            entry["backend"] = backend_name
+
+    for result in results:
+        if not result.success:
+            continue
+        if result.judge_total is None and not result.judge_reason:
+            continue
+        upsert_entry(result.model, result.backend, result.judge_total, result.judge_reason)
+
+    if isinstance(raw_judge_result, dict):
+        for key in ("ranking", "models", "model_totals", "scores"):
+            for entry in _parse_judge_entries(raw_judge_result.get(key)):
+                upsert_entry(entry["model"], entry.get("backend"), entry.get("total"), entry.get("reason"))
+        for entry in _parse_judge_entries(raw_judge_result):
+            upsert_entry(entry["model"], entry.get("backend"), entry.get("total"), entry.get("reason"))
+
+    if not per_model_map and not raw_judge_result:
+        return None
+
+    per_model_entries = sorted(
+        per_model_map.values(),
+        key=lambda entry: entry["total"] if isinstance(entry.get("total"), (int, float)) else float("-inf"),
+        reverse=True,
+    )
+    ranking = [
+        {
+            "rank": index + 1,
+            "model": entry["model"],
+            "backend": entry.get("backend"),
+            "total": round(float(entry["total"]), 2),
+            "reason": entry.get("reason"),
+        }
+        for index, entry in enumerate(per_model_entries)
+        if isinstance(entry.get("total"), (int, float))
+    ]
+
+    winner_model: str | None = None
+    winner_backend: str | None = None
+    winner_reason: str | None = None
+    if isinstance(raw_judge_result, dict):
+        winner_candidate = raw_judge_result.get("winner")
+        if isinstance(winner_candidate, dict):
+            winner_model = _coerce_reason(winner_candidate.get("model") or winner_candidate.get("model_name"))
+            winner_backend = _coerce_reason(winner_candidate.get("backend"))
+            winner_reason = _coerce_reason(winner_candidate.get("reason"))
+        else:
+            winner_model = _coerce_reason(
+                raw_judge_result.get("winner_model")
+                or raw_judge_result.get("winner")
+                or raw_judge_result.get("top_model")
+            )
+            winner_backend = _coerce_reason(raw_judge_result.get("winner_backend"))
+            winner_reason = _coerce_reason(raw_judge_result.get("winner_reason") or raw_judge_result.get("reason"))
+
+    if winner_model is None and ranking:
+        winner_model = str(ranking[0]["model"])
+        winner_backend = _coerce_reason(ranking[0].get("backend"))
+        winner_reason = _coerce_reason(ranking[0].get("reason"))
+
+    return {
+        "provider": payload.judge_provider,
+        "mode": payload.judge_mode,
+        "winner_model": winner_model,
+        "winner_backend": winner_backend,
+        "winner_reason": winner_reason,
+        "ranking": ranking,
+        "per_model": [
+            {
+                "model": entry["model"],
+                "backend": entry.get("backend"),
+                "total": round(float(entry["total"]), 2)
+                if isinstance(entry.get("total"), (int, float))
+                else None,
+                "reason": entry.get("reason"),
+            }
+            for entry in per_model_entries
+        ],
+    }
+
+
+def _select_judge_winner(
+    *,
+    results: list[CompareModelsResult],
+    judge_result: dict[str, Any] | None,
+) -> CompareModelsWinner | None:
+    """Select winner according to judge metadata, if available."""
+
+    successful_results = [result for result in results if result.success]
+    if not successful_results:
+        return None
+
+    winner_model = _coerce_reason(judge_result.get("winner_model")) if isinstance(judge_result, dict) else None
+    winner_backend = _coerce_reason(judge_result.get("winner_backend")) if isinstance(judge_result, dict) else None
+    winner_reason = _coerce_reason(judge_result.get("winner_reason")) if isinstance(judge_result, dict) else None
+
+    if winner_model:
+        candidate = next(
+            (
+                result
+                for result in successful_results
+                if result.model == winner_model and (winner_backend is None or result.backend == winner_backend)
+            ),
+            None,
+        )
+        if candidate is not None:
+            winner_score = candidate.judge_total if candidate.judge_total is not None else candidate.score
+            return CompareModelsWinner(
+                backend=candidate.backend,
+                model=candidate.model,
+                score=round(float(winner_score), 2),
+                reason=candidate.judge_reason or winner_reason,
+            )
+
+    judged_results = [result for result in successful_results if result.judge_total is not None]
+    if not judged_results:
+        return None
+
+    candidate = max(judged_results, key=lambda result: float(result.judge_total or float("-inf")))
+    return CompareModelsWinner(
+        backend=candidate.backend,
+        model=candidate.model,
+        score=round(float(candidate.judge_total or 0.0), 2),
+        reason=candidate.judge_reason or winner_reason,
+    )
+
+
+def _has_baseline_tie(results: list[CompareModelsResult]) -> bool:
+    """Return True when top two successful baseline scores are effectively tied."""
+
+    successful = sorted((result for result in results if result.success), key=lambda result: result.score, reverse=True)
+    if len(successful) < 2:
+        return False
+    return abs(float(successful[0].score) - float(successful[1].score)) <= 0.01
 
 
 async def _select_winner(
@@ -596,6 +1062,8 @@ async def compare_models(
 
     run_id = str(uuid4())
     results: list[CompareModelsResult] = []
+    raw_judge_result: dict[str, Any] | None = None
+    judge_failure_detected = False
     send_extended_prompt_options = True
     async with httpx.AsyncClient(timeout=LLM_COMPARATOR_TIMEOUT_SECONDS) as client:
         for index, spec in enumerate(LLM_COMPARATOR_BACKENDS):
@@ -698,6 +1166,12 @@ async def compare_models(
             scoring = score_result(payload.model_dump(), phrases)
             score = _extract_model_score(meta, latency_ms)
             constraint_issues = bool(scoring.get("constraint_issues", False)) or _has_constraint_issues(result)
+            judge_total, judge_reason = _extract_judge_metadata(result, model=model, backend=backend)
+            judge_payload = _extract_judge_result_payload(result)
+            if isinstance(judge_payload, dict):
+                raw_judge_result = judge_payload
+            if _judge_failure_signaled(result):
+                judge_failure_detected = True
             results.append(
                 CompareModelsResult(
                     backend=backend,
@@ -708,6 +1182,8 @@ async def compare_models(
                     metrics=scoring,
                     score=score,
                     constraint_issues=constraint_issues,
+                    judge_total=judge_total,
+                    judge_reason=judge_reason,
                     error=None,
                 )
             )
@@ -721,7 +1197,19 @@ async def compare_models(
         max(successful_results, key=lambda result: result.latency_ms).model if successful_results else None
     )
     total_time_ms = sum(max(0, int(result.latency_ms or 0)) for result in results)
-    winner = await _select_winner(payload, results)
+    baseline_winner = await _select_winner(payload, results)
+    judge_result = _build_judge_result(payload=payload, results=results, raw_judge_result=raw_judge_result)
+    judge_winner = _select_judge_winner(results=results, judge_result=judge_result) if payload.judge_enabled else None
+    tie_break_required = _has_baseline_tie(results)
+    winner = baseline_winner
+    winner_source: Literal["baseline", "openai_judge"] = "baseline"
+    if payload.judge_enabled and judge_winner is not None:
+        if payload.judge_mode == "always" or tie_break_required or baseline_winner is None:
+            winner = judge_winner
+            winner_source = "openai_judge"
+
+    judge_needed = payload.judge_enabled and (payload.judge_mode == "always" or tie_break_required or baseline_winner is None)
+    judge_fallback = bool(payload.judge_enabled and (judge_failure_detected or (judge_needed and judge_winner is None)))
     await _persist_compare_results(
         db,
         run_id=run_id,
@@ -743,6 +1231,9 @@ async def compare_models(
         succeeded=succeeded,
         results=results,
         winner=winner,
+        winner_source=winner_source,
+        judge_result=judge_result,
+        judge_fallback=judge_fallback,
         slowest_model=slowest_model,
         fastest_model=fastest_model,
         total_time_ms=total_time_ms,
