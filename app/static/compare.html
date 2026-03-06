@@ -54,10 +54,14 @@
     { "backend": "ollama", "model": "qwen2.5:7b-instruct" },
     { "backend": "ollama", "model": "mistral:7b" }
   ],
+  "cultural_context": "global",
   "audience": "general Indian family",
   "count": 3,
   "max_tokens": 120,
   "temperature": 0.8,
+  "enable_sweep": true,
+  "sweep_parameter": "funny_pct",
+  "sweep_values": "5,20,50,90",
   "output_spec": {"format": "one_liner", "items": 3},
   "avoid_cliches": true
 }'
@@ -138,6 +142,22 @@
                     value="general"
                     class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
                   />
+                </label>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-medium text-slate-300">Cultural Context</span>
+                  <select
+                    id="culturalContext"
+                    class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                  >
+                    <option value="global" selected>global</option>
+                    <option value="indian">indian</option>
+                    <option value="bengali">bengali</option>
+                    <option value="punjabi">punjabi</option>
+                    <option value="south_indian">south_indian</option>
+                    <option value="western">western</option>
+                    <option value="american">american</option>
+                    <option value="asian">asian</option>
+                  </select>
                 </label>
                 <label class="block">
                   <span class="mb-1 block text-xs font-medium text-slate-300">Count</span>
@@ -254,6 +274,44 @@
                 <p class="mt-2 text-xs text-slate-400">
                   If none selected, defaults to configured targets.
                 </p>
+              </div>
+
+              <div class="rounded-xl border border-line bg-slate-950 p-3">
+                <p class="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">Sweep Mode</p>
+                <div class="mt-3 grid gap-3 md:grid-cols-3">
+                  <label
+                    class="flex h-full items-center gap-2 rounded-xl border border-line bg-panelSoft px-3 py-2 text-sm text-slate-100"
+                  >
+                    <input
+                      id="enableSweep"
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-400"
+                    />
+                    Enable Sweep
+                  </label>
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-medium text-slate-300">Sweep Parameter</span>
+                    <select
+                      id="sweepParameter"
+                      class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                    >
+                      <option value="funny_pct" selected>funny_pct</option>
+                      <option value="emotion_pct">emotion_pct</option>
+                      <option value="temperature">temperature</option>
+                      <option value="tone_style">tone_style</option>
+                    </select>
+                  </label>
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-medium text-slate-300">Sweep Values</span>
+                    <input
+                      id="sweepValues"
+                      type="text"
+                      value="5,20,50,90"
+                      placeholder="5,20,50,90"
+                      class="w-full rounded-xl border border-line bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-accent"
+                    />
+                  </label>
+                </div>
               </div>
 
               <div class="grid gap-3 md:grid-cols-4">
@@ -398,6 +456,22 @@
                   class="w-44 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
                 />
               </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] text-slate-400">Culture</span>
+                <select
+                  id="quickCulturalContext"
+                  class="w-36 rounded-lg border border-line bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-accent"
+                >
+                  <option value="global" selected>global</option>
+                  <option value="indian">indian</option>
+                  <option value="bengali">bengali</option>
+                  <option value="punjabi">punjabi</option>
+                  <option value="south_indian">south_indian</option>
+                  <option value="western">western</option>
+                  <option value="american">american</option>
+                  <option value="asian">asian</option>
+                </select>
+              </label>
             </div>
           </div>
         </div>
@@ -415,42 +489,170 @@
         <div id="errorBanner" class="mt-4 hidden rounded-2xl border border-danger/50 bg-danger/10 px-4 py-3 text-sm text-red-100"></div>
 
         <div id="resultsSection" class="mt-4 hidden">
+          <div id="singleRunResults">
+            <div
+              id="judgeFallbackBanner"
+              class="mb-4 hidden rounded-2xl border border-amber-400/40 bg-amber-400/15 px-4 py-3 text-sm font-medium text-amber-100"
+            >
+              Judge unavailable - used baseline scoring
+            </div>
+            <div id="winnerBanner" class="mb-4 rounded-2xl border border-amber-300/40 bg-amber-300/20 px-4 py-3 text-sm font-semibold text-amber-100"></div>
+            <p id="winnerSourceLine" class="mb-3 text-xs uppercase tracking-[0.16em] text-slate-400">Winner source: baseline</p>
+            <div id="judgeVerdictSection" class="mb-4 hidden rounded-2xl border border-line bg-panelSoft px-4 py-3">
+              <p class="text-sm font-semibold text-cyan-200">OpenAI Judge Verdict</p>
+              <div id="judgeRanking" class="mt-2 text-sm text-slate-200"></div>
+              <div id="judgePerModel" class="mt-3 space-y-2"></div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-line text-left text-sm">
+                <thead class="text-slate-300">
+                  <tr>
+                    <th class="px-3 py-3 font-medium">Model</th>
+                    <th class="px-3 py-3 font-medium">Backend</th>
+                    <th class="px-3 py-3 font-medium">Status</th>
+                    <th class="px-3 py-3 font-medium">Score</th>
+                    <th class="px-3 py-3 font-medium">Quality</th>
+                    <th class="px-3 py-3 font-medium">Time</th>
+                    <th class="px-3 py-3 font-medium">Phrases</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsBody" class="divide-y divide-line"></tbody>
+              </table>
+            </div>
+
+            <div class="mt-4 grid gap-2 text-sm text-slate-200 sm:grid-cols-3">
+              <p id="winnerSummary">🏆 Winner: -</p>
+              <p id="fastestSummary">⚡ Fastest: -</p>
+              <p id="totalSummary">⏱ Total: -</p>
+            </div>
+          </div>
+
+          <div id="sweepResultsSection" class="hidden">
+            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p id="sweepRunTitle" class="text-sm font-semibold text-slate-100">Sweep Results</p>
+              <div class="flex gap-2">
+                <button
+                  id="exportSweepJsonButton"
+                  type="button"
+                  class="rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-cyan-400 hover:text-white"
+                >
+                  Export JSON
+                </button>
+                <button
+                  id="exportSweepCsvButton"
+                  type="button"
+                  class="rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-cyan-400 hover:text-white"
+                >
+                  Export CSV
+                </button>
+              </div>
+            </div>
+            <div id="sweepResultsContainer" class="space-y-4"></div>
+          </div>
+        </div>
+
+        <div id="judgementPortalSection" class="mt-4 hidden rounded-2xl border border-line bg-panelSoft/50 p-4">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h3 class="text-sm font-semibold uppercase tracking-[0.14em] text-cyan-200">Content Judgement Portal</h3>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label class="text-xs text-slate-300">
+                Reruns
+                <select
+                  id="judgementRerunCount"
+                  class="ml-2 rounded-lg border border-line bg-slate-950 px-2 py-1 text-xs text-white outline-none transition focus:border-accent"
+                >
+                  <option value="1" selected>1</option>
+                  <option value="3">3</option>
+                  <option value="5">5</option>
+                </select>
+              </label>
+              <button
+                id="runQualityJudgementButton"
+                type="button"
+                class="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+              >
+                Re-run Judgement
+              </button>
+            </div>
+          </div>
+          <p id="judgementSlowWarning" class="mt-2 text-xs text-amber-200">
+            Local judging may take 1-2 minutes depending on model count.
+          </p>
+          <p id="judgementProviderNote" class="mt-1 text-xs text-cyan-200">
+            Using Groq for quality judgement.
+          </p>
+          <p id="judgementPortalStatus" class="mt-2 text-xs text-slate-400">Run judging after generation to compare candidates head-to-head.</p>
+          <p id="judgementPortalSubstatus" class="mt-1 hidden text-xs text-slate-500"></p>
           <div
-            id="judgeFallbackBanner"
-            class="mb-4 hidden rounded-2xl border border-amber-400/40 bg-amber-400/15 px-4 py-3 text-sm font-medium text-amber-100"
+            id="judgementFallbackBanner"
+            class="mt-3 hidden rounded-xl border border-amber-400/40 bg-amber-400/15 px-3 py-2 text-sm text-amber-100"
           >
-            Judge unavailable - used baseline scoring
+            Judge timed out, baseline winner shown.
           </div>
-          <div id="winnerBanner" class="mb-4 rounded-2xl border border-amber-300/40 bg-amber-300/20 px-4 py-3 text-sm font-semibold text-amber-100"></div>
-          <p id="winnerSourceLine" class="mb-3 text-xs uppercase tracking-[0.16em] text-slate-400">Winner source: baseline</p>
-          <div id="judgeVerdictSection" class="mb-4 hidden rounded-2xl border border-line bg-panelSoft px-4 py-3">
-            <p class="text-sm font-semibold text-cyan-200">OpenAI Judge Verdict</p>
-            <div id="judgeRanking" class="mt-2 text-sm text-slate-200"></div>
-            <div id="judgePerModel" class="mt-3 space-y-2"></div>
+          <div
+            id="judgementGroqFailBanner"
+            class="mt-3 hidden rounded-xl border border-amber-400/40 bg-amber-400/15 px-3 py-2 text-sm text-amber-100"
+          >
+            Content generated successfully, but Groq quality judgement failed.
           </div>
+          <div id="judgementPortalError" class="mt-3 hidden rounded-xl border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-red-100"></div>
 
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-line text-left text-sm">
-              <thead class="text-slate-300">
-                <tr>
-                  <th class="px-3 py-3 font-medium">Model</th>
-                  <th class="px-3 py-3 font-medium">Backend</th>
-                  <th class="px-3 py-3 font-medium">Status</th>
-                  <th class="px-3 py-3 font-medium">Score</th>
-                  <th class="px-3 py-3 font-medium">Quality</th>
-                  <th class="px-3 py-3 font-medium">Time</th>
-                  <th class="px-3 py-3 font-medium">Phrases</th>
-                </tr>
-              </thead>
-              <tbody id="resultsBody" class="divide-y divide-line"></tbody>
-            </table>
-          </div>
+          <section class="mt-4 rounded-xl border border-line bg-slate-950/50 p-3">
+            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Candidate Outputs</h4>
+            <div id="judgementCandidates" class="mt-3 space-y-3"></div>
+          </section>
 
-          <div class="mt-4 grid gap-2 text-sm text-slate-200 sm:grid-cols-3">
-            <p id="winnerSummary">🏆 Winner: -</p>
-            <p id="fastestSummary">⚡ Fastest: -</p>
-            <p id="totalSummary">⏱ Total: -</p>
-          </div>
+          <section class="mt-4 rounded-xl border border-line bg-slate-950/50 p-3">
+            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Pairwise Comparisons</h4>
+            <div class="mt-3 overflow-x-auto">
+              <table class="min-w-full divide-y divide-line text-left text-sm">
+                <thead class="text-slate-300">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Candidate A</th>
+                    <th class="px-3 py-2 font-medium">Candidate B</th>
+                    <th class="px-3 py-2 font-medium">Winner</th>
+                    <th class="px-3 py-2 font-medium">Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="judgementPairwiseBody" class="divide-y divide-line"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="mt-4 rounded-xl border border-line bg-slate-950/50 p-3">
+            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Final Ranking</h4>
+            <div id="judgementWinnerCard" class="mt-3 rounded-xl border border-amber-300/40 bg-amber-300/20 px-3 py-2 text-sm font-semibold text-amber-100">
+              Best content for this prompt: -
+            </div>
+            <div class="mt-3 overflow-x-auto">
+              <table class="min-w-full divide-y divide-line text-left text-sm">
+                <thead class="text-slate-300">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Rank</th>
+                    <th class="px-3 py-2 font-medium">Model</th>
+                    <th class="px-3 py-2 font-medium">Backend</th>
+                    <th class="px-3 py-2 font-medium">Score</th>
+                    <th class="px-3 py-2 font-medium">W-L-D</th>
+                  </tr>
+                </thead>
+                <tbody id="judgementLeaderboardBody" class="divide-y divide-line"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="mt-4 rounded-xl border border-line bg-slate-950/50 p-3">
+            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Judge Reasoning</h4>
+            <div id="judgementReasoning" class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">
+              No judgement reasoning yet.
+            </div>
+          </section>
+
+          <section class="mt-4 rounded-xl border border-line bg-slate-950/50 p-3">
+            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Judgement History</h4>
+            <p id="judgementHistoryEmpty" class="mt-2 text-xs text-slate-400">No judgement runs yet.</p>
+            <div id="judgementHistoryList" class="mt-3 space-y-3"></div>
+          </section>
         </div>
       </section>
 
@@ -484,7 +686,14 @@
     <script>
       const API_URL = "/generation/compare-models";
       const HISTORY_URL = "/generation/compare-results";
+      const JUDGE_ROUND_ROBIN_URL =
+        typeof window.CONTENTFORGE_JUDGE_ROUND_ROBIN_URL === "string" && window.CONTENTFORGE_JUDGE_ROUND_ROBIN_URL.trim()
+          ? window.CONTENTFORGE_JUDGE_ROUND_ROBIN_URL.trim()
+          : "/generation/judge/round-robin";
+      const JUDGEMENT_HISTORY_STORAGE_KEY = "ecard_judgement_history_v1";
+      const MAX_JUDGEMENT_HISTORY_ITEMS = 25;
       const FETCH_TIMEOUT_MS = 400000;
+      const JUDGEMENT_FETCH_TIMEOUT_MS = 120000;
       const STATUS_STEPS = [
         "Calling groq (llama-3.3-70b)...",
         "Calling ollama (qwen2.5:7b)...",
@@ -503,6 +712,7 @@
       const emotionPctInput = document.getElementById("emotionPct");
       const visualStyleInput = document.getElementById("visualStyle");
       const audienceInput = document.getElementById("audience");
+      const culturalContextInput = document.getElementById("culturalContext");
       const countInput = document.getElementById("count");
       const maxWordsInput = document.getElementById("maxWords");
       const emojiPolicyInput = document.getElementById("emojiPolicy");
@@ -523,6 +733,9 @@
       const judgeModeInput = document.getElementById("judgeMode");
       const temperatureInput = document.getElementById("temperature");
       const targetsContainer = document.getElementById("targetsContainer");
+      const enableSweepInput = document.getElementById("enableSweep");
+      const sweepParameterInput = document.getElementById("sweepParameter");
+      const sweepValuesInput = document.getElementById("sweepValues");
 
       const quickThemeNameInput = document.getElementById("quickThemeName");
       const quickKeywordsInput = document.getElementById("quickKeywords");
@@ -532,12 +745,14 @@
       const quickCountInput = document.getElementById("quickCount");
       const quickMaxWordsInput = document.getElementById("quickMaxWords");
       const quickAudienceInput = document.getElementById("quickAudience");
+      const quickCulturalContextInput = document.getElementById("quickCulturalContext");
 
       const statusSection = document.getElementById("statusSection");
       const statusText = document.getElementById("statusText");
       const spinner = document.getElementById("spinner");
       const errorBanner = document.getElementById("errorBanner");
       const resultsSection = document.getElementById("resultsSection");
+      const singleRunResults = document.getElementById("singleRunResults");
       const judgeFallbackBanner = document.getElementById("judgeFallbackBanner");
       const winnerBanner = document.getElementById("winnerBanner");
       const winnerSourceLine = document.getElementById("winnerSourceLine");
@@ -548,6 +763,27 @@
       const winnerSummary = document.getElementById("winnerSummary");
       const fastestSummary = document.getElementById("fastestSummary");
       const totalSummary = document.getElementById("totalSummary");
+      const sweepResultsSection = document.getElementById("sweepResultsSection");
+      const sweepRunTitle = document.getElementById("sweepRunTitle");
+      const sweepResultsContainer = document.getElementById("sweepResultsContainer");
+      const exportSweepJsonButton = document.getElementById("exportSweepJsonButton");
+      const exportSweepCsvButton = document.getElementById("exportSweepCsvButton");
+      const judgementPortalSection = document.getElementById("judgementPortalSection");
+      const judgementRerunCountInput = document.getElementById("judgementRerunCount");
+      const runQualityJudgementButton = document.getElementById("runQualityJudgementButton");
+      const judgementSlowWarning = document.getElementById("judgementSlowWarning");
+      const judgementPortalStatus = document.getElementById("judgementPortalStatus");
+      const judgementPortalSubstatus = document.getElementById("judgementPortalSubstatus");
+      const judgementFallbackBanner = document.getElementById("judgementFallbackBanner");
+      const judgementGroqFailBanner = document.getElementById("judgementGroqFailBanner");
+      const judgementPortalError = document.getElementById("judgementPortalError");
+      const judgementCandidates = document.getElementById("judgementCandidates");
+      const judgementPairwiseBody = document.getElementById("judgementPairwiseBody");
+      const judgementWinnerCard = document.getElementById("judgementWinnerCard");
+      const judgementLeaderboardBody = document.getElementById("judgementLeaderboardBody");
+      const judgementReasoning = document.getElementById("judgementReasoning");
+      const judgementHistoryEmpty = document.getElementById("judgementHistoryEmpty");
+      const judgementHistoryList = document.getElementById("judgementHistoryList");
 
       const refreshHistoryButton = document.getElementById("refreshHistoryButton");
       const historyMessage = document.getElementById("historyMessage");
@@ -558,6 +794,10 @@
       let historyOffset = 0;
       let historyLoading = false;
       let historyHasMore = true;
+      let latestJudgementContext = null;
+      let latestJudgementCandidates = [];
+      let latestLiveResultsPayload = null;
+      let judgementRunHistory = [];
       const historyRuns = [];
       const expandedRunIds = new Set();
       const OUTPUT_SPEC_FORMATS = ["one_liner", "paragraph", "one_page", "pros_cons", "verse", "story"];
@@ -585,6 +825,13 @@
         });
         return normalized;
       })();
+      const SWEEP_PARAMETER_CONFIG = {
+        funny_pct: { label: "Funny", payloadKey: "tone_funny_pct", numeric: true },
+        emotion_pct: { label: "Emotion", payloadKey: "tone_emotion_pct", numeric: true },
+        temperature: { label: "Temperature", payloadKey: "temperature", numeric: true },
+        tone_style: { label: "Tone Style", payloadKey: "tone_style", numeric: false },
+      };
+      let latestSweepRun = null;
 
       function normalizeTarget(rawTarget) {
         if (!rawTarget || typeof rawTarget !== "object" || Array.isArray(rawTarget)) {
@@ -681,6 +928,157 @@
         const timestamp = Date.now();
         const randomSuffix = Math.random().toString(36).slice(2, 8);
         return `ecard-${timestamp}-${randomSuffix}`;
+      }
+
+      function setSweepControlsState() {
+        const enabled = Boolean(enableSweepInput.checked);
+        sweepParameterInput.disabled = !enabled;
+        sweepValuesInput.disabled = !enabled;
+        sweepParameterInput.classList.toggle("opacity-60", !enabled);
+        sweepValuesInput.classList.toggle("opacity-60", !enabled);
+      }
+
+      function parseSweepValues(rawValues, parameter) {
+        const tokens = String(rawValues || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        if (!tokens.length) {
+          return [];
+        }
+
+        const config = SWEEP_PARAMETER_CONFIG[parameter];
+        if (!config) {
+          return [];
+        }
+
+        if (!config.numeric) {
+          return tokens;
+        }
+
+        return tokens
+          .map((token) => Number(token))
+          .filter((value) => Number.isFinite(value));
+      }
+
+      function formatSweepValue(value) {
+        if (typeof value === "number") {
+          return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
+        }
+        return String(value);
+      }
+
+      function applySweepValueToPayload(payload, parameter, value) {
+        const config = SWEEP_PARAMETER_CONFIG[parameter];
+        if (!config) {
+          return payload;
+        }
+        if (config.numeric) {
+          payload[config.payloadKey] = Number(value);
+        } else {
+          payload[config.payloadKey] = String(value);
+        }
+        return payload;
+      }
+
+      function setSweepExportState(enabled) {
+        [exportSweepJsonButton, exportSweepCsvButton].forEach((button) => {
+          button.disabled = !enabled;
+          button.classList.toggle("cursor-not-allowed", !enabled);
+          button.classList.toggle("opacity-50", !enabled);
+        });
+      }
+
+      function escapeCsvCell(value) {
+        const text = String(value ?? "");
+        if (/[",\n]/.test(text)) {
+          return `"${text.replaceAll('"', '""')}"`;
+        }
+        return text;
+      }
+
+      function downloadTextFile(filename, text, mimeType) {
+        const blob = new Blob([text], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+
+      function buildSweepCsv(sweepRun) {
+        const headers = [
+          "sweep_run_id",
+          "parameter",
+          "value",
+          "step",
+          "model",
+          "backend",
+          "success",
+          "winner_model",
+          "winner_score",
+          "score",
+          "latency_ms",
+          "error",
+          "phrases",
+        ];
+        const rows = [headers.join(",")];
+        sweepRun.items.forEach((item) => {
+          const winnerModel = item.response && item.response.winner ? item.response.winner.model || "" : "";
+          const winnerScore =
+            item.response && item.response.winner && typeof item.response.winner.score === "number"
+              ? item.response.winner.score
+              : "";
+          if (!item.response || !Array.isArray(item.response.results) || !item.response.results.length) {
+            rows.push(
+              [
+                sweepRun.run_id,
+                sweepRun.parameter,
+                formatSweepValue(item.value),
+                item.step,
+                "",
+                "",
+                "",
+                winnerModel,
+                winnerScore,
+                "",
+                "",
+                item.error || "",
+                "",
+              ]
+                .map(escapeCsvCell)
+                .join(",")
+            );
+            return;
+          }
+
+          item.response.results.forEach((result) => {
+            const phrases = parseResultPhrases(result.phrases).join(" | ");
+            rows.push(
+              [
+                sweepRun.run_id,
+                sweepRun.parameter,
+                formatSweepValue(item.value),
+                item.step,
+                result.model || result.model_name || "",
+                result.backend || "",
+                Boolean(result.success),
+                winnerModel,
+                winnerScore,
+                typeof result.score === "number" ? result.score : "",
+                result.latency_ms ?? "",
+                result.error || result.error_message || "",
+                phrases,
+              ]
+                .map(escapeCsvCell)
+                .join(",")
+            );
+          });
+        });
+        return rows.join("\n");
       }
 
       function escapeHtml(value) {
@@ -953,6 +1351,25 @@
         }
       }
 
+      function setCulturalContextSelect(value) {
+        const allowed = new Set([
+          "global",
+          "indian",
+          "bengali",
+          "punjabi",
+          "south_indian",
+          "western",
+          "american",
+          "asian",
+        ]);
+        const normalized = String(value || "")
+          .trim()
+          .toLowerCase();
+        if (allowed.has(normalized)) {
+          culturalContextInput.value = normalized;
+        }
+      }
+
       function buildPayload() {
         const outputSpec = buildOutputSpec();
         const selectedTargets = selectedTargetsFromPicker();
@@ -968,6 +1385,8 @@
             .map((item) => item.trim())
             .filter(Boolean),
           visual_style: visualStyleInput.value.trim(),
+          cultural_context: culturalContextInput.value || "global",
+          tone_style: toneStyleInput.value,
           targets,
           count: Number(countInput.value || 3),
           max_tokens: Number(maxWordsInput.value || 120),
@@ -1086,6 +1505,9 @@
         if (Object.prototype.hasOwnProperty.call(raw, "audience")) {
           audienceInput.value = String(raw.audience ?? "");
         }
+        if (Object.prototype.hasOwnProperty.call(raw, "cultural_context")) {
+          setCulturalContextSelect(raw.cultural_context);
+        }
         if (Object.prototype.hasOwnProperty.call(raw, "count")) {
           countInput.value = String(raw.count ?? "");
         }
@@ -1100,6 +1522,23 @@
         }
         if (Object.prototype.hasOwnProperty.call(raw, "temperature")) {
           temperatureInput.value = String(raw.temperature ?? "");
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "enable_sweep")) {
+          enableSweepInput.checked = Boolean(raw.enable_sweep);
+          setSweepControlsState();
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "sweep_parameter")) {
+          const parameter = String(raw.sweep_parameter || "").trim().toLowerCase();
+          if (Object.prototype.hasOwnProperty.call(SWEEP_PARAMETER_CONFIG, parameter)) {
+            sweepParameterInput.value = parameter;
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(raw, "sweep_values")) {
+          if (Array.isArray(raw.sweep_values)) {
+            sweepValuesInput.value = raw.sweep_values.map((item) => String(item)).join(",");
+          } else {
+            sweepValuesInput.value = String(raw.sweep_values ?? "");
+          }
         }
         if (Object.prototype.hasOwnProperty.call(raw, "emoji_policy")) {
           setEmojiPolicySelect(raw.emoji_policy);
@@ -1173,6 +1612,7 @@
         quickCountInput.value = countInput.value;
         quickMaxWordsInput.value = maxWordsInput.value;
         quickAudienceInput.value = audienceInput.value;
+        quickCulturalContextInput.value = culturalContextInput.value;
       }
 
       function clearStatusTimers() {
@@ -1687,7 +2127,881 @@
           .join("");
       }
 
-      function renderLiveResults(payload) {
+      function setJudgementPortalStatus(message, tone = "neutral") {
+        judgementPortalStatus.textContent = message;
+        judgementPortalStatus.className = "mt-2 text-xs";
+        if (tone === "success") {
+          judgementPortalStatus.classList.add("text-emerald-300");
+        } else if (tone === "error") {
+          judgementPortalStatus.classList.add("text-red-300");
+        } else {
+          judgementPortalStatus.classList.add("text-slate-400");
+        }
+      }
+
+      function setJudgementPortalSubstatus(message = "") {
+        const text = String(message || "").trim();
+        if (!text) {
+          judgementPortalSubstatus.textContent = "";
+          judgementPortalSubstatus.classList.add("hidden");
+          return;
+        }
+        judgementPortalSubstatus.textContent = text;
+        judgementPortalSubstatus.classList.remove("hidden");
+      }
+
+      function hideJudgementFallbackBanner() {
+        judgementFallbackBanner.classList.add("hidden");
+      }
+
+      function showJudgementFallbackBanner() {
+        judgementFallbackBanner.classList.remove("hidden");
+      }
+
+      function hideJudgementGroqFailBanner() {
+        judgementGroqFailBanner.classList.add("hidden");
+      }
+
+      function showJudgementGroqFailBanner() {
+        judgementGroqFailBanner.classList.remove("hidden");
+      }
+
+      function hideJudgementPortal() {
+        judgementPortalSection.classList.add("hidden");
+      }
+
+      function showJudgementPortal() {
+        judgementPortalSection.classList.remove("hidden");
+      }
+
+      function clearJudgementPortalError() {
+        judgementPortalError.classList.add("hidden");
+        judgementPortalError.textContent = "";
+      }
+
+      function setJudgementPortalError(message) {
+        judgementPortalError.textContent = message;
+        judgementPortalError.classList.remove("hidden");
+      }
+
+      function resetJudgementPortalResults() {
+        judgementPairwiseBody.innerHTML = "";
+        judgementLeaderboardBody.innerHTML = "";
+        judgementWinnerCard.textContent = "Best content for this prompt: -";
+        judgementReasoning.textContent = "No judgement reasoning yet.";
+        hideJudgementFallbackBanner();
+        hideJudgementGroqFailBanner();
+      }
+
+      function getJudgeableCandidates() {
+        return latestJudgementCandidates.filter((candidate) => candidate.success && candidate.output_text);
+      }
+
+      function setRunQualityJudgementState(enabled, busy = false) {
+        runQualityJudgementButton.disabled = !enabled || busy;
+        if (busy) {
+          runQualityJudgementButton.textContent = "Running...";
+        } else {
+          runQualityJudgementButton.textContent = "Re-run Judgement";
+        }
+      }
+
+      function isLocalJudgeProvider() {
+        const endpoint = String(JUDGE_ROUND_ROBIN_URL || "").trim().toLowerCase();
+        if (!endpoint) {
+          return false;
+        }
+        if (endpoint.startsWith("/")) {
+          return true;
+        }
+        return endpoint.includes("127.0.0.1") || endpoint.includes("localhost");
+      }
+
+      function isJudgementFallbackResult(payload) {
+        if (!payload || typeof payload !== "object") {
+          return false;
+        }
+        if (payload.judge_fallback === true || payload.fallback === true || payload.baseline_fallback === true) {
+          return true;
+        }
+        if (String(payload.winner_source || "").toLowerCase() === "baseline") {
+          const reasonText = String(
+            payload.winner_reason || payload.reason || payload.judge_reasoning || payload.judge_summary || ""
+          ).toLowerCase();
+          if (reasonText.includes("timeout") || reasonText.includes("timed out")) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function normalizeJudgementRerunCount(value) {
+        const parsed = Number(value);
+        return parsed === 3 || parsed === 5 ? parsed : 1;
+      }
+
+      function extractJudgeReasoning(payload, winner) {
+        const candidateValues = [
+          payload.judge_reasoning,
+          payload.reasoning,
+          payload.judge_summary,
+          payload.summary,
+          payload.reason,
+          winner && winner.reason ? winner.reason : "",
+        ];
+        const resolved = candidateValues
+          .map((item) => String(item || "").trim())
+          .find((item) => Boolean(item));
+        return resolved || "No reasoning provided by judge service.";
+      }
+
+      function loadJudgementHistory() {
+        try {
+          const raw = window.localStorage.getItem(JUDGEMENT_HISTORY_STORAGE_KEY);
+          if (!raw) {
+            return [];
+          }
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            return [];
+          }
+          return parsed.filter((item) => item && typeof item === "object");
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function saveJudgementHistory(items) {
+        try {
+          window.localStorage.setItem(JUDGEMENT_HISTORY_STORAGE_KEY, JSON.stringify(items));
+        } catch (error) {
+          // Ignore storage errors (private browsing / quota / disabled storage).
+        }
+      }
+
+      function pushJudgementHistory(entry) {
+        judgementRunHistory.unshift(entry);
+        if (judgementRunHistory.length > MAX_JUDGEMENT_HISTORY_ITEMS) {
+          judgementRunHistory = judgementRunHistory.slice(0, MAX_JUDGEMENT_HISTORY_ITEMS);
+        }
+        saveJudgementHistory(judgementRunHistory);
+        renderJudgementHistory();
+      }
+
+      function renderJudgementHistory() {
+        if (!judgementRunHistory.length) {
+          judgementHistoryEmpty.classList.remove("hidden");
+          judgementHistoryList.innerHTML = "";
+          return;
+        }
+
+        judgementHistoryEmpty.classList.add("hidden");
+        judgementHistoryList.innerHTML = judgementRunHistory
+          .map((entry) => {
+            const winnerModel = String(entry.winner_model || "-");
+            const winnerBackend = String(entry.winner_backend || "");
+            const winnerScore =
+              typeof entry.winner_score === "number" && Number.isFinite(entry.winner_score)
+                ? entry.winner_score.toFixed(2)
+                : "-";
+            const winnerLabel = `${winnerModel}${winnerBackend ? ` (${winnerBackend})` : ""}`;
+            const leaderboard = Array.isArray(entry.leaderboard) ? entry.leaderboard : [];
+            const pairwise = Array.isArray(entry.pairwise) ? entry.pairwise : [];
+            const leaderboardMarkup = leaderboard.length
+              ? `<ol class="list-decimal space-y-1 pl-5">${leaderboard
+                  .slice(0, 6)
+                  .map((row) => {
+                    const score = Number(row.score);
+                    const scoreLabel = Number.isFinite(score) ? score.toFixed(2) : "-";
+                    const backend = row.backend ? ` (${row.backend})` : "";
+                    return `<li>${escapeHtml(`${row.model || "-"}${backend} - ${scoreLabel}`)}</li>`;
+                  })
+                  .join("")}</ol>`
+              : '<p class="text-xs text-slate-400">No leaderboard details.</p>';
+            const pairwiseMarkup = pairwise.length
+              ? `<ul class="space-y-1">${pairwise
+                  .slice(0, 8)
+                  .map(
+                    (row) =>
+                      `<li>${escapeHtml(`${row.candidate_a || "-"} vs ${row.candidate_b || "-"} -> ${row.winner || "tie"}`)}</li>`
+                  )
+                  .join("")}</ul>`
+              : '<p class="text-xs text-slate-400">No pairwise details.</p>';
+            return `
+              <article class="rounded-xl border border-line bg-panelSoft/60 p-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p class="text-sm font-semibold text-white">${escapeHtml(entry.theme_name || "-")}</p>
+                    <p class="mt-1 text-xs text-slate-400">${escapeHtml(formatRunDate(entry.created_at))}</p>
+                  </div>
+                  <p class="text-xs text-slate-300">reruns: ${escapeHtml(entry.rerun_count || 1)}</p>
+                </div>
+                <p class="mt-2 text-sm text-amber-200">Best content for this prompt: ${escapeHtml(winnerLabel)} (score: ${escapeHtml(
+              winnerScore
+            )})</p>
+                <p class="mt-2 text-xs text-slate-300">${escapeHtml(entry.reasoning || "No reasoning provided by judge service.")}</p>
+                <details class="mt-2 rounded-lg border border-line/80 bg-slate-950/50 p-2 text-xs text-slate-200">
+                  <summary class="cursor-pointer text-cyan-200">View pairwise + leaderboard (${escapeHtml(
+                    pairwise.length
+                  )} pairwise)</summary>
+                  <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <p class="mb-1 font-semibold uppercase tracking-[0.12em] text-slate-400">Leaderboard</p>
+                      ${leaderboardMarkup}
+                    </div>
+                    <div>
+                      <p class="mb-1 font-semibold uppercase tracking-[0.12em] text-slate-400">Pairwise</p>
+                      ${pairwiseMarkup}
+                    </div>
+                  </div>
+                </details>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function buildPromptContextForJudgement(requestPayload, responsePayload) {
+        const fallback = responsePayload && typeof responsePayload === "object" ? responsePayload : {};
+        const source = requestPayload && typeof requestPayload === "object" ? requestPayload : {};
+        const avoidClichesValue =
+          typeof source.avoid_cliches === "boolean"
+            ? source.avoid_cliches
+            : typeof fallback.avoid_cliches === "boolean"
+            ? fallback.avoid_cliches
+            : Boolean(avoidClichesInput && avoidClichesInput.checked);
+        return {
+          theme_name: source.theme_name || fallback.theme_name || "",
+          tone_funny_pct:
+            source.tone_funny_pct !== undefined ? source.tone_funny_pct : fallback.tone_funny_pct !== undefined ? fallback.tone_funny_pct : null,
+          tone_emotion_pct:
+            source.tone_emotion_pct !== undefined
+              ? source.tone_emotion_pct
+              : fallback.tone_emotion_pct !== undefined
+              ? fallback.tone_emotion_pct
+              : null,
+          audience: source.audience || fallback.audience || "",
+          cultural_context: source.cultural_context || "global",
+          tone_style: source.tone_style || null,
+          avoid_cliches: avoidClichesValue,
+          output_spec: source.output_spec || null,
+        };
+      }
+
+      function buildJudgementCandidates(responsePayload) {
+        const results = Array.isArray(responsePayload && responsePayload.results) ? responsePayload.results : [];
+        return results.map((result) => {
+          const phrases = parseResultPhrases(result.phrases);
+          const outputText = phrases.join("\n").trim();
+          return {
+            model: String(result.model || result.model_name || ""),
+            backend: String(result.backend || ""),
+            success: Boolean(result.success),
+            score: resolveScore(result),
+            latency_ms: result.latency_ms !== undefined ? result.latency_ms : null,
+            phrases,
+            output_text: outputText,
+            error: result.error || result.error_message || null,
+          };
+        });
+      }
+
+      function renderJudgementCandidates(candidates) {
+        judgementCandidates.innerHTML = candidates
+          .map((candidate) => {
+            const modelLabel = `${candidate.model || "-"}${candidate.backend ? ` (${candidate.backend})` : ""}`;
+            if (!candidate.success || !candidate.output_text) {
+              return `
+                <article class="rounded-xl border border-danger/40 bg-danger/10 p-3">
+                  <p class="text-sm font-semibold text-white">${escapeHtml(modelLabel)}</p>
+                  <p class="mt-1 text-xs text-red-200">${escapeHtml(candidate.error || "No generated output available.")}</p>
+                </article>
+              `;
+            }
+            return `
+              <article class="rounded-xl border border-line bg-panelSoft/50 p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <p class="text-sm font-semibold text-white">${escapeHtml(modelLabel)}</p>
+                  <p class="text-xs text-slate-400">${candidate.score !== null ? `score: ${escapeHtml(candidate.score.toFixed(2))}` : ""}</p>
+                </div>
+                <div class="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">${escapeHtml(candidate.output_text)}</div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function prepareJudgementPortal(requestPayload, responsePayload) {
+        latestJudgementContext = buildPromptContextForJudgement(requestPayload, responsePayload);
+        latestJudgementCandidates = buildJudgementCandidates(responsePayload);
+        renderJudgementCandidates(latestJudgementCandidates);
+        resetJudgementPortalResults();
+        clearJudgementPortalError();
+        setJudgementPortalSubstatus("");
+        hideJudgementFallbackBanner();
+        hideJudgementGroqFailBanner();
+
+        const judgeableCandidates = getJudgeableCandidates();
+        if (judgeableCandidates.length < 2) {
+          setRunQualityJudgementState(false, false);
+          setJudgementPortalStatus("Need at least two successful candidate outputs to run judgement.", "error");
+        } else {
+          setRunQualityJudgementState(true, false);
+          setJudgementPortalStatus("Ready to run tournament judgement.", "neutral");
+        }
+        showJudgementPortal();
+      }
+
+      function normalizeCandidateName(value, fallback = "-") {
+        if (value && typeof value === "object") {
+          const model = String(value.model || value.model_name || "").trim();
+          return model || fallback;
+        }
+        const text = String(value || "").trim();
+        return text || fallback;
+      }
+
+      function normalizePairwiseResults(payload) {
+        const sources = [
+          payload.pairwise_results,
+          payload.pairwise,
+          payload.comparisons,
+          payload.matches,
+          payload.head_to_head,
+          payload.results,
+        ];
+        const list = sources.find((entry) => Array.isArray(entry)) || [];
+        return list
+          .map((item) => {
+            if (!item || typeof item !== "object") {
+              return null;
+            }
+            const candidateA = normalizeCandidateName(
+              item.candidate_a || item.model_a || item.modelA || item.left || item.a || item.first || item.model_1
+            );
+            const candidateB = normalizeCandidateName(
+              item.candidate_b || item.model_b || item.modelB || item.right || item.b || item.second || item.model_2
+            );
+            const winner = normalizeCandidateName(item.winner || item.winner_model || item.best || "", "");
+            const reason = String(
+              item.reason || item.rationale || item.explanation || item.decision_reason || item.notes || ""
+            ).trim();
+            return {
+              candidate_a: candidateA,
+              candidate_b: candidateB,
+              winner: winner || "tie",
+              reason: reason || "No reason provided.",
+            };
+          })
+          .filter(Boolean);
+      }
+
+      function normalizeLeaderboard(payload, pairwise, candidates) {
+        const sources = [payload.leaderboard, payload.final_ranking, payload.ranking, payload.rankings];
+        const rawLeaderboard = sources.find((entry) => Array.isArray(entry));
+        if (rawLeaderboard) {
+          return rawLeaderboard.map((entry, index) => ({
+            rank: Number(entry.rank || index + 1),
+            model: normalizeCandidateName(entry.model || entry.model_name || entry.candidate),
+            backend: String(entry.backend || "").trim(),
+            score:
+              entry.score !== undefined
+                ? Number(entry.score)
+                : entry.total !== undefined
+                ? Number(entry.total)
+                : entry.points !== undefined
+                ? Number(entry.points)
+                : null,
+            wins: entry.wins !== undefined ? Number(entry.wins) : null,
+            losses: entry.losses !== undefined ? Number(entry.losses) : null,
+            draws: entry.draws !== undefined ? Number(entry.draws) : null,
+          }));
+        }
+
+        const board = new Map();
+        candidates.forEach((candidate) => {
+          if (!candidate.model) {
+            return;
+          }
+          const key = `${candidate.model}||${candidate.backend || ""}`;
+          board.set(key, {
+            model: candidate.model,
+            backend: candidate.backend || "",
+            score: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+          });
+        });
+
+        pairwise.forEach((match) => {
+          const a = Array.from(board.values()).find((entry) => entry.model === match.candidate_a);
+          const b = Array.from(board.values()).find((entry) => entry.model === match.candidate_b);
+          if (!a || !b) {
+            return;
+          }
+          if (match.winner === a.model) {
+            a.wins += 1;
+            a.score += 1;
+            b.losses += 1;
+          } else if (match.winner === b.model) {
+            b.wins += 1;
+            b.score += 1;
+            a.losses += 1;
+          } else {
+            a.draws += 1;
+            b.draws += 1;
+            a.score += 0.5;
+            b.score += 0.5;
+          }
+        });
+
+        return Array.from(board.values())
+          .sort((left, right) => right.score - left.score || right.wins - left.wins || left.model.localeCompare(right.model))
+          .map((entry, index) => ({
+            rank: index + 1,
+            model: entry.model,
+            backend: entry.backend,
+            score: entry.score,
+            wins: entry.wins,
+            losses: entry.losses,
+            draws: entry.draws,
+          }));
+      }
+
+      function resolveJudgementWinner(payload, leaderboard) {
+        const winnerRaw = payload.winner;
+        if (winnerRaw && typeof winnerRaw === "object") {
+          return {
+            model: normalizeCandidateName(winnerRaw.model || winnerRaw.model_name),
+            backend: String(winnerRaw.backend || "").trim(),
+            reason: String(winnerRaw.reason || winnerRaw.rationale || "").trim(),
+          };
+        }
+        if (typeof winnerRaw === "string" && winnerRaw.trim()) {
+          return { model: winnerRaw.trim(), backend: "", reason: "" };
+        }
+        if (leaderboard.length) {
+          return {
+            model: leaderboard[0].model,
+            backend: leaderboard[0].backend || "",
+            reason: String(payload.winner_reason || payload.reason || "").trim(),
+          };
+        }
+        return { model: "-", backend: "", reason: "" };
+      }
+
+      function renderJudgementResults(payload) {
+        const pairwise = normalizePairwiseResults(payload);
+        const leaderboard = normalizeLeaderboard(payload, pairwise, latestJudgementCandidates);
+        const winner = resolveJudgementWinner(payload, leaderboard);
+        const reasoning = extractJudgeReasoning(payload, winner);
+        if (isJudgementFallbackResult(payload)) {
+          showJudgementFallbackBanner();
+        } else {
+          hideJudgementFallbackBanner();
+        }
+
+        judgementPairwiseBody.innerHTML = pairwise.length
+          ? pairwise
+              .map(
+                (entry) => `
+                  <tr class="align-top">
+                    <td class="px-3 py-2 text-slate-200">${escapeHtml(entry.candidate_a)}</td>
+                    <td class="px-3 py-2 text-slate-200">${escapeHtml(entry.candidate_b)}</td>
+                    <td class="px-3 py-2 text-emerald-300">${escapeHtml(entry.winner)}</td>
+                    <td class="px-3 py-2 text-slate-300">${escapeHtml(entry.reason)}</td>
+                  </tr>
+                `
+              )
+              .join("")
+          : '<tr><td colspan="4" class="px-3 py-2 text-slate-400">No pairwise comparisons returned.</td></tr>';
+
+        judgementLeaderboardBody.innerHTML = leaderboard.length
+          ? leaderboard
+              .map(
+                (entry) => `
+                  <tr>
+                    <td class="px-3 py-2 text-slate-200">${escapeHtml(entry.rank)}</td>
+                    <td class="px-3 py-2 text-white">${escapeHtml(entry.model)}</td>
+                    <td class="px-3 py-2 text-slate-300">${escapeHtml(entry.backend || "-")}</td>
+                    <td class="px-3 py-2 text-slate-200">${
+                      entry.score === null || entry.score === undefined || Number.isNaN(entry.score)
+                        ? "-"
+                        : escapeHtml(Number(entry.score).toFixed(2))
+                    }</td>
+                    <td class="px-3 py-2 text-slate-300">${escapeHtml(
+                      `${entry.wins ?? "-"}-${entry.losses ?? "-"}-${entry.draws ?? "-"}`
+                    )}</td>
+                  </tr>
+                `
+              )
+              .join("")
+          : '<tr><td colspan="5" class="px-3 py-2 text-slate-400">No final ranking returned.</td></tr>';
+
+        const winnerLabel = `${winner.model}${winner.backend ? ` (${winner.backend})` : ""}`;
+        judgementWinnerCard.textContent = winner.reason
+          ? `Best content for this prompt: ${winnerLabel} - ${winner.reason}`
+          : `Best content for this prompt: ${winnerLabel}`;
+        judgementReasoning.textContent = reasoning;
+
+        return {
+          winner,
+          leaderboard,
+          pairwise,
+          reasoning,
+        };
+      }
+
+      function buildJudgementRequestPayload() {
+        const context =
+          latestJudgementContext && typeof latestJudgementContext === "object" ? latestJudgementContext : null;
+        const judgeableCandidates = getJudgeableCandidates();
+
+        if (!context || judgeableCandidates.length < 2) {
+          return null;
+        }
+
+        const candidates = judgeableCandidates.map((candidate) => ({
+          model: candidate.model,
+          backend: candidate.backend,
+          text: candidate.output_text,
+        }));
+        const promptContext = {
+          ...context,
+          avoid_cliches: typeof context.avoid_cliches === "boolean" ? context.avoid_cliches : false,
+        };
+
+        return {
+          prompt_context: promptContext,
+          candidates,
+        };
+      }
+
+      async function parseJudgementErrorMessage(response) {
+        const defaultMessage = `Judgement request failed with status ${response.status}`;
+        try {
+          const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+          if (contentType.includes("application/json")) {
+            const parsed = await response.json();
+            if (parsed && typeof parsed === "object") {
+              if (Array.isArray(parsed.detail)) {
+                const details = parsed.detail
+                  .map((item) => {
+                    if (!item || typeof item !== "object") {
+                      return null;
+                    }
+                    if (item.msg) {
+                      return String(item.msg);
+                    }
+                    return null;
+                  })
+                  .filter(Boolean)
+                  .join("; ");
+                if (details) {
+                  return `${defaultMessage}: ${details}`;
+                }
+              }
+              if (parsed.detail !== undefined && parsed.detail !== null) {
+                return `${defaultMessage}: ${String(parsed.detail)}`;
+              }
+              if (parsed.error !== undefined && parsed.error !== null) {
+                return `${defaultMessage}: ${String(parsed.error)}`;
+              }
+            }
+          }
+
+          const rawText = (await response.text()).trim();
+          if (rawText) {
+            return `${defaultMessage}: ${rawText}`;
+          }
+          return defaultMessage;
+        } catch (error) {
+          return defaultMessage;
+        }
+      }
+
+      async function postJudgementRequest(endpoint, payload) {
+        console.log("Judgement payload", payload);
+        const response = await fetchWithTimeout(
+          endpoint,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          JUDGEMENT_FETCH_TIMEOUT_MS
+        );
+
+        if (!response.ok) {
+          const message = await parseJudgementErrorMessage(response);
+          const error = new Error(message);
+          error.httpStatus = response.status;
+          throw error;
+        }
+
+        const data = await response.json();
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          throw new Error("Judgement response was not a valid object.");
+        }
+        return data;
+      }
+
+      function resolveWinnerScoreFromLeaderboard(winner, leaderboard) {
+        if (!winner || !Array.isArray(leaderboard)) {
+          return null;
+        }
+        const winnerModel = String(winner.model || "").trim();
+        const winnerBackend = String(winner.backend || "").trim();
+        const match = leaderboard.find((entry) => {
+          const model = String(entry.model || "").trim();
+          const backend = String(entry.backend || "").trim();
+          if (model !== winnerModel) {
+            return false;
+          }
+          if (!winnerBackend) {
+            return true;
+          }
+          return backend === winnerBackend;
+        });
+        if (!match) {
+          return null;
+        }
+        const score = Number(match.score);
+        return Number.isFinite(score) ? score : null;
+      }
+
+      function applyTournamentWinnerToMainResults(rendered) {
+        if (!rendered || !rendered.winner || !latestLiveResultsPayload) {
+          return;
+        }
+
+        const winnerModel = String(rendered.winner.model || "").trim();
+        if (!winnerModel) {
+          return;
+        }
+
+        const winnerBackend = String(rendered.winner.backend || "").trim();
+        const winnerLabel = `${winnerModel}${winnerBackend ? ` (${winnerBackend})` : ""}`;
+        const winnerScore = resolveWinnerScoreFromLeaderboard(rendered.winner, rendered.leaderboard);
+        const scoreSuffix = winnerScore !== null ? ` (score: ${winnerScore.toFixed(2)})` : "";
+
+        winnerBanner.textContent = `🏆 Winner: ${winnerLabel}${scoreSuffix}`;
+        winnerSourceLine.textContent = "Winner source: tournament";
+        winnerSummary.textContent = rendered.winner.reason
+          ? `🏆 Winner: ${winnerLabel} - ${rendered.winner.reason}`
+          : `🏆 Winner: ${winnerLabel}`;
+
+        const results = Array.isArray(latestLiveResultsPayload.results) ? latestLiveResultsPayload.results : [];
+        resultsBody.innerHTML = buildResultRows(results, winnerModel);
+      }
+
+      async function runQualityJudgement(options = {}) {
+        const auto = Boolean(options && options.auto);
+        clearJudgementPortalError();
+        resetJudgementPortalResults();
+        setJudgementPortalSubstatus("");
+        hideJudgementGroqFailBanner();
+
+        const rerunCount = normalizeJudgementRerunCount(judgementRerunCountInput.value);
+        const initialPayload = buildJudgementRequestPayload();
+        const candidateCount = Array.isArray(initialPayload && initialPayload.candidates) ? initialPayload.candidates.length : 0;
+        if (!initialPayload) {
+          setRunQualityJudgementState(false, false);
+          setJudgementPortalStatus("Need at least two successful candidate outputs to run judgement.", "error");
+          return false;
+        }
+        if (candidateCount > 3 && isLocalJudgeProvider()) {
+          setJudgementPortalSubstatus("Round-robin with local judge may be slow. Consider tie-break mode.");
+          if (!auto) {
+            const proceed = window.confirm("Round-robin with local judge may be slow. Consider tie-break mode.");
+            if (!proceed) {
+              setJudgementPortalStatus("Judgement cancelled.", "neutral");
+              return false;
+            }
+          }
+        }
+
+        setRunQualityJudgementState(true, true);
+        setJudgementPortalStatus(
+          "Running tournament judgement...",
+          "neutral"
+        );
+        setJudgementPortalSubstatus("This may take up to 2 minutes");
+
+        try {
+          let data = null;
+          for (let runIndex = 0; runIndex < rerunCount; runIndex += 1) {
+            setJudgementPortalStatus(
+              "Running tournament judgement...",
+              "neutral"
+            );
+            if (rerunCount > 1) {
+              setJudgementPortalSubstatus(`This may take up to 2 minutes (run ${runIndex + 1}/${rerunCount})`);
+            }
+            const payload = buildJudgementRequestPayload();
+            if (!payload) {
+              throw new Error("Need at least two successful candidate outputs to run judgement.");
+            }
+            data = await postJudgementRequest(JUDGE_ROUND_ROBIN_URL, payload);
+          }
+
+          if (!data) {
+            throw new Error("Unable to complete judgement request.");
+          }
+
+          const rendered = renderJudgementResults(data);
+          if (!isJudgementFallbackResult(data)) {
+            applyTournamentWinnerToMainResults(rendered);
+          }
+          const winnerScore = resolveWinnerScoreFromLeaderboard(rendered.winner, rendered.leaderboard);
+          pushJudgementHistory({
+            id: createTraceId(),
+            created_at: new Date().toISOString(),
+            theme_name:
+              latestJudgementContext && latestJudgementContext.theme_name
+                ? String(latestJudgementContext.theme_name)
+                : "-",
+            rerun_count: rerunCount,
+            endpoint: JUDGE_ROUND_ROBIN_URL,
+            winner_model: rendered.winner.model || "-",
+            winner_backend: rendered.winner.backend || "",
+            winner_score: winnerScore,
+            reasoning: rendered.reasoning || "",
+            pairwise: rendered.pairwise,
+            leaderboard: rendered.leaderboard,
+          });
+          setJudgementPortalStatus("Tournament judgement complete.", "success");
+          setJudgementPortalSubstatus("");
+          hideJudgementGroqFailBanner();
+          return true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to run quality judgement.";
+          showJudgementGroqFailBanner();
+          if (auto) {
+            console.error("Quality judgement failed after generation.", error);
+          } else {
+            setJudgementPortalError(message);
+          }
+          setJudgementPortalStatus("Unable to run quality judgement.", "error");
+          setJudgementPortalSubstatus("");
+          return false;
+        } finally {
+          setRunQualityJudgementState(getJudgeableCandidates().length >= 2, false);
+        }
+      }
+
+      function showSingleRunResultsMode() {
+        singleRunResults.classList.remove("hidden");
+        sweepResultsSection.classList.add("hidden");
+        sweepResultsContainer.innerHTML = "";
+      }
+
+      function showSweepResultsMode() {
+        singleRunResults.classList.add("hidden");
+        sweepResultsSection.classList.remove("hidden");
+      }
+
+      async function requestComparisonPayload(payload) {
+        const response = await fetchWithTimeout(
+          API_URL,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          FETCH_TIMEOUT_MS
+        );
+
+        if (!response.ok) {
+          if (response.status === 503) {
+            throw new Error("LLM comparator not running on port 8001.");
+          }
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+
+        return await response.json();
+      }
+
+      function renderSweepResults(sweepRun) {
+        latestSweepRun = sweepRun;
+        setSweepExportState(Boolean(sweepRun && Array.isArray(sweepRun.items) && sweepRun.items.length));
+        latestLiveResultsPayload = null;
+        latestJudgementContext = null;
+        latestJudgementCandidates = [];
+        hideJudgementPortal();
+        clearJudgementPortalError();
+        resetJudgementPortalResults();
+        setRunQualityJudgementState(false, false);
+        showSweepResultsMode();
+        resultsSection.classList.remove("hidden");
+
+        const config = SWEEP_PARAMETER_CONFIG[sweepRun.parameter] || {
+          label: sweepRun.parameter,
+        };
+        sweepRunTitle.textContent = `Sweep Run (${config.label}): ${sweepRun.values.map((value) => formatSweepValue(value)).join(", ")}`;
+
+        sweepResultsContainer.innerHTML = sweepRun.items
+          .map((item) => {
+            const sectionLabel = `${config.label}=${formatSweepValue(item.value)}`;
+            if (item.error || !item.response) {
+              return `
+                <article class="rounded-2xl border border-danger/40 bg-danger/10 p-4">
+                  <p class="text-sm font-semibold text-white">${escapeHtml(sectionLabel)}</p>
+                  <p class="mt-2 text-sm text-red-200">${escapeHtml(item.error || "Request failed.")}</p>
+                </article>
+              `;
+            }
+
+            const response = item.response;
+            const results = Array.isArray(response.results) ? response.results : [];
+            const winnerModel = response.winner && response.winner.model ? response.winner.model : null;
+            const winnerScore =
+              response.winner && typeof response.winner.score === "number" ? response.winner.score.toFixed(2) : "-";
+            const fastest = results
+              .filter((result) => result.success && Number(result.latency_ms) > 0)
+              .sort((left, right) => Number(left.latency_ms) - Number(right.latency_ms))[0];
+
+            return `
+              <article class="rounded-2xl border border-line bg-panelSoft/40 p-4">
+                <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p class="text-sm font-semibold text-white">${escapeHtml(sectionLabel)}</p>
+                  <p class="text-xs text-amber-200">🏆 Winner: ${escapeHtml(winnerModel || "-")} ${winnerModel ? `(score: ${escapeHtml(winnerScore)})` : ""}</p>
+                </div>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full divide-y divide-line text-left text-sm">
+                    <thead class="text-slate-300">
+                      <tr>
+                        <th class="px-3 py-3 font-medium">Model</th>
+                        <th class="px-3 py-3 font-medium">Backend</th>
+                        <th class="px-3 py-3 font-medium">Status</th>
+                        <th class="px-3 py-3 font-medium">Score</th>
+                        <th class="px-3 py-3 font-medium">Quality</th>
+                        <th class="px-3 py-3 font-medium">Time</th>
+                        <th class="px-3 py-3 font-medium">Phrases</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-line">
+                      ${buildResultRows(results, winnerModel)}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="mt-3 grid gap-2 text-sm text-slate-200 sm:grid-cols-3">
+                  <p>🏆 Winner: ${escapeHtml(winnerModel || "-")}</p>
+                  <p>⚡ Fastest: ${escapeHtml(fastest ? fastest.model || fastest.model_name || "-" : "-")}</p>
+                  <p>⏱ Total: ${escapeHtml(formatDuration(response.total_time_ms || 0))}</p>
+                </div>
+              </article>
+            `;
+          })
+          .join("");
+      }
+
+      function renderLiveResults(payload, requestPayload) {
+        latestSweepRun = null;
+        setSweepExportState(false);
+        latestLiveResultsPayload = payload;
+        showSingleRunResultsMode();
         const results = Array.isArray(payload.results) ? payload.results : [];
         const winnerModel = payload.winner && payload.winner.model ? payload.winner.model : null;
         const winnerReason =
@@ -1718,6 +3032,7 @@
           : `🏆 Winner: ${winnerModel || "-"}`;
         fastestSummary.textContent = `⚡ Fastest: ${fastest ? fastest.model || fastest.model_name : "-"}`;
         totalSummary.textContent = `⏱ Total: ${formatDuration(payload.total_time_ms || 0)}`;
+        prepareJudgementPortal(requestPayload, payload);
         resultsSection.classList.remove("hidden");
       }
 
@@ -1744,6 +3059,12 @@
 
         return {
           ...run,
+          cultural_context:
+            run && typeof run.cultural_context === "string" && run.cultural_context.trim()
+              ? run.cultural_context.trim()
+              : run && typeof run.culturalContext === "string" && run.culturalContext.trim()
+              ? run.culturalContext.trim()
+              : "global",
           prompt_keywords: Array.isArray(run.prompt_keywords)
             ? run.prompt_keywords
             : parseJsonList(run.prompt_keywords),
@@ -1817,6 +3138,7 @@
                   <div>
                     <p class="text-base font-semibold text-white">${escapeHtml(run.theme_name || "-")}</p>
                     <p class="mt-1 text-xs text-slate-400">${escapeHtml(formatRunDate(run.created_at))}</p>
+                    <p class="mt-1 text-xs text-slate-500">Culture: ${escapeHtml(run.cultural_context || "global")}</p>
                   </div>
                   <div class="flex items-center gap-2">
                     <p class="rounded-full border border-amber-300/40 bg-amber-300/20 px-2.5 py-1 text-xs font-semibold text-amber-100">
@@ -1898,36 +3220,94 @@
       async function generateComparison() {
         errorBanner.classList.add("hidden");
         resultsSection.classList.add("hidden");
+        setSweepExportState(false);
+        latestLiveResultsPayload = null;
         judgeFallbackBanner.classList.add("hidden");
         judgeVerdictSection.classList.add("hidden");
+        hideJudgementPortal();
+        clearJudgementPortalError();
+        resetJudgementPortalResults();
+        setJudgementPortalSubstatus("");
+        latestJudgementContext = null;
+        latestJudgementCandidates = [];
+        setRunQualityJudgementState(false, false);
+        setJudgementPortalStatus("Run judging after generation to compare candidates head-to-head.", "neutral");
         statusSection.classList.remove("hidden");
-        setStatus(STATUS_STEPS[0], false);
-        scheduleStatusProgress();
         setGeneratingState(true);
 
         try {
-          const payload = buildPayload();
-          const response = await fetchWithTimeout(
-            API_URL,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            },
-            FETCH_TIMEOUT_MS
-          );
-
-          if (!response.ok) {
-            if (response.status === 503) {
-              throw new Error("LLM comparator not running on port 8001.");
+          const sweepEnabled = Boolean(enableSweepInput.checked);
+          if (sweepEnabled) {
+            clearStatusTimers();
+            const sweepParameter = Object.prototype.hasOwnProperty.call(
+              SWEEP_PARAMETER_CONFIG,
+              sweepParameterInput.value
+            )
+              ? sweepParameterInput.value
+              : "funny_pct";
+            const sweepValues = parseSweepValues(sweepValuesInput.value, sweepParameter);
+            if (!sweepValues.length) {
+              throw new Error("Sweep mode enabled but no valid sweep values were provided.");
             }
-            throw new Error(`Request failed with status ${response.status}`);
+
+            const basePayload = buildPayload();
+            const sweepRun = {
+              run_id: createTraceId(),
+              parameter: sweepParameter,
+              values: sweepValues,
+              created_at: new Date().toISOString(),
+              items: [],
+            };
+
+            for (let index = 0; index < sweepValues.length; index += 1) {
+              const value = sweepValues[index];
+              const stepPayload = {
+                ...basePayload,
+                trace_id: createTraceId(),
+              };
+              applySweepValueToPayload(stepPayload, sweepParameter, value);
+              const label = `${SWEEP_PARAMETER_CONFIG[sweepParameter].label}=${formatSweepValue(value)}`;
+              setStatus(`Sweep ${index + 1}/${sweepValues.length}: ${label}`, false);
+
+              try {
+                const data = await requestComparisonPayload(stepPayload);
+                sweepRun.items.push({
+                  step: index + 1,
+                  value,
+                  payload: stepPayload,
+                  response: data,
+                  error: null,
+                });
+              } catch (error) {
+                sweepRun.items.push({
+                  step: index + 1,
+                  value,
+                  payload: stepPayload,
+                  response: null,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                });
+              }
+            }
+
+            clearStatusTimers();
+            setStatus("Sweep complete.", true);
+            renderSweepResults(sweepRun);
+          } else {
+            const payload = buildPayload();
+            clearStatusTimers();
+            setStatus("Step 1/2: Generating content...", false);
+            const data = await requestComparisonPayload(payload);
+            clearStatusTimers();
+            renderLiveResults(data, payload);
+            setStatus("Step 2/2: Judging content quality...", false);
+            const judgementOk = await runQualityJudgement({ auto: true });
+            if (judgementOk) {
+              setStatus("All steps complete.", true);
+            } else {
+              setStatus("Content generated successfully, but Groq quality judgement failed.", true);
+            }
           }
 
-          const data = await response.json();
-          clearStatusTimers();
-          setStatus("All backends complete.", true);
-          renderLiveResults(data);
           await loadHistory({ reset: true });
         } catch (error) {
           clearStatusTimers();
@@ -1961,10 +3341,32 @@
       bindMirroredInputs(countInput, quickCountInput);
       bindMirroredInputs(maxWordsInput, quickMaxWordsInput);
       bindMirroredInputs(audienceInput, quickAudienceInput);
+      bindMirroredInputs(culturalContextInput, quickCulturalContextInput, "change");
       outputFormatInput.addEventListener("change", () => renderOutputSpecFields(true));
       judgeEnabledInput.addEventListener("change", setJudgeModeState);
+      enableSweepInput.addEventListener("change", setSweepControlsState);
+      runQualityJudgementButton.addEventListener("click", runQualityJudgement);
 
       generateButton.addEventListener("click", generateComparison);
+
+      exportSweepJsonButton.addEventListener("click", () => {
+        if (!latestSweepRun) {
+          return;
+        }
+        downloadTextFile(
+          `sweep-${latestSweepRun.run_id}.json`,
+          `${JSON.stringify(latestSweepRun, null, 2)}\n`,
+          "application/json;charset=utf-8"
+        );
+      });
+
+      exportSweepCsvButton.addEventListener("click", () => {
+        if (!latestSweepRun) {
+          return;
+        }
+        const csv = buildSweepCsv(latestSweepRun);
+        downloadTextFile(`sweep-${latestSweepRun.run_id}.csv`, csv, "text/csv;charset=utf-8");
+      });
 
       document.addEventListener("click", async (event) => {
         const copyButton = event.target.closest("[data-copy-output]");
@@ -2029,6 +3431,12 @@
       renderTargetsPicker();
       renderOutputSpecFields(true);
       setJudgeModeState();
+      setSweepControlsState();
+      setSweepExportState(false);
+      setRunQualityJudgementState(false, false);
+      judgementRunHistory = loadJudgementHistory();
+      renderJudgementHistory();
+      hideJudgementPortal();
       syncQuickInputsFromMain();
       loadHistory({ reset: true });
     </script>

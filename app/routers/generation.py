@@ -17,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.models.comparison import ComparisonRun, ComparisonRunResult
 from app.schemas.cards import CardContentUpdate, CardStatusUpdate
@@ -40,7 +41,10 @@ groq_service = GroqService()
 dalle_service = DalleService()
 
 LLM_COMPARATOR_URL = "http://localhost:8001/generate/single"
+LLM_JUDGE_ROUND_ROBIN_URL = "http://localhost:8001/judge/round-robin"
+LLM_JUDGE_TOURNAMENT_URL = "http://localhost:8001/judge/tournament"
 LLM_COMPARATOR_TIMEOUT_SECONDS = 90.0
+LLM_JUDGE_TIMEOUT_SECONDS = max(10.0, float(settings.judge_timeout_seconds))
 LLM_COMPARATOR_BUSY_RETRY_DELAY_SECONDS = 2.0
 LLM_COMPARATOR_BACKENDS = (
     {"backend": "groq", "model": "llama-3.3-70b-versatile", "trace_suffix": "groq"},
@@ -337,6 +341,57 @@ def _extract_http_error(response: httpx.Response) -> str:
 
     text = response.text.strip()
     return text or f"HTTP {response.status_code}"
+
+
+async def _forward_judge_request(
+    *,
+    payload: dict[str, Any],
+    endpoint: str,
+) -> dict[str, Any]:
+    """Forward a frontend judgement request to the comparator service."""
+
+    async with httpx.AsyncClient(timeout=LLM_JUDGE_TIMEOUT_SECONDS) as client:
+        try:
+            response = await client.post(endpoint, json=payload)
+        except httpx.ConnectTimeout as exc:
+            raise HTTPException(status_code=503, detail="LLM comparator not running on port 8001") from exc
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Judge request timed out after {int(LLM_JUDGE_TIMEOUT_SECONDS)}s",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Judge request failed: {exc}") from exc
+
+    # Graceful fallback for older comparator versions that do not accept rerun_count.
+    if response.status_code == 422 and isinstance(payload, dict) and "rerun_count" in payload:
+        fallback_payload = dict(payload)
+        fallback_payload.pop("rerun_count", None)
+        async with httpx.AsyncClient(timeout=LLM_JUDGE_TIMEOUT_SECONDS) as client:
+            try:
+                response = await client.post(endpoint, json=fallback_payload)
+            except httpx.ConnectTimeout as exc:
+                raise HTTPException(status_code=503, detail="LLM comparator not running on port 8001") from exc
+            except httpx.TimeoutException as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=f"Judge request timed out after {int(LLM_JUDGE_TIMEOUT_SECONDS)}s",
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=f"Judge request failed: {exc}") from exc
+
+    if response.is_error:
+        raise HTTPException(status_code=response.status_code, detail=_extract_http_error(response))
+
+    try:
+        parsed = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Invalid JSON response from judge service.") from exc
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="Judge response must be a JSON object.")
+
+    return parsed
 
 
 def _has_constraint_issues(result: dict[str, Any]) -> bool:
@@ -1051,6 +1106,20 @@ async def validate_generated_image(payload: ImageValidationRequest) -> ImageVali
 
     validation = await dalle_service.validate_image(payload.image_url)
     return ImageValidationResponse(**validation)
+
+
+@router.post("/judge/round-robin")
+async def judge_round_robin(payload: dict[str, Any]) -> dict[str, Any]:
+    """Proxy round-robin judgement requests through this API to avoid browser CORS issues."""
+
+    return await _forward_judge_request(payload=payload, endpoint=LLM_JUDGE_ROUND_ROBIN_URL)
+
+
+@router.post("/judge/tournament")
+async def judge_tournament(payload: dict[str, Any]) -> dict[str, Any]:
+    """Proxy tournament judgement requests through this API for legacy compatibility."""
+
+    return await _forward_judge_request(payload=payload, endpoint=LLM_JUDGE_TOURNAMENT_URL)
 
 
 @router.post("/compare-models", response_model=CompareModelsResponse)
