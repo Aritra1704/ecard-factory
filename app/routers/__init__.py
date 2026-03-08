@@ -10,6 +10,7 @@ from app.routers.generation import router as generation_router
 from app.routers.planning import router as planning_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
+from app.routers.workflow_v1 import router as workflow_v1_router
 
 api_router = APIRouter()
 api_router.include_router(admin_router)
@@ -20,6 +21,7 @@ api_router.include_router(generation_router)
 api_router.include_router(planning_router)
 api_router.include_router(telegram_router)
 api_router.include_router(theme_router)
+api_router.include_router(workflow_v1_router)
 
 __all__ = [
     "admin",
@@ -30,4 +32,5 @@ __all__ = [
     "health",
     "telegram",
     "theme",
+    "workflow_v1",
 ]

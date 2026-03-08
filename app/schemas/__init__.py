@@ -29,6 +29,17 @@ from app.schemas.telegram import (
     TelegramWebhookRequest,
     TelegramWebhookResponse,
 )
+from app.schemas.workflow import (
+    ApprovalRequest,
+    ContentApprovalRequest,
+    ContentApprovalResponse,
+    FinalApprovalResponse,
+    FinalAssetUrls,
+    ImageApprovalResponse,
+    JobDebugResponse,
+    StartJobRequest,
+    StartJobResponse,
+)
 
 __all__ = [
     "CardAssemblyRequest",
@@ -59,4 +70,13 @@ __all__ = [
     "ThemeOverrideCreate",
     "ThemeOverrideResponse",
     "ThemeResolved",
+    "ApprovalRequest",
+    "ContentApprovalRequest",
+    "ContentApprovalResponse",
+    "FinalApprovalResponse",
+    "FinalAssetUrls",
+    "ImageApprovalResponse",
+    "JobDebugResponse",
+    "StartJobRequest",
+    "StartJobResponse",
 ]

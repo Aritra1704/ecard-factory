@@ -22,6 +22,7 @@ from app.routers.health import router as health_router
 from app.routers.planning import router as planning_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
+from app.routers.workflow_v1 import router as workflow_v1_router
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -50,7 +51,12 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         logger.exception("Startup migration failed. Continuing app startup.")
 
-    await ensure_database_ready()
+    try:
+        await ensure_database_ready()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Database readiness check failed. Continuing startup; workflow endpoints can use in-memory fallback."
+        )
     yield
 
     await close_database()
@@ -73,6 +79,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(health_router)
+app.include_router(workflow_v1_router)
 app.include_router(theme_router, prefix="/theme")
 app.include_router(assembly_router, prefix="/assembly")
 app.include_router(cards_router, prefix="/cards")
