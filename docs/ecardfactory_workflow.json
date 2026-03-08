@@ -1,0 +1,43 @@
+{
+  "boundary_rule": {
+    "n8n_calls_only": ["ecardfactory"],
+    "n8n_never_calls": ["contentforge", "model_providers", "image_generators"]
+  },
+  "roles": {
+    "n8n": ["schedule", "approval_wait", "timeout", "notifications"],
+    "ecardfactory": [
+      "job_lifecycle",
+      "theme_resolution",
+      "contentforge_calls",
+      "audit_logging",
+      "asset_assembly",
+      "export"
+    ],
+    "contentforge": [
+      "generation",
+      "comparison",
+      "judging",
+      "winner_selection"
+    ]
+  },
+  "steps": [
+    { "step": 1, "name": "schedule_trigger", "owner": "n8n" },
+    { "step": 2, "name": "start_card_job", "owner": "ecardfactory" },
+    { "step": 3, "name": "resolve_theme", "owner": "ecardfactory" },
+    { "step": 4, "name": "generate_and_judge_content", "owner": "ecardfactory->contentforge" },
+    { "step": 5, "name": "store_content_results", "owner": "ecardfactory" },
+    { "step": 6, "name": "request_content_approval", "owner": "n8n" },
+    { "step": 7, "name": "wait_content_approval", "owner": "n8n" },
+    { "step": 8, "name": "update_content_approval", "owner": "n8n->ecardfactory" },
+    { "step": 9, "name": "build_image_prompt", "owner": "ecardfactory" },
+    { "step": 10, "name": "generate_image", "owner": "ecardfactory" },
+    { "step": 11, "name": "request_image_approval", "owner": "n8n" },
+    { "step": 12, "name": "wait_image_approval", "owner": "n8n" },
+    { "step": 13, "name": "update_image_approval", "owner": "n8n->ecardfactory" },
+    { "step": 14, "name": "assemble_final_card", "owner": "ecardfactory" },
+    { "step": 15, "name": "request_final_approval", "owner": "n8n" },
+    { "step": 16, "name": "wait_final_approval", "owner": "n8n" },
+    { "step": 17, "name": "update_final_approval", "owner": "n8n->ecardfactory" },
+    { "step": 18, "name": "export_publish", "owner": "ecardfactory" }
+  ]
+}

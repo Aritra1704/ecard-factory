@@ -1,0 +1,973 @@
+{
+  "name": "eCardFactory Workflow v1",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8080/api/jobs/start",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"theme_name\":\"Warm birthday message\",\"tone_funny_pct\":20,\"tone_emotion_pct\":75,\"tone_style\":\"conversational\",\"audience\":\"close friend\",\"cultural_context\":\"bengali\",\"output_spec\":{\"format\":\"paragraph\",\"length\":{\"target_words\":80},\"structure\":{\"no_lists\":true,\"no_numbering\":true}},\"avoid_cliches\":true}",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Start Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2080,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "3b",
+              "name": "content_preview",
+              "value": "={{ $json.content_preview }}",
+              "type": "string"
+            },
+            {
+              "id": "3c",
+              "name": "winner_model",
+              "value": "={{ $json.winner_model }}",
+              "type": "string"
+            },
+            {
+              "id": "3d",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3",
+      "name": "Extract Start Job Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1840,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "4b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "4c",
+              "name": "content_preview",
+              "value": "={{ $json.content_preview }}",
+              "type": "string"
+            },
+            {
+              "id": "4d",
+              "name": "winner_model",
+              "value": "={{ $json.winner_model }}",
+              "type": "string"
+            },
+            {
+              "id": "4e",
+              "name": "content_approval_message",
+              "value": "={{ 'CONTENT APPROVAL REQUIRED\\nJob: ' + $json.job_id + '\\nWinner model: ' + $json.winner_model + '\\nStatus: ' + $json.status + '\\nPreview: ' + $json.content_preview }}",
+              "type": "string"
+            },
+            {
+              "id": "4f",
+              "name": "placeholder_note",
+              "value": "TODO: replace this Set node with Telegram/Slack/email integration in v2.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4",
+      "name": "Prepare Content Approval Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1600,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "5b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "5c",
+              "name": "content_approval_message",
+              "value": "={{ $json.content_approval_message }}",
+              "type": "string"
+            },
+            {
+              "id": "5d",
+              "name": "content_decision",
+              "value": "approved",
+              "type": "string"
+            },
+            {
+              "id": "5e",
+              "name": "content_notes",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5",
+      "name": "Simulate Content Approval",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1360,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "6a",
+              "leftValue": "={{ $json.content_decision }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6",
+      "name": "Content Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1120,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/content-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"decision\":$json.content_decision,\"notes\":$json.content_notes}",
+        "options": {}
+      },
+      "id": "7",
+      "name": "Submit Content Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -880,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "8b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "8c",
+              "name": "image_preview_url",
+              "value": "={{ $json.image_preview_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8",
+      "name": "Extract Image Approval Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -640,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "9b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "9c",
+              "name": "image_preview_url",
+              "value": "={{ $json.image_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "9d",
+              "name": "image_approval_message",
+              "value": "={{ 'IMAGE APPROVAL REQUIRED\\nJob: ' + $json.job_id + '\\nStatus: ' + $json.status + '\\nPreview URL: ' + $json.image_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "9e",
+              "name": "placeholder_note",
+              "value": "TODO: replace this Set node with messaging integration in v2.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9",
+      "name": "Prepare Image Approval Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -400,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "10a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "10b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "10c",
+              "name": "image_preview_url",
+              "value": "={{ $json.image_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "10d",
+              "name": "image_approval_message",
+              "value": "={{ $json.image_approval_message }}",
+              "type": "string"
+            },
+            {
+              "id": "10e",
+              "name": "image_decision",
+              "value": "approved",
+              "type": "string"
+            },
+            {
+              "id": "10f",
+              "name": "image_notes",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "10",
+      "name": "Simulate Image Approval",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "11a",
+              "leftValue": "={{ $json.image_decision }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "11",
+      "name": "Image Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/image-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"decision\":$json.image_decision,\"notes\":$json.image_notes}",
+        "options": {}
+      },
+      "id": "12",
+      "name": "Submit Image Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "13a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "13b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "13c",
+              "name": "final_preview_url",
+              "value": "={{ $json.final_preview_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "13",
+      "name": "Extract Final Approval Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "14a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "14b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "14c",
+              "name": "final_preview_url",
+              "value": "={{ $json.final_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "14d",
+              "name": "final_approval_message",
+              "value": "={{ 'FINAL APPROVAL REQUIRED\\nJob: ' + $json.job_id + '\\nStatus: ' + $json.status + '\\nPreview URL: ' + $json.final_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "14e",
+              "name": "placeholder_note",
+              "value": "TODO: replace this Set node with messaging integration in v2.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "14",
+      "name": "Prepare Final Approval Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "15a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "15b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "15c",
+              "name": "final_preview_url",
+              "value": "={{ $json.final_preview_url }}",
+              "type": "string"
+            },
+            {
+              "id": "15d",
+              "name": "final_approval_message",
+              "value": "={{ $json.final_approval_message }}",
+              "type": "string"
+            },
+            {
+              "id": "15e",
+              "name": "final_decision",
+              "value": "approved",
+              "type": "string"
+            },
+            {
+              "id": "15f",
+              "name": "final_notes",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "15",
+      "name": "Simulate Final Approval",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "16a",
+              "leftValue": "={{ $json.final_decision }}",
+              "rightValue": "approved",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "16",
+      "name": "Final Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/final-approval",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"decision\":$json.final_decision,\"notes\":$json.final_notes}",
+        "options": {}
+      },
+      "id": "17",
+      "name": "Submit Final Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "18a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "18b",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "18c",
+              "name": "final_asset_png",
+              "value": "={{ $json.final_asset_urls ? $json.final_asset_urls.png : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "18d",
+              "name": "final_asset_pdf",
+              "value": "={{ $json.final_asset_urls ? $json.final_asset_urls.pdf : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "18e",
+              "name": "summary_message",
+              "value": "={{ 'Workflow complete for job ' + $json.job_id + ' with status ' + $json.status }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "18",
+      "name": "Prepare Completion Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "19a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "19b",
+              "name": "status",
+              "value": "content_rejected_simulated",
+              "type": "string"
+            },
+            {
+              "id": "19c",
+              "name": "summary_message",
+              "value": "Content approval rejected in simulation branch.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "19",
+      "name": "Content Rejected Placeholder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "20a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "20b",
+              "name": "status",
+              "value": "image_rejected_simulated",
+              "type": "string"
+            },
+            {
+              "id": "20c",
+              "name": "summary_message",
+              "value": "Image approval rejected in simulation branch.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "20",
+      "name": "Image Rejected Placeholder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "21a",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "21b",
+              "name": "status",
+              "value": "final_rejected_simulated",
+              "type": "string"
+            },
+            {
+              "id": "21c",
+              "name": "summary_message",
+              "value": "Final approval rejected in simulation branch.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "21",
+      "name": "Final Rejected Placeholder",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1520,
+        224
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Job": {
+      "main": [
+        [
+          {
+            "node": "Extract Start Job Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Start Job Fields": {
+      "main": [
+        [
+          {
+            "node": "Prepare Content Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Content Approval Message": {
+      "main": [
+        [
+          {
+            "node": "Simulate Content Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Content Approval": {
+      "main": [
+        [
+          {
+            "node": "Content Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Approved?": {
+      "main": [
+        [
+          {
+            "node": "Submit Content Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Content Rejected Placeholder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Content Approval": {
+      "main": [
+        [
+          {
+            "node": "Extract Image Approval Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image Approval Fields": {
+      "main": [
+        [
+          {
+            "node": "Prepare Image Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Image Approval Message": {
+      "main": [
+        [
+          {
+            "node": "Simulate Image Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Image Approval": {
+      "main": [
+        [
+          {
+            "node": "Image Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Approved?": {
+      "main": [
+        [
+          {
+            "node": "Submit Image Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Image Rejected Placeholder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Image Approval": {
+      "main": [
+        [
+          {
+            "node": "Extract Final Approval Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Final Approval Fields": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Approval Message": {
+      "main": [
+        [
+          {
+            "node": "Simulate Final Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Final Approval": {
+      "main": [
+        [
+          {
+            "node": "Final Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Approved?": {
+      "main": [
+        [
+          {
+            "node": "Submit Final Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Rejected Placeholder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Final Approval": {
+      "main": [
+        [
+          {
+            "node": "Prepare Completion Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "executionOrder": "v1"
+  },
+  "versionId": "ecardfactory-workflow-v1",
+  "meta": {
+    "instanceId": "ecard-factory"
+  },
+  "id": "ecardfactory-workflow-v1",
+  "pinData": {},
+  "tags": []
+}
