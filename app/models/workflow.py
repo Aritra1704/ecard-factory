@@ -20,6 +20,7 @@ class CardJob(Base):
     __table_args__ = {"schema": settings.db_schema}
 
     job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     theme_name: Mapped[str] = mapped_column(String(255), nullable=False)
     tone_funny_pct: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -48,6 +49,18 @@ class CardJob(Base):
         default="pending",
         server_default=text("'pending'"),
     )
+    image_approval_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'"),
+    )
+    final_approval_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'"),
+    )
     image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -68,7 +81,15 @@ class CardJob(Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
+    judge_results: Mapped[list["CardJudgeResult"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
     approvals: Mapped[list["CardApproval"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    assets: Mapped[list["CardAsset"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
@@ -138,6 +159,78 @@ class CardApproval(Base):
     )
 
     job: Mapped[CardJob] = relationship(back_populates="approvals")
+
+
+class CardAsset(Base):
+    """Stored workflow asset metadata for preview/final outputs."""
+
+    __tablename__ = "card_assets"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    asset_url: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="v1",
+        server_default=text("'v1'"),
+    )
+    approved: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    job: Mapped[CardJob] = relationship(back_populates="assets")
+
+
+class CardJudgeResult(Base):
+    """Stored judging output associated with a workflow job."""
+
+    __tablename__ = "card_judge_results"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    judge_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    judge_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    winner_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    leaderboard_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    pairwise_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    reason_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    job: Mapped[CardJob] = relationship(back_populates="judge_results")
 
 
 class CardAuditLog(Base):

@@ -14,6 +14,10 @@ def reload_main_module():
     for module_name in list(sys.modules):
         if module_name in {"app.config", "app.database", "app.main"} or module_name.startswith(
             "app.models"
+        ) or module_name.startswith("app.repositories") or module_name.startswith(
+            "app.services"
+        ) or module_name.startswith(
+            "app.store"
         ):
             sys.modules.pop(module_name, None)
 

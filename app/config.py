@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     judge_backend: str = Field(default="ollama", validation_alias="JUDGE_BACKEND")
     judge_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="JUDGE_MODEL")
     judge_timeout_seconds: float = Field(default=20.0, validation_alias="JUDGE_TIMEOUT_SECONDS")
+    workflow_memory_fallback_enabled: bool = Field(
+        default=False,
+        validation_alias="WORKFLOW_MEMORY_FALLBACK_ENABLED",
+    )
 
     @property
     def active_db_url(self) -> str:

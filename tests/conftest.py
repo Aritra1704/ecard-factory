@@ -18,6 +18,7 @@ TEST_ENV_VARS = {
     "LOG_LEVEL": "info",
     "DB_SCHEMA": "ecard_factory",
     "AUTO_INIT_DB_ON_STARTUP": "false",
+    "WORKFLOW_MEMORY_FALLBACK_ENABLED": "true",
 }
 
 

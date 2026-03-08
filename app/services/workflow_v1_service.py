@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
-from copy import deepcopy
 from datetime import datetime, timezone
+from functools import lru_cache
 import logging
 from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import selectinload
 
-from app.database import async_session_factory
-from app.models.workflow import CardApproval, CardAuditLog, CardContentCandidate, CardJob
+from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
     ApprovalRequest,
     ContentApprovalRequest,
     ContentApprovalResponse,
     FinalApprovalResponse,
     FinalAssetUrls,
+    ImageApprovalRequest,
     ImageApprovalResponse,
     JobDebugResponse,
     StartJobRequest,
@@ -94,91 +90,18 @@ class StubContentForgeClient:
         }
 
 
-class _InMemoryWorkflowStore:
-    """Process-local fallback store used when Postgres is unavailable."""
-
-    def __init__(self) -> None:
-        self._jobs: dict[str, dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-
-    async def save_new_job(
-        self,
-        *,
-        job: dict[str, Any],
-        candidates: list[dict[str, Any]],
-        audit_events: list[dict[str, Any]],
-    ) -> None:
-        """Insert a full job snapshot into memory."""
-
-        async with self._lock:
-            record = deepcopy(job)
-            record["candidates"] = deepcopy(candidates)
-            record["approvals"] = []
-            record["audit_log"] = deepcopy(audit_events)
-            self._jobs[record["job_id"]] = record
-
-    async def merge_snapshot(self, snapshot: dict[str, Any]) -> None:
-        """Upsert a DB snapshot into memory cache for fast fallback reads."""
-
-        async with self._lock:
-            self._jobs[snapshot["job_id"]] = deepcopy(snapshot)
-
-    async def get_job(self, job_id: str) -> dict[str, Any] | None:
-        """Return one job snapshot or None if missing."""
-
-        async with self._lock:
-            record = self._jobs.get(job_id)
-            return deepcopy(record) if record else None
-
-    async def apply_stage_update(
-        self,
-        *,
-        job_id: str,
-        stage: str,
-        decision: str,
-        notes: str,
-        updates: dict[str, Any],
-        audit_events: list[dict[str, Any]],
-    ) -> dict[str, Any] | None:
-        """Apply one stage decision and related audit events to a memory job."""
-
-        async with self._lock:
-            record = self._jobs.get(job_id)
-            if record is None:
-                return None
-
-            now = datetime.now(timezone.utc)
-            approval_entry = {
-                "stage": stage,
-                "decision": decision,
-                "notes": notes,
-                "decided_by": "n8n_v1",
-                "decided_at": now,
-            }
-            record["approvals"].append(approval_entry)
-
-            for key, value in updates.items():
-                record[key] = value
-            record["updated_at"] = now
-
-            for event in audit_events:
-                record["audit_log"].append(event)
-
-            return deepcopy(record)
-
-
 class WorkflowV1Service:
     """Orchestrates v1 workflow state transitions expected by imported n8n flow."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, repository: WorkflowJobRepository | None = None) -> None:
         self._contentforge = StubContentForgeClient()
-        self._memory = _InMemoryWorkflowStore()
-        self._prefer_memory = False
+        self._repository = repository or get_workflow_job_repository()
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
 
         job_id = f"job_{uuid4().hex[:10]}"
+        trace_id = f"trace_{uuid4().hex[:12]}"
         now = datetime.now(timezone.utc)
 
         generation = await self._contentforge.generate_and_judge(payload)
@@ -192,6 +115,7 @@ class WorkflowV1Service:
 
         job_record: dict[str, Any] = {
             "job_id": job_id,
+            "trace_id": trace_id,
             "status": "content_pending_approval",
             "theme_name": payload.theme_name,
             "tone_funny_pct": payload.tone_funny_pct,
@@ -205,6 +129,8 @@ class WorkflowV1Service:
             "content_preview": content_preview,
             "winner_model": winner_model,
             "content_approval_status": "pending",
+            "image_approval_status": "pending",
+            "final_approval_status": "pending",
             "image_prompt": None,
             "image_preview_url": None,
             "final_preview_url": None,
@@ -237,8 +163,21 @@ class WorkflowV1Service:
             ],
         )
 
-        await self._memory.save_new_job(job=job_record, candidates=candidate_records, audit_events=audit_events)
-        await self._persist_start_to_db(job_record, candidate_records, audit_events)
+        creation_backend = await self._repository.create_job(job_record)
+        await self._repository.save_content_candidates(job_id, candidate_records)
+        await self._repository.save_judge_results(
+            job_id,
+            {
+                "judge_provider": "contentforge_stub",
+                "judge_model": "stub-judge",
+                "winner_model": winner_model,
+                "leaderboard_json": {"models": [item["model"] for item in candidate_records]},
+                "pairwise_json": {},
+                "reason_summary": generation["judge_summary"],
+            },
+        )
+        await self._repository.append_audit_events(job_id, audit_events)
+        logger.info("workflow job created job_id=%s backend=%s", job_id, creation_backend)
 
         return StartJobResponse(
             job_id=job_id,
@@ -268,6 +207,7 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        old_status = str(job["status"])
         self._assert_expected_status(job, expected="content_pending_approval")
 
         if decision == "approved":
@@ -277,6 +217,7 @@ class WorkflowV1Service:
             updates = {
                 "status": "image_pending_approval",
                 "content_approval_status": "approved",
+                "image_approval_status": "pending",
                 "image_prompt": image_prompt,
                 "image_preview_url": image_preview_url,
             }
@@ -307,23 +248,29 @@ class WorkflowV1Service:
             ]
 
         audit_events = self._build_audit_events(job_id=job_id, events=events)
-        updated = await self._memory.apply_stage_update(
+        updated = await self._repository.update_job_status(
             job_id=job_id,
+            updates=updates,
             stage="content",
             decision=decision,
             notes=notes,
-            updates=updates,
-            audit_events=audit_events,
         )
         assert updated is not None
+        await self._repository.append_audit_events(job_id, audit_events)
 
-        await self._persist_stage_update_to_db(
-            job_id=job_id,
-            stage="content",
-            decision=decision,
-            notes=notes,
-            updates=updates,
-            audit_events=audit_events,
+        if decision == "approved":
+            await self._repository.save_asset(
+                job_id,
+                asset_type="image_preview",
+                asset_url=str(updated.get("image_preview_url") or ""),
+                version="v1",
+                approved=False,
+            )
+        logger.info(
+            "workflow transition job_id=%s stage=content %s -> %s",
+            job_id,
+            old_status,
+            updated["status"],
         )
 
         return ContentApprovalResponse(
@@ -333,51 +280,120 @@ class WorkflowV1Service:
             image_preview_url=updated.get("image_preview_url"),
         )
 
-    async def submit_image_approval(self, job_id: str, payload: ApprovalRequest) -> ImageApprovalResponse:
+    async def submit_image_approval(
+        self,
+        job_id: str,
+        payload: ImageApprovalRequest,
+    ) -> ImageApprovalResponse:
         """Persist image approval and prepare final approval preview."""
+
+        return await self.apply_image_approval(job_id, payload.decision, payload.notes or "")
+
+    async def apply_image_approval(
+        self,
+        job_id: str,
+        decision: str,
+        notes: str,
+    ) -> ImageApprovalResponse:
+        """Apply image approval decision and transition job state accordingly."""
 
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        self._assert_expected_status(job, expected="image_pending_approval")
+        old_status = str(job["status"])
+        if str(job.get("status")) != "image_pending_approval":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Job not in image_pending_approval state",
+            )
 
-        if payload.decision == "approved":
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approved", "rejected", "timeout"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid decision. Allowed values: approved, rejected, timeout",
+            )
+
+        if normalized_decision == "approved":
             final_preview_url = self._build_final_preview_url(job_id)
             updates = {
                 "status": "final_pending_approval",
+                "image_approval_status": "approved",
                 "final_preview_url": final_preview_url,
             }
             events = [
                 ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
-                ("image_approved", {"notes": payload.notes}),
+                (
+                    "image_approved",
+                    {
+                        "job_id": job_id,
+                        "decision": normalized_decision,
+                        "notes": notes,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                ),
                 ("preview_assembled", {"stub": True, "final_preview_url": final_preview_url}),
                 ("final_approval_requested", {"final_preview_url": final_preview_url}),
             ]
-        else:
-            updates = {"status": "image_rejected"}
+        elif normalized_decision == "rejected":
+            updates = {
+                "status": "image_rejected",
+                "image_approval_status": "rejected",
+            }
             events = [
                 ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
-                ("image_rejected", {"notes": payload.notes}),
+                (
+                    "image_rejected",
+                    {
+                        "job_id": job_id,
+                        "decision": normalized_decision,
+                        "notes": notes,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                ),
+            ]
+        else:
+            updates = {
+                "status": "image_timeout",
+                "image_approval_status": "timeout",
+            }
+            events = [
+                ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
+                (
+                    "image_timeout",
+                    {
+                        "job_id": job_id,
+                        "decision": normalized_decision,
+                        "notes": notes,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                ),
             ]
 
         audit_events = self._build_audit_events(job_id=job_id, events=events)
-        updated = await self._memory.apply_stage_update(
+        updated = await self._repository.update_job_status(
             job_id=job_id,
-            stage="image",
-            decision=payload.decision,
-            notes=payload.notes,
             updates=updates,
-            audit_events=audit_events,
+            stage="image",
+            decision=normalized_decision,
+            notes=notes,
         )
         assert updated is not None
+        await self._repository.append_audit_events(job_id, audit_events)
 
-        await self._persist_stage_update_to_db(
-            job_id=job_id,
-            stage="image",
-            decision=payload.decision,
-            notes=payload.notes,
-            updates=updates,
-            audit_events=audit_events,
+        if normalized_decision == "approved":
+            await self._repository.save_asset(
+                job_id,
+                asset_type="final_preview",
+                asset_url=str(updated.get("final_preview_url") or ""),
+                version="v1",
+                approved=False,
+            )
+        logger.info(
+            "workflow transition job_id=%s stage=image %s -> %s",
+            job_id,
+            old_status,
+            updated["status"],
         )
 
         return ImageApprovalResponse(
@@ -392,12 +408,14 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        old_status = str(job["status"])
         self._assert_expected_status(job, expected="final_pending_approval")
 
         if payload.decision == "approved":
             final_asset_urls = self._build_final_asset_urls(job_id)
             updates = {
                 "status": "completed",
+                "final_approval_status": "approved",
                 "final_asset_urls": final_asset_urls,
             }
             events = [
@@ -407,30 +425,51 @@ class WorkflowV1Service:
                 ("job_completed", {"status": "completed"}),
             ]
         else:
-            updates = {"status": "final_rejected"}
+            updates = {
+                "status": "final_rejected",
+                "final_approval_status": "rejected",
+            }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
                 ("final_rejected", {"notes": payload.notes}),
             ]
 
         audit_events = self._build_audit_events(job_id=job_id, events=events)
-        updated = await self._memory.apply_stage_update(
+        updated = await self._repository.update_job_status(
             job_id=job_id,
+            updates=updates,
             stage="final",
             decision=payload.decision,
             notes=payload.notes,
-            updates=updates,
-            audit_events=audit_events,
         )
         assert updated is not None
+        await self._repository.append_audit_events(job_id, audit_events)
 
-        await self._persist_stage_update_to_db(
-            job_id=job_id,
-            stage="final",
-            decision=payload.decision,
-            notes=payload.notes,
-            updates=updates,
-            audit_events=audit_events,
+        if payload.decision == "approved":
+            final_urls = updates.get("final_asset_urls") or {}
+            png_url = str(final_urls.get("png", ""))
+            pdf_url = str(final_urls.get("pdf", ""))
+            if png_url:
+                await self._repository.save_asset(
+                    job_id,
+                    asset_type="final_png",
+                    asset_url=png_url,
+                    version="v1",
+                    approved=True,
+                )
+            if pdf_url:
+                await self._repository.save_asset(
+                    job_id,
+                    asset_type="final_pdf",
+                    asset_url=pdf_url,
+                    version="v1",
+                    approved=True,
+                )
+        logger.info(
+            "workflow transition job_id=%s stage=final %s -> %s",
+            job_id,
+            old_status,
+            updated["status"],
         )
 
         asset_urls = updated.get("final_asset_urls")
@@ -451,216 +490,14 @@ class WorkflowV1Service:
     async def _load_job(self, job_id: str) -> dict[str, Any] | None:
         """Load job from Postgres when possible, otherwise from in-memory fallback."""
 
-        db_job = await self._fetch_job_from_db(job_id)
-        if db_job is not None:
-            await self._memory.merge_snapshot(db_job)
-            return db_job
-        return await self._memory.get_job(job_id)
-
-    async def _fetch_job_from_db(self, job_id: str) -> dict[str, Any] | None:
-        """Read one job and related rows from Postgres unless DB fallback is active."""
-
-        if self._prefer_memory:
-            return None
-
-        try:
-            async with async_session_factory() as session:
-                statement = (
-                    select(CardJob)
-                    .where(CardJob.job_id == job_id)
-                    .options(
-                        selectinload(CardJob.candidates),
-                        selectinload(CardJob.approvals),
-                        selectinload(CardJob.audit_events),
-                    )
-                )
-                result = await session.execute(statement)
-                job = result.scalar_one_or_none()
-                if job is None:
-                    return None
-
-                candidates = sorted(job.candidates, key=lambda item: item.id)
-                approvals = sorted(job.approvals, key=lambda item: item.id)
-                audit_events = sorted(job.audit_events, key=lambda item: item.id)
-
-                return {
-                    "job_id": job.job_id,
-                    "status": job.status,
-                    "theme_name": job.theme_name,
-                    "tone_funny_pct": job.tone_funny_pct,
-                    "tone_emotion_pct": job.tone_emotion_pct,
-                    "tone_style": job.tone_style,
-                    "visual_style": job.visual_style,
-                    "audience": job.audience,
-                    "cultural_context": job.cultural_context,
-                    "output_spec": job.output_spec,
-                    "avoid_cliches": job.avoid_cliches,
-                    "content_preview": job.content_preview,
-                    "winner_model": job.winner_model,
-                    "content_approval_status": job.content_approval_status,
-                    "image_prompt": job.image_prompt,
-                    "image_preview_url": job.image_preview_url,
-                    "final_preview_url": job.final_preview_url,
-                    "final_asset_urls": job.final_asset_urls,
-                    "created_at": job.created_at,
-                    "updated_at": job.updated_at,
-                    "candidates": [
-                        {
-                            "model": item.model,
-                            "backend": item.backend,
-                            "content_text": item.content_text,
-                            "raw_score": float(item.raw_score),
-                            "judge_score": float(item.judge_score),
-                            "is_winner": item.is_winner,
-                        }
-                        for item in candidates
-                    ],
-                    "approvals": [
-                        {
-                            "stage": item.stage,
-                            "decision": item.decision,
-                            "notes": item.notes,
-                            "decided_by": item.decided_by,
-                            "decided_at": item.decided_at,
-                        }
-                        for item in approvals
-                    ],
-                    "audit_log": [
-                        {
-                            "event_type": item.event_type,
-                            "event_payload_json": item.event_payload_json,
-                            "created_at": item.created_at,
-                        }
-                        for item in audit_events
-                    ],
-                }
-        except (SQLAlchemyError, OSError) as exc:
-            logger.warning(
-                "Workflow DB read failed for job '%s'; using in-memory fallback. Error: %s",
-                job_id,
-                exc,
-            )
-            self._prefer_memory = True
-            return None
-
-    async def _persist_start_to_db(
-        self,
-        job: dict[str, Any],
-        candidates: list[dict[str, Any]],
-        audit_events: list[dict[str, Any]],
-    ) -> None:
-        """Best-effort DB persistence for initial job creation."""
-
-        if self._prefer_memory:
-            return
-
-        try:
-            async with async_session_factory() as session:
-                db_job = CardJob(
-                    job_id=job["job_id"],
-                    status=job["status"],
-                    theme_name=job["theme_name"],
-                    tone_funny_pct=job["tone_funny_pct"],
-                    tone_emotion_pct=job["tone_emotion_pct"],
-                    tone_style=job["tone_style"],
-                    visual_style=job["visual_style"],
-                    audience=job["audience"],
-                    cultural_context=job["cultural_context"],
-                    output_spec=job["output_spec"],
-                    avoid_cliches=job["avoid_cliches"],
-                    content_preview=job["content_preview"],
-                    winner_model=job["winner_model"],
-                    content_approval_status=job["content_approval_status"],
-                    created_at=job["created_at"],
-                    updated_at=job["updated_at"],
-                )
-                session.add(db_job)
-
-                for candidate in candidates:
-                    session.add(
-                        CardContentCandidate(
-                            job_id=job["job_id"],
-                            model=candidate["model"],
-                            backend=candidate["backend"],
-                            content_text=candidate["content_text"],
-                            raw_score=candidate["raw_score"],
-                            judge_score=candidate["judge_score"],
-                            is_winner=candidate["is_winner"],
-                        )
-                    )
-
-                for event in audit_events:
-                    session.add(
-                        CardAuditLog(
-                            job_id=job["job_id"],
-                            event_type=event["event_type"],
-                            event_payload_json=event["event_payload_json"],
-                            created_at=event["created_at"],
-                        )
-                    )
-
-                await session.commit()
-        except (SQLAlchemyError, OSError) as exc:
-            logger.warning(
-                "Workflow DB write failed on start-job for '%s'; using in-memory fallback. Error: %s",
-                job["job_id"],
-                exc,
-            )
-            self._prefer_memory = True
-
-    async def _persist_stage_update_to_db(
-        self,
-        *,
-        job_id: str,
-        stage: str,
-        decision: str,
-        notes: str,
-        updates: dict[str, Any],
-        audit_events: list[dict[str, Any]],
-    ) -> None:
-        """Best-effort DB persistence for approval stage updates."""
-
-        if self._prefer_memory:
-            return
-
-        try:
-            async with async_session_factory() as session:
-                db_job = await session.get(CardJob, job_id)
-                if db_job is None:
-                    return
-
-                for key, value in updates.items():
-                    setattr(db_job, key, value)
-                db_job.updated_at = datetime.now(timezone.utc)
-
-                session.add(
-                    CardApproval(
-                        job_id=job_id,
-                        stage=stage,
-                        decision=decision,
-                        notes=notes or None,
-                    )
-                )
-
-                for event in audit_events:
-                    session.add(
-                        CardAuditLog(
-                            job_id=job_id,
-                            event_type=event["event_type"],
-                            event_payload_json=event["event_payload_json"],
-                            created_at=event["created_at"],
-                        )
-                    )
-
-                await session.commit()
-        except (SQLAlchemyError, OSError) as exc:
-            logger.warning(
-                "Workflow DB write failed on '%s' update for '%s'; using in-memory fallback. Error: %s",
-                stage,
-                job_id,
-                exc,
-            )
-            self._prefer_memory = True
+        job, backend = await self._repository.get_job(job_id)
+        logger.info(
+            "workflow lookup job_id=%s found=%s backend=%s",
+            job_id,
+            "true" if job is not None else "false",
+            backend,
+        )
+        return job
 
     @staticmethod
     def _assert_expected_status(job: dict[str, Any], *, expected: str) -> None:
@@ -713,8 +550,7 @@ class WorkflowV1Service:
     def _build_final_preview_url(job_id: str) -> str:
         """Return placeholder final-preview URL until real assembly is integrated."""
 
-        suffix = job_id.removeprefix("job_")
-        return f"http://localhost:8080/assets/final_preview_{suffix}.png"
+        return f"http://localhost:8080/assets/{job_id}_final_preview.png"
 
     @staticmethod
     def _build_final_asset_urls(job_id: str) -> dict[str, str]:
@@ -735,3 +571,10 @@ class WorkflowV1Service:
         if winner and winner.get("content_text"):
             return str(winner["content_text"])
         return str(job.get("content_preview") or "")
+
+
+@lru_cache(maxsize=1)
+def get_workflow_v1_service() -> WorkflowV1Service:
+    """Return singleton workflow service instance for all workflow endpoints."""
+
+    return WorkflowV1Service(repository=get_workflow_job_repository())

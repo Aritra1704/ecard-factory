@@ -66,6 +66,13 @@ class ContentApprovalRequest(BaseModel):
     notes: str = ""
 
 
+class ImageApprovalRequest(BaseModel):
+    """Approval payload for image gate, including timeout outcome."""
+
+    decision: str
+    notes: str | None = ""
+
+
 class ContentApprovalResponse(BaseModel):
     """Response after content approval state update."""
 
@@ -131,6 +138,7 @@ class JobDebugResponse(BaseModel):
     """Full job snapshot for troubleshooting workflow state transitions."""
 
     job_id: str
+    trace_id: str
     status: str
     theme_name: str
     audience: str
@@ -138,6 +146,8 @@ class JobDebugResponse(BaseModel):
     content_preview: str | None = None
     winner_model: str | None = None
     content_approval_status: str = "pending"
+    image_approval_status: str = "pending"
+    final_approval_status: str = "pending"
     image_prompt: str | None = None
     image_preview_url: str | None = None
     final_preview_url: str | None = None

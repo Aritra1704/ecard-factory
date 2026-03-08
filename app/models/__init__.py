@@ -11,7 +11,14 @@ from app.models.sale import Sale
 from app.models.social_post import SocialPost
 from app.models.theme import ThemeOverride, WeeklyTheme
 from app.models.watermark import Watermark
-from app.models.workflow import CardApproval, CardAuditLog, CardContentCandidate, CardJob
+from app.models.workflow import (
+    CardApproval,
+    CardAsset,
+    CardAuditLog,
+    CardContentCandidate,
+    CardJob,
+    CardJudgeResult,
+)
 
 __all__ = [
     "Alert",
@@ -28,7 +35,9 @@ __all__ = [
     "Watermark",
     "WeeklyTheme",
     "CardApproval",
+    "CardAsset",
     "CardAuditLog",
     "CardContentCandidate",
     "CardJob",
+    "CardJudgeResult",
 ]
