@@ -3,26 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from logging.config import fileConfig
+from pathlib import Path
 from typing import Any
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import Connection, pool, text
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-ENV_DEFAULTS = {
-    "DATABASE_URL": "postgresql+asyncpg://postgres:postgres@localhost:5432/railway",
-    "OPENAI_API_KEY": "placeholder",
-    "GROQ_API_KEY": "placeholder",
-    "TELEGRAM_BOT_TOKEN": "placeholder",
-    "TELEGRAM_CHAT_ID": "placeholder",
-    "CANVA_CLIENT_ID": "placeholder",
-    "CANVA_CLIENT_SECRET": "placeholder",
-}
+BASE_DIR = Path(__file__).resolve().parents[1]
+DOTENV_PATH = BASE_DIR / ".env"
 
-for key, value in ENV_DEFAULTS.items():
-    os.environ.setdefault(key, value)
+# Load local `.env` for migration execution. Existing process env vars still
+# take precedence because override=False.
+load_dotenv(dotenv_path=DOTENV_PATH, override=False)
 
 from app.config import settings
 from app.database import Base, get_async_database_url

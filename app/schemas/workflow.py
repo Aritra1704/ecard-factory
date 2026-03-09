@@ -53,9 +53,9 @@ class StartJobResponse(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """Common approval payload for image/final gates."""
+    """Final approval payload, validated in service for explicit 400 errors."""
 
-    decision: Literal["approved", "rejected"]
+    decision: str
     notes: str = ""
 
 

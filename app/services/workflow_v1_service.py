@@ -405,14 +405,46 @@ class WorkflowV1Service:
     async def submit_final_approval(self, job_id: str, payload: ApprovalRequest) -> FinalApprovalResponse:
         """Persist final approval and mark job completion when approved."""
 
+        return await self.apply_final_approval(job_id, payload.decision, payload.notes)
+
+    async def apply_final_approval(
+        self,
+        job_id: str,
+        decision: str,
+        notes: str,
+    ) -> FinalApprovalResponse:
+        """Apply final approval decision and transition job state accordingly."""
+
         job = await self._load_job(job_id)
         if job is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
         old_status = str(job["status"])
-        self._assert_expected_status(job, expected="final_pending_approval")
+        if str(job.get("status")) != "final_pending_approval":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Job not in final_pending_approval state",
+            )
 
-        if payload.decision == "approved":
-            final_asset_urls = self._build_final_asset_urls(job_id)
+        normalized_decision = decision.strip().lower()
+        if normalized_decision not in {"approved", "rejected", "timeout"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid decision. Allowed values: approved, rejected, timeout",
+            )
+
+        event_payload = {
+            "job_id": job_id,
+            "decision": normalized_decision,
+            "notes": notes,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if normalized_decision == "approved":
+            existing_urls = dict(job.get("final_asset_urls") or {})
+            generated_urls = self._build_final_asset_urls(job_id)
+            final_asset_urls = {
+                "png": str(existing_urls.get("png") or generated_urls["png"]),
+                "pdf": str(existing_urls.get("pdf") or generated_urls["pdf"]),
+            }
             updates = {
                 "status": "completed",
                 "final_approval_status": "approved",
@@ -420,18 +452,27 @@ class WorkflowV1Service:
             }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
-                ("final_approved", {"notes": payload.notes}),
-                ("final_png_exported", {"stub": True, "png": final_asset_urls["png"]}),
+                ("final_approved", event_payload),
+                ("final_png_exported", {"stub": True, "png": final_asset_urls["png"], "pdf": final_asset_urls["pdf"]}),
                 ("job_completed", {"status": "completed"}),
             ]
-        else:
+        elif normalized_decision == "rejected":
             updates = {
                 "status": "final_rejected",
                 "final_approval_status": "rejected",
             }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
-                ("final_rejected", {"notes": payload.notes}),
+                ("final_rejected", event_payload),
+            ]
+        else:
+            updates = {
+                "status": "final_timeout",
+                "final_approval_status": "timeout",
+            }
+            events = [
+                ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
+                ("final_timeout", event_payload),
             ]
 
         audit_events = self._build_audit_events(job_id=job_id, events=events)
@@ -439,14 +480,14 @@ class WorkflowV1Service:
             job_id=job_id,
             updates=updates,
             stage="final",
-            decision=payload.decision,
-            notes=payload.notes,
+            decision=normalized_decision,
+            notes=notes,
         )
         assert updated is not None
         await self._repository.append_audit_events(job_id, audit_events)
 
-        if payload.decision == "approved":
-            final_urls = updates.get("final_asset_urls") or {}
+        if normalized_decision == "approved":
+            final_urls = updated.get("final_asset_urls") or {}
             png_url = str(final_urls.get("png", ""))
             pdf_url = str(final_urls.get("pdf", ""))
             if png_url:
@@ -471,6 +512,7 @@ class WorkflowV1Service:
             old_status,
             updated["status"],
         )
+        logger.info("workflow final approval committed job_id=%s status=%s", job_id, updated["status"])
 
         asset_urls = updated.get("final_asset_urls")
         return FinalApprovalResponse(
@@ -556,10 +598,9 @@ class WorkflowV1Service:
     def _build_final_asset_urls(job_id: str) -> dict[str, str]:
         """Return placeholder export URLs until real export logic is integrated."""
 
-        suffix = job_id.removeprefix("job_")
         return {
-            "png": f"http://localhost:8080/assets/final_{suffix}.png",
-            "pdf": f"http://localhost:8080/assets/final_{suffix}.pdf",
+            "png": f"http://localhost:8080/assets/{job_id}_final.png",
+            "pdf": f"http://localhost:8080/assets/{job_id}_final.pdf",
         }
 
     @staticmethod

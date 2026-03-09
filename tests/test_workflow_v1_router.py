@@ -101,8 +101,8 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert final_response.status_code == 200
         final_payload = final_response.json()
         assert final_payload["status"] == "completed"
-        assert final_payload["final_asset_urls"]["png"].startswith("http://localhost:8080/assets/final_")
-        assert final_payload["final_asset_urls"]["pdf"].startswith("http://localhost:8080/assets/final_")
+        assert final_payload["final_asset_urls"]["png"] == f"http://localhost:8080/assets/{job_id}_final.png"
+        assert final_payload["final_asset_urls"]["pdf"] == f"http://localhost:8080/assets/{job_id}_final.pdf"
 
         get_after_final = client.get(f"/api/jobs/{job_id}")
         assert get_after_final.status_code == 200
@@ -185,3 +185,70 @@ def test_workflow_v1_image_timeout_transition(configured_env: dict[str, str]) ->
         debug_payload = debug_response.json()
         assert debug_payload["image_approval_status"] == "timeout"
         assert any(event["event_type"] == "image_timeout" for event in debug_payload["audit_log"])
+
+
+def test_workflow_v1_final_timeout_transition(configured_env: dict[str, str]) -> None:
+    """Final timeout decision should move job to final_timeout and audit the event."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        job_id = start_response.json()["job_id"]
+
+        content_response = client.post(
+            f"/api/jobs/{job_id}/content-approval",
+            json={"decision": "approved", "notes": ""},
+        )
+        assert content_response.status_code == 200
+
+        image_response = client.post(
+            f"/api/jobs/{job_id}/image-approval",
+            json={"decision": "approved", "notes": ""},
+        )
+        assert image_response.status_code == 200
+
+        timeout_response = client.post(
+            f"/api/jobs/{job_id}/final-approval",
+            json={"decision": "timeout", "notes": "No final approver response in SLA."},
+        )
+        assert timeout_response.status_code == 200
+        timeout_payload = timeout_response.json()
+        assert timeout_payload["status"] == "final_timeout"
+        assert timeout_payload["final_asset_urls"] is None
+
+        debug_response = client.get(f"/api/jobs/{job_id}")
+        assert debug_response.status_code == 200
+        debug_payload = debug_response.json()
+        assert debug_payload["final_approval_status"] == "timeout"
+        assert any(event["event_type"] == "final_timeout" for event in debug_payload["audit_log"])
+
+
+def test_workflow_v1_final_approval_invalid_decision_returns_400(configured_env: dict[str, str]) -> None:
+    """Final approval should validate decision with explicit 400 response."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        job_id = start_response.json()["job_id"]
+
+        content_response = client.post(
+            f"/api/jobs/{job_id}/content-approval",
+            json={"decision": "approved", "notes": ""},
+        )
+        assert content_response.status_code == 200
+
+        image_response = client.post(
+            f"/api/jobs/{job_id}/image-approval",
+            json={"decision": "approved", "notes": ""},
+        )
+        assert image_response.status_code == 200
+
+        bad_response = client.post(
+            f"/api/jobs/{job_id}/final-approval",
+            json={"decision": "approve_now", "notes": ""},
+        )
+
+    assert bad_response.status_code == 400
+    assert bad_response.json()["detail"] == "Invalid decision. Allowed values: approved, rejected, timeout"
