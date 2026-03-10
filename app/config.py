@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="WORKFLOW_MEMORY_FALLBACK_ENABLED",
     )
+    asset_storage_backend: str = Field(default="filesystem", validation_alias="ASSET_STORAGE_BACKEND")
+    asset_storage_root: str = Field(default="./assets", validation_alias="ASSET_STORAGE_ROOT")
+    asset_public_base_url: str = Field(
+        default="http://localhost:8080/assets",
+        validation_alias="ASSET_PUBLIC_BASE_URL",
+    )
 
     @property
     def active_db_url(self) -> str:

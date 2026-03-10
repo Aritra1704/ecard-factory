@@ -12,6 +12,7 @@ from app.schemas.generation import (
     PhraseGenerationRequest,
     PhraseGenerationResponse,
 )
+from app.schemas.storage import StorageHealthResponse
 from app.schemas.theme import (
     ThemeHistoryItem,
     ThemeOverrideCreate,
@@ -71,6 +72,7 @@ __all__ = [
     "ThemeOverrideCreate",
     "ThemeOverrideResponse",
     "ThemeResolved",
+    "StorageHealthResponse",
     "ApprovalRequest",
     "ContentApprovalRequest",
     "ContentApprovalResponse",

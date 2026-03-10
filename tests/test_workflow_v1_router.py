@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 import sys
 
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ def reload_workflow_modules():
             or module_name.startswith("app.schemas")
             or module_name.startswith("app.services")
             or module_name.startswith("app.store")
+            or module_name.startswith("app.storage")
         ):
             sys.modules.pop(module_name, None)
 
@@ -45,6 +47,12 @@ def sample_start_payload() -> dict[str, object]:
         },
         "avoid_cliches": True,
     }
+
+
+def _assets_dir() -> Path:
+    """Return the project-level assets directory used by workflow endpoints."""
+
+    return Path(__file__).resolve().parents[1] / "assets"
 
 
 def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
@@ -86,13 +94,17 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         )
         assert image_response.status_code == 200
         assert image_response.json()["status"] == "final_pending_approval"
-        assert image_response.json()["final_preview_url"].endswith("_final_preview.png")
+        assert image_response.json()["final_preview_url"] == (
+            f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
+        )
 
         get_after_image = client.get(f"/api/jobs/{job_id}")
         assert get_after_image.status_code == 200
         assert get_after_image.json()["status"] == "final_pending_approval"
         assert get_after_image.json()["image_approval_status"] == "approved"
-        assert get_after_image.json()["final_preview_url"].endswith("_final_preview.png")
+        assert get_after_image.json()["final_preview_url"] == (
+            f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
+        )
 
         final_response = client.post(
             f"/api/jobs/{job_id}/final-approval",
@@ -101,8 +113,12 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert final_response.status_code == 200
         final_payload = final_response.json()
         assert final_payload["status"] == "completed"
-        assert final_payload["final_asset_urls"]["png"] == f"http://localhost:8080/assets/{job_id}_final.png"
-        assert final_payload["final_asset_urls"]["pdf"] == f"http://localhost:8080/assets/{job_id}_final.pdf"
+        assert final_payload["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
+        assert final_payload["final_asset_urls"]["pdf"] == f"http://localhost:8080/assets/pdf/{job_id}_final.pdf"
+        assert (_assets_dir() / "final" / f"{job_id}_final.png").exists()
+        assert (_assets_dir() / "pdf" / f"{job_id}_final.pdf").exists()
+        png_response = client.get(f"/assets/final/{job_id}_final.png")
+        assert png_response.status_code == 200
 
         get_after_final = client.get(f"/api/jobs/{job_id}")
         assert get_after_final.status_code == 200
@@ -111,6 +127,10 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert debug_payload["final_approval_status"] == "approved"
         assert len(debug_payload["candidates"]) >= 1
         assert any(event["event_type"] == "job_completed" for event in debug_payload["audit_log"])
+        (_assets_dir() / "image" / f"{job_id}_image_preview.png").unlink(missing_ok=True)
+        (_assets_dir() / "preview" / f"{job_id}_content_preview.png").unlink(missing_ok=True)
+        (_assets_dir() / "final" / f"{job_id}_final.png").unlink(missing_ok=True)
+        (_assets_dir() / "pdf" / f"{job_id}_final.pdf").unlink(missing_ok=True)
 
 
 def test_workflow_v1_rejects_out_of_order_approval(configured_env: dict[str, str]) -> None:
@@ -252,3 +272,17 @@ def test_workflow_v1_final_approval_invalid_decision_returns_400(configured_env:
 
     assert bad_response.status_code == 400
     assert bad_response.json()["detail"] == "Invalid decision. Allowed values: approved, rejected, timeout"
+
+
+def test_storage_health_endpoint(configured_env: dict[str, str]) -> None:
+    """Storage health endpoint should report filesystem backend and writable root."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        response = client.get("/api/storage/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["backend"] == "filesystem"
+    assert payload["writable"] is True

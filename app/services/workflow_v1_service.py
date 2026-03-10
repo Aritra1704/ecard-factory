@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timezone
 from functools import lru_cache
 import logging
+from textwrap import wrap
 from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from PIL import Image, ImageDraw, ImageFont
 
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
@@ -23,6 +26,7 @@ from app.schemas.workflow import (
     StartJobRequest,
     StartJobResponse,
 )
+from app.storage import AssetStorage, get_asset_storage
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +97,15 @@ class StubContentForgeClient:
 class WorkflowV1Service:
     """Orchestrates v1 workflow state transitions expected by imported n8n flow."""
 
-    def __init__(self, *, repository: WorkflowJobRepository | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: WorkflowJobRepository | None = None,
+        asset_storage: AssetStorage | None = None,
+    ) -> None:
         self._contentforge = StubContentForgeClient()
         self._repository = repository or get_workflow_job_repository()
+        self._asset_storage = asset_storage or get_asset_storage()
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
@@ -212,7 +222,14 @@ class WorkflowV1Service:
 
         if decision == "approved":
             image_prompt = self.build_image_prompt(job)
-            image_preview_url = self._build_image_preview_url(job_id)
+            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
+            self._write_placeholder_preview_image(
+                relative_path=image_preview_relative_path,
+                title="Image Preview",
+                subtitle=f"Job ID: {job_id}",
+                body=image_prompt,
+            )
+            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
             approved_content = self._resolve_winning_content(job)
             updates = {
                 "status": "image_pending_approval",
@@ -225,7 +242,7 @@ class WorkflowV1Service:
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
                 ("content_approved", {"decision": decision, "notes": notes}),
                 ("image_prompt_created", {"stub": True, "approved_content": approved_content}),
-                ("image_generated", {"stub": True, "image_preview_url": image_preview_url}),
+                ("image_generated", {"stub": False, "image_preview_url": image_preview_url}),
                 ("image_approval_requested", {"image_preview_url": image_preview_url}),
             ]
         elif decision == "rejected":
@@ -259,10 +276,14 @@ class WorkflowV1Service:
         await self._repository.append_audit_events(job_id, audit_events)
 
         if decision == "approved":
+            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
             await self._repository.save_asset(
                 job_id,
                 asset_type="image_preview",
                 asset_url=str(updated.get("image_preview_url") or ""),
+                relative_path=image_preview_relative_path,
+                public_url=str(updated.get("image_preview_url") or ""),
+                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
                 version="v1",
                 approved=False,
             )
@@ -315,7 +336,14 @@ class WorkflowV1Service:
             )
 
         if normalized_decision == "approved":
-            final_preview_url = self._build_final_preview_url(job_id)
+            final_preview_relative_path = self._build_final_preview_relative_path(job_id)
+            self._write_placeholder_preview_image(
+                relative_path=final_preview_relative_path,
+                title="Final Approval Preview",
+                subtitle=f"Job ID: {job_id}",
+                body=self._resolve_winning_content(job),
+            )
+            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
             updates = {
                 "status": "final_pending_approval",
                 "image_approval_status": "approved",
@@ -332,7 +360,7 @@ class WorkflowV1Service:
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     },
                 ),
-                ("preview_assembled", {"stub": True, "final_preview_url": final_preview_url}),
+                ("preview_assembled", {"stub": False, "final_preview_url": final_preview_url}),
                 ("final_approval_requested", {"final_preview_url": final_preview_url}),
             ]
         elif normalized_decision == "rejected":
@@ -382,10 +410,14 @@ class WorkflowV1Service:
         await self._repository.append_audit_events(job_id, audit_events)
 
         if normalized_decision == "approved":
+            final_preview_relative_path = self._build_final_preview_relative_path(job_id)
             await self._repository.save_asset(
                 job_id,
                 asset_type="final_preview",
                 asset_url=str(updated.get("final_preview_url") or ""),
+                relative_path=final_preview_relative_path,
+                public_url=str(updated.get("final_preview_url") or ""),
+                absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
                 version="v1",
                 approved=False,
             )
@@ -439,11 +471,10 @@ class WorkflowV1Service:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if normalized_decision == "approved":
-            existing_urls = dict(job.get("final_asset_urls") or {})
-            generated_urls = self._build_final_asset_urls(job_id)
+            generated_assets = self._generate_final_assets(job_id=job_id, job=job)
             final_asset_urls = {
-                "png": str(existing_urls.get("png") or generated_urls["png"]),
-                "pdf": str(existing_urls.get("pdf") or generated_urls["pdf"]),
+                "png": generated_assets["png"]["public_url"],
+                "pdf": generated_assets["pdf"]["public_url"],
             }
             updates = {
                 "status": "completed",
@@ -453,7 +484,10 @@ class WorkflowV1Service:
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
                 ("final_approved", event_payload),
-                ("final_png_exported", {"stub": True, "png": final_asset_urls["png"], "pdf": final_asset_urls["pdf"]}),
+                (
+                    "final_png_exported",
+                    {"stub": False, "png": final_asset_urls["png"], "pdf": final_asset_urls["pdf"]},
+                ),
                 ("job_completed", {"status": "completed"}),
             ]
         elif normalized_decision == "rejected":
@@ -487,22 +521,27 @@ class WorkflowV1Service:
         await self._repository.append_audit_events(job_id, audit_events)
 
         if normalized_decision == "approved":
-            final_urls = updated.get("final_asset_urls") or {}
-            png_url = str(final_urls.get("png", ""))
-            pdf_url = str(final_urls.get("pdf", ""))
-            if png_url:
+            png_meta = generated_assets["png"]
+            pdf_meta = generated_assets["pdf"]
+            if png_meta["public_url"]:
                 await self._repository.save_asset(
                     job_id,
                     asset_type="final_png",
-                    asset_url=png_url,
+                    asset_url=png_meta["public_url"],
+                    relative_path=png_meta["relative_path"],
+                    public_url=png_meta["public_url"],
+                    absolute_path=png_meta["absolute_path"],
                     version="v1",
                     approved=True,
                 )
-            if pdf_url:
+            if pdf_meta["public_url"]:
                 await self._repository.save_asset(
                     job_id,
                     asset_type="final_pdf",
-                    asset_url=pdf_url,
+                    asset_url=pdf_meta["public_url"],
+                    relative_path=pdf_meta["relative_path"],
+                    public_url=pdf_meta["public_url"],
+                    absolute_path=pdf_meta["absolute_path"],
                     version="v1",
                     approved=True,
                 )
@@ -583,25 +622,156 @@ class WorkflowV1Service:
         )
 
     @staticmethod
-    def _build_image_preview_url(job_id: str) -> str:
-        """Return placeholder image URL until real image generation is integrated."""
+    def _build_image_preview_relative_path(job_id: str) -> str:
+        """Return relative storage path for image approval preview."""
 
-        return f"http://localhost:8080/assets/{job_id}_image_preview.png"
-
-    @staticmethod
-    def _build_final_preview_url(job_id: str) -> str:
-        """Return placeholder final-preview URL until real assembly is integrated."""
-
-        return f"http://localhost:8080/assets/{job_id}_final_preview.png"
+        return f"image/{job_id}_image_preview.png"
 
     @staticmethod
-    def _build_final_asset_urls(job_id: str) -> dict[str, str]:
-        """Return placeholder export URLs until real export logic is integrated."""
+    def _build_final_preview_relative_path(job_id: str) -> str:
+        """Return relative storage path for final approval preview."""
+
+        return f"preview/{job_id}_content_preview.png"
+
+    @staticmethod
+    def _build_final_asset_relative_paths(job_id: str) -> dict[str, str]:
+        """Return relative storage paths for final exported assets."""
 
         return {
-            "png": f"http://localhost:8080/assets/{job_id}_final.png",
-            "pdf": f"http://localhost:8080/assets/{job_id}_final.pdf",
+            "png": f"final/{job_id}_final.png",
+            "pdf": f"pdf/{job_id}_final.pdf",
         }
+
+    def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, str]]:
+        """Render deterministic placeholder final assets and ensure files exist."""
+
+        relative_paths = self._build_final_asset_relative_paths(job_id)
+        self._write_placeholder_card_assets(
+            job_id=job_id,
+            theme_name=str(job.get("theme_name") or ""),
+            winner_content=self._resolve_winning_content(job),
+            png_relative_path=relative_paths["png"],
+            pdf_relative_path=relative_paths["pdf"],
+        )
+
+        if not self._asset_storage.file_exists(relative_paths["png"]):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate final PNG asset",
+            )
+        if not self._asset_storage.file_exists(relative_paths["pdf"]):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate final PDF asset",
+            )
+        return {
+            "png": {
+                "relative_path": relative_paths["png"],
+                "public_url": self._asset_storage.get_public_url(relative_paths["png"]),
+                "absolute_path": self._asset_storage.get_absolute_path(relative_paths["png"]),
+            },
+            "pdf": {
+                "relative_path": relative_paths["pdf"],
+                "public_url": self._asset_storage.get_public_url(relative_paths["pdf"]),
+                "absolute_path": self._asset_storage.get_absolute_path(relative_paths["pdf"]),
+            },
+        }
+
+    def _write_placeholder_preview_image(
+        self,
+        *,
+        relative_path: str,
+        title: str,
+        subtitle: str,
+        body: str,
+    ) -> None:
+        """Create and save a deterministic preview placeholder PNG."""
+
+        image_bytes = self._create_placeholder_image_bytes(title=title, subtitle=subtitle, body=body)
+        self._asset_storage.save_bytes(relative_path, image_bytes)
+        if not self._asset_storage.file_exists(relative_path):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate preview asset: {relative_path}",
+            )
+
+    def _write_placeholder_card_assets(
+        self,
+        *,
+        job_id: str,
+        theme_name: str,
+        winner_content: str,
+        png_relative_path: str,
+        pdf_relative_path: str,
+    ) -> None:
+        """Create deterministic placeholder PNG/PDF assets for workflow v1."""
+
+        canvas = Image.new("RGB", (1280, 720), color=(250, 245, 236))
+        draw = ImageDraw.Draw(canvas)
+        title_font = self._load_font(size=52)
+        body_font = self._load_font(size=30)
+        meta_font = self._load_font(size=24)
+
+        draw.rectangle([(0, 0), (1280, 120)], fill=(38, 70, 83))
+        draw.text((40, 30), "eCardFactory Final Card", fill=(255, 255, 255), font=title_font)
+
+        y = 150
+        draw.text((40, y), f"Theme: {theme_name or 'N/A'}", fill=(33, 33, 33), font=body_font)
+        y += 48
+        draw.text((40, y), f"Job ID: {job_id}", fill=(33, 33, 33), font=meta_font)
+        y += 46
+        draw.text((40, y), "Approved Winner Content:", fill=(33, 33, 33), font=meta_font)
+        y += 40
+
+        content = winner_content.strip() or "No approved content available."
+        for line in wrap(content, width=74):
+            draw.text((40, y), line, fill=(33, 33, 33), font=meta_font)
+            y += 34
+            if y > 680:
+                break
+
+        png_buffer = BytesIO()
+        canvas.save(png_buffer, format="PNG", optimize=True)
+        self._asset_storage.save_bytes(png_relative_path, png_buffer.getvalue())
+
+        pdf_buffer = BytesIO()
+        canvas.save(pdf_buffer, format="PDF", resolution=100.0)
+        self._asset_storage.save_bytes(pdf_relative_path, pdf_buffer.getvalue())
+
+    def _create_placeholder_image_bytes(self, *, title: str, subtitle: str, body: str) -> bytes:
+        """Build a simple deterministic preview image payload."""
+
+        canvas = Image.new("RGB", (1024, 576), color=(245, 247, 250))
+        draw = ImageDraw.Draw(canvas)
+        title_font = self._load_font(size=46)
+        subtitle_font = self._load_font(size=28)
+        body_font = self._load_font(size=24)
+
+        draw.rectangle([(0, 0), (1024, 105)], fill=(23, 37, 84))
+        draw.text((30, 26), title, fill=(255, 255, 255), font=title_font)
+        draw.text((30, 130), subtitle, fill=(17, 24, 39), font=subtitle_font)
+
+        y = 182
+        for line in wrap(body.strip() or "N/A", width=68):
+            draw.text((30, y), line, fill=(17, 24, 39), font=body_font)
+            y += 34
+            if y > 540:
+                break
+
+        output = BytesIO()
+        canvas.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+
+    @staticmethod
+    def _load_font(*, size: int):
+        """Load a readable font for placeholder asset rendering."""
+
+        for font_name in ("DejaVuSans.ttf", "Arial.ttf", "Helvetica.ttf"):
+            try:
+                return ImageFont.truetype(font_name, size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
 
     @staticmethod
     def _resolve_winning_content(job: dict[str, Any]) -> str:
@@ -618,4 +788,7 @@ class WorkflowV1Service:
 def get_workflow_v1_service() -> WorkflowV1Service:
     """Return singleton workflow service instance for all workflow endpoints."""
 
-    return WorkflowV1Service(repository=get_workflow_job_repository())
+    return WorkflowV1Service(
+        repository=get_workflow_job_repository(),
+        asset_storage=get_asset_storage(),
+    )

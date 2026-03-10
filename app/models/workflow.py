@@ -175,6 +175,9 @@ class CardAsset(Base):
     )
     asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
     asset_url: Mapped[str] = mapped_column(Text, nullable=False)
+    relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    absolute_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

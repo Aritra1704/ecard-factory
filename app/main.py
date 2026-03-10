@@ -20,12 +20,16 @@ from app.routers.events import router as events_router
 from app.routers.generation import router as generation_router
 from app.routers.health import router as health_router
 from app.routers.planning import router as planning_router
+from app.routers.storage import router as storage_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
 from app.routers.workflow_v1 import router as workflow_v1_router
+from app.storage import get_asset_storage, initialize_asset_storage_or_raise
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+ASSET_STORAGE = get_asset_storage()
+ASSETS_DIR = Path(ASSET_STORAGE.get_absolute_path(""))
 
 
 def run_migrations() -> None:
@@ -45,6 +49,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("eCard Factory starting up")
     from app.database import close_database, ensure_database_ready
+
+    # Storage must be writable before any workflow endpoint starts generating files.
+    initialize_asset_storage_or_raise()
 
     try:
         run_migrations()
@@ -77,8 +84,10 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR), check_dir=False), name="assets")
 
 app.include_router(health_router)
+app.include_router(storage_router)
 app.include_router(workflow_v1_router)
 app.include_router(theme_router, prefix="/theme")
 app.include_router(assembly_router, prefix="/assembly")

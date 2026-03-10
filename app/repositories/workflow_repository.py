@@ -255,7 +255,10 @@ class WorkflowJobRepository:
         job_id: str,
         *,
         asset_type: str,
-        asset_url: str,
+        asset_url: str = "",
+        relative_path: str | None = None,
+        public_url: str | None = None,
+        absolute_path: str | None = None,
         version: str = "v1",
         approved: bool = False,
     ) -> None:
@@ -269,7 +272,10 @@ class WorkflowJobRepository:
             assets.append(
                 {
                     "asset_type": asset_type,
-                    "asset_url": asset_url,
+                    "asset_url": public_url or asset_url,
+                    "relative_path": relative_path,
+                    "public_url": public_url,
+                    "absolute_path": absolute_path,
                     "version": version,
                     "approved": approved,
                     "created_at": datetime.now(timezone.utc),
@@ -285,7 +291,10 @@ class WorkflowJobRepository:
                     CardAsset(
                         job_id=job_id,
                         asset_type=asset_type,
-                        asset_url=asset_url,
+                        asset_url=public_url or asset_url,
+                        relative_path=relative_path,
+                        public_url=public_url,
+                        absolute_path=absolute_path,
                         version=version,
                         approved=approved,
                     )
@@ -299,6 +308,9 @@ class WorkflowJobRepository:
                     job_id,
                     asset_type=asset_type,
                     asset_url=asset_url,
+                    relative_path=relative_path,
+                    public_url=public_url,
+                    absolute_path=absolute_path,
                     version=version,
                     approved=approved,
                 ),
@@ -407,9 +419,9 @@ class WorkflowJobRepository:
         final_assets = job.final_asset_urls or {}
         for asset in assets:
             if asset.asset_type == "final_png":
-                final_assets.setdefault("png", asset.asset_url)
+                final_assets.setdefault("png", asset.public_url or asset.asset_url)
             if asset.asset_type == "final_pdf":
-                final_assets.setdefault("pdf", asset.asset_url)
+                final_assets.setdefault("pdf", asset.public_url or asset.asset_url)
 
         return {
             "job_id": job.job_id,
@@ -470,7 +482,10 @@ class WorkflowJobRepository:
             "assets": [
                 {
                     "asset_type": item.asset_type,
-                    "asset_url": item.asset_url,
+                    "asset_url": item.public_url or item.asset_url,
+                    "relative_path": item.relative_path,
+                    "public_url": item.public_url,
+                    "absolute_path": item.absolute_path,
                     "version": item.version,
                     "approved": item.approved,
                     "created_at": item.created_at,
@@ -496,4 +511,3 @@ def get_workflow_job_repository() -> WorkflowJobRepository:
         memory_store=get_job_store(),
         allow_memory_fallback=bool(settings.workflow_memory_fallback_enabled),
     )
-
