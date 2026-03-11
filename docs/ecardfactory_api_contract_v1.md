@@ -9,7 +9,7 @@ Boundary rule:
 - n8n never calls ContentForge directly.
 
 Base URL for v1 placeholders:
-- `http://localhost:8080`
+- `http://localhost:8000`
 
 ## 1) Start Job
 
@@ -65,7 +65,7 @@ Response example:
 {
   "job_id": "job_123",
   "status": "image_pending_approval",
-  "image_preview_url": "http://localhost:8080/assets/image_123.png"
+  "image_preview_url": "http://localhost:8000/assets/image_123.png"
 }
 ```
 
@@ -88,7 +88,7 @@ Response example:
 {
   "job_id": "job_123",
   "status": "final_pending_approval",
-  "final_preview_url": "http://localhost:8080/assets/final_preview_123.png"
+  "final_preview_url": "http://localhost:8000/assets/final_preview_123.png"
 }
 ```
 
@@ -112,8 +112,8 @@ Response example:
   "job_id": "job_123",
   "status": "completed",
   "final_asset_urls": {
-    "png": "http://localhost:8080/assets/final_123.png",
-    "pdf": "http://localhost:8080/assets/final_123.pdf"
+    "png": "http://localhost:8000/assets/final_123.png",
+    "pdf": "http://localhost:8000/assets/final_123.pdf"
   }
 }
 ```

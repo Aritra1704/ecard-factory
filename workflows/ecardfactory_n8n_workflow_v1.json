@@ -3,32 +3,31 @@
   "nodes": [
     {
       "parameters": {},
-      "id": "1",
+      "id": "38e43bd7-b43e-4896-ad7c-55bc96356286",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        -2320,
-        320
+        -5680,
+        2704
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://localhost:8080/api/jobs/start",
+        "url": "http://host.docker.internal:8080/api/jobs/start",
         "sendBody": true,
-        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={\"theme_name\":\"Warm birthday message\",\"tone_funny_pct\":20,\"tone_emotion_pct\":75,\"tone_style\":\"conversational\",\"audience\":\"close friend\",\"cultural_context\":\"bengali\",\"output_spec\":{\"format\":\"paragraph\",\"length\":{\"target_words\":80},\"structure\":{\"no_lists\":true,\"no_numbering\":true}},\"avoid_cliches\":true}",
+        "jsonBody": "={\n  \"theme_name\": \"Warm birthday message\",\n  \"tone_funny_pct\": 20,\n  \"tone_emotion_pct\": 75,\n  \"tone_style\": \"conversational\",\n  \"audience\": \"close friend\",\n  \"cultural_context\": \"bengali\",\n  \"output_spec\": {\n    \"format\": \"paragraph\",\n    \"length\": { \"target_words\": 80 },\n    \"structure\": { \"no_lists\": true, \"no_numbering\": true }\n  },\n  \"avoid_cliches\": true\n}\n",
         "options": {}
       },
-      "id": "2",
+      "id": "4e9ca4eb-05ff-4126-a868-0231f5cde2f2",
       "name": "Start Job",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -2080,
-        320
+        -5440,
+        2704
       ]
     },
     {
@@ -63,13 +62,13 @@
         },
         "options": {}
       },
-      "id": "3",
+      "id": "4b5da2da-ffc9-4682-a883-80e65ce22fe1",
       "name": "Extract Start Job Fields",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1840,
-        320
+        -5200,
+        2704
       ]
     },
     {
@@ -116,13 +115,13 @@
         },
         "options": {}
       },
-      "id": "4",
+      "id": "7f813a02-8601-4584-816d-b8e2a91817d6",
       "name": "Prepare Content Approval Message",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1600,
-        320
+        -4960,
+        2704
       ]
     },
     {
@@ -163,13 +162,13 @@
         },
         "options": {}
       },
-      "id": "5",
+      "id": "190c7804-dc74-466e-a7c2-5c71bf002cdb",
       "name": "Simulate Content Approval",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -1360,
-        320
+        -4720,
+        2704
       ]
     },
     {
@@ -195,32 +194,41 @@
         },
         "options": {}
       },
-      "id": "6",
+      "id": "fd211b85-020f-4cc5-921e-bbdee775f6c1",
       "name": "Content Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -1120,
-        320
+        -4480,
+        2704
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/content-approval",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/content-approval",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={\"decision\":$json.content_decision,\"notes\":$json.content_notes}",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "decision",
+              "value": "={{$json.content_decision}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{$json.content_notes \n\n ''}}"
+            }
+          ]
+        },
         "options": {}
       },
-      "id": "7",
+      "id": "33c7adb8-b730-48c2-816b-6d7ad0a225da",
       "name": "Submit Content Approval",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -880,
-        224
+        -4240,
+        2608
       ]
     },
     {
@@ -249,13 +257,13 @@
         },
         "options": {}
       },
-      "id": "8",
+      "id": "58317756-a636-4fb3-b369-179c2a68f45d",
       "name": "Extract Image Approval Fields",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -640,
-        224
+        -4000,
+        2608
       ]
     },
     {
@@ -296,13 +304,13 @@
         },
         "options": {}
       },
-      "id": "9",
+      "id": "1c9758d9-ba73-475e-a10d-38372cd69d9e",
       "name": "Prepare Image Approval Message",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -400,
-        224
+        -3760,
+        2608
       ]
     },
     {
@@ -349,13 +357,13 @@
         },
         "options": {}
       },
-      "id": "10",
+      "id": "ab97712a-f44f-4e4b-b36b-3628604de1cf",
       "name": "Simulate Image Approval",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -160,
-        224
+        -3520,
+        2608
       ]
     },
     {
@@ -381,32 +389,41 @@
         },
         "options": {}
       },
-      "id": "11",
+      "id": "294bbc34-d10e-4d4e-8de4-f4cb986f9e58",
       "name": "Image Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        80,
-        224
+        -3280,
+        2608
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/image-approval",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/image-approval",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={\"decision\":$json.image_decision,\"notes\":$json.image_notes}",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "decision",
+              "value": "={{$json.image_decision}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{$json.image_notes \n\n ''}}"
+            }
+          ]
+        },
         "options": {}
       },
-      "id": "12",
+      "id": "ee0ea381-6f0e-4c24-bd5e-2f1c23a555ad",
       "name": "Submit Image Approval",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        320,
-        128
+        -3040,
+        2512
       ]
     },
     {
@@ -435,13 +452,13 @@
         },
         "options": {}
       },
-      "id": "13",
+      "id": "cf062d3a-65c2-4b4e-bf8b-b1b781c71904",
       "name": "Extract Final Approval Fields",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        560,
-        128
+        -2800,
+        2512
       ]
     },
     {
@@ -482,13 +499,13 @@
         },
         "options": {}
       },
-      "id": "14",
+      "id": "0b7fe17a-8803-4bb5-97e3-30fe46a5c4ab",
       "name": "Prepare Final Approval Message",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        800,
-        128
+        -2560,
+        2512
       ]
     },
     {
@@ -535,13 +552,13 @@
         },
         "options": {}
       },
-      "id": "15",
+      "id": "42d109c1-4894-45db-b0a2-b4ce7b1ffbfe",
       "name": "Simulate Final Approval",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1040,
-        128
+        -2320,
+        2512
       ]
     },
     {
@@ -567,32 +584,41 @@
         },
         "options": {}
       },
-      "id": "16",
+      "id": "5d0c79a3-19e3-4bc3-a981-caed1be9fab4",
       "name": "Final Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1280,
-        128
+        -2080,
+        2512
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=http://localhost:8080/api/jobs/{{ $json.job_id }}/final-approval",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/final-approval",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={\"decision\":$json.final_decision,\"notes\":$json.final_notes}",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "decision",
+              "value": "={{$json.final_decision}}"
+            },
+            {
+              "name": "notes",
+              "value": "={{$json.final_notes \n\n ''}}"
+            }
+          ]
+        },
         "options": {}
       },
-      "id": "17",
+      "id": "fd20ac7f-492e-4d2f-8ff4-0b35bcdfc8ad",
       "name": "Submit Final Approval",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1520,
-        32
+        -1840,
+        2416
       ]
     },
     {
@@ -633,13 +659,13 @@
         },
         "options": {}
       },
-      "id": "18",
+      "id": "af02f5ca-f29d-434e-9b38-eeb84b5336eb",
       "name": "Prepare Completion Summary",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1760,
-        32
+        -1600,
+        2416
       ]
     },
     {
@@ -668,13 +694,13 @@
         },
         "options": {}
       },
-      "id": "19",
+      "id": "1cb0cd26-0ecb-4e63-b2c6-8d33e873678c",
       "name": "Content Rejected Placeholder",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -880,
-        416
+        -4240,
+        2800
       ]
     },
     {
@@ -703,13 +729,13 @@
         },
         "options": {}
       },
-      "id": "20",
+      "id": "a75c5b62-5541-4af9-bd1a-f647770b2e00",
       "name": "Image Rejected Placeholder",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        320,
-        320
+        -3040,
+        2704
       ]
     },
     {
@@ -738,16 +764,17 @@
         },
         "options": {}
       },
-      "id": "21",
+      "id": "86e550ff-d0e5-4755-9a35-5465881bbead",
       "name": "Final Rejected Placeholder",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1520,
-        224
+        -1840,
+        2608
       ]
     }
   ],
+  "pinData": {},
   "connections": {
     "Manual Trigger": {
       "main": [
@@ -960,14 +987,14 @@
   },
   "active": false,
   "settings": {
-    "timezone": "Asia/Kolkata",
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
   },
-  "versionId": "ecardfactory-workflow-v1",
+  "versionId": "d44de863-4600-4efd-aed8-8a17a4739462",
   "meta": {
-    "instanceId": "ecard-factory"
+    "instanceId": "a775cea4b8be83cc9a1323998a5bdd27b891d18e8983fcb12e312990f7d61dd6"
   },
-  "id": "ecardfactory-workflow-v1",
-  "pinData": {},
+  "id": "jejbnJtGitBjqeRF",
   "tags": []
 }
