@@ -17,6 +17,7 @@ from app.routers.admin import router as admin_router
 from app.routers.assembly import router as assembly_router
 from app.routers.cards import router as cards_router
 from app.routers.events import router as events_router
+from app.routers.frontend import router as frontend_router
 from app.routers.generation import router as generation_router
 from app.routers.health import router as health_router
 from app.routers.planning import router as planning_router
@@ -97,3 +98,4 @@ app.include_router(telegram_router, prefix="/telegram")
 app.include_router(admin_router)
 app.include_router(events_router)
 app.include_router(planning_router)
+app.include_router(frontend_router)

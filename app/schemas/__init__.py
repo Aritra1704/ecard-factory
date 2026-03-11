@@ -12,7 +12,7 @@ from app.schemas.generation import (
     PhraseGenerationRequest,
     PhraseGenerationResponse,
 )
-from app.schemas.storage import StorageHealthResponse
+from app.schemas.storage import StorageDirectorySummary, StorageHealthResponse, StorageSummaryResponse
 from app.schemas.theme import (
     ThemeHistoryItem,
     ThemeOverrideCreate,
@@ -38,7 +38,13 @@ from app.schemas.workflow import (
     FinalAssetUrls,
     ImageApprovalRequest,
     ImageApprovalResponse,
+    JobArchiveResponse,
+    JobAssetResponse,
     JobDebugResponse,
+    JobDeleteResponse,
+    JobEventResponse,
+    JobListItemResponse,
+    RenderConfig,
     StartJobRequest,
     StartJobResponse,
 )
@@ -72,7 +78,9 @@ __all__ = [
     "ThemeOverrideCreate",
     "ThemeOverrideResponse",
     "ThemeResolved",
+    "StorageDirectorySummary",
     "StorageHealthResponse",
+    "StorageSummaryResponse",
     "ApprovalRequest",
     "ContentApprovalRequest",
     "ContentApprovalResponse",
@@ -80,7 +88,13 @@ __all__ = [
     "FinalAssetUrls",
     "ImageApprovalRequest",
     "ImageApprovalResponse",
+    "JobArchiveResponse",
+    "JobAssetResponse",
     "JobDebugResponse",
+    "JobDeleteResponse",
+    "JobEventResponse",
+    "JobListItemResponse",
+    "RenderConfig",
     "StartJobRequest",
     "StartJobResponse",
 ]

@@ -120,6 +120,41 @@ class WorkflowJobRepository:
             )
             return job, "memory_fallback"
 
+    async def list_jobs(self, *, limit: int = 100) -> tuple[list[dict[str, Any]], str]:
+        """Return newest-first jobs for admin console listings."""
+
+        safe_limit = max(1, min(limit, 500))
+        if self._use_memory_backend():
+            rows = await self._memory.list_jobs()
+            return rows[:safe_limit], "memory_fallback"
+
+        try:
+            async with async_session_factory() as session:
+                statement = select(CardJob).order_by(CardJob.created_at.desc(), CardJob.job_id.desc()).limit(safe_limit)
+                result = await session.execute(statement)
+                rows = list(result.scalars().all())
+        except (SQLAlchemyError, OSError) as exc:
+            rows = await self._handle_db_failure_and_maybe_fallback(
+                op_name="list_jobs",
+                error=exc,
+                memory_action=lambda: self._memory.list_jobs(),
+            )
+            return list(rows[:safe_limit]), "memory_fallback"
+
+        return [
+            {
+                "job_id": item.job_id,
+                "theme_name": item.theme_name,
+                "status": item.status,
+                "content_approval_status": item.content_approval_status,
+                "image_approval_status": item.image_approval_status,
+                "final_approval_status": item.final_approval_status,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+            }
+            for item in rows
+        ], "postgres"
+
     async def update_job_status(
         self,
         job_id: str,
@@ -184,6 +219,45 @@ class WorkflowJobRepository:
 
         job, _ = await self.get_job(job_id)
         return job
+
+    async def delete_job(self, job_id: str) -> tuple[dict[str, Any] | None, str]:
+        """Delete one job and return removed snapshot when available."""
+
+        if self._use_memory_backend():
+            record = await self._memory.delete_job(job_id)
+            return record, "memory_fallback"
+
+        try:
+            async with async_session_factory() as session:
+                statement = (
+                    select(CardJob)
+                    .where(CardJob.job_id == job_id)
+                    .options(
+                        selectinload(CardJob.candidates),
+                        selectinload(CardJob.judge_results),
+                        selectinload(CardJob.approvals),
+                        selectinload(CardJob.assets),
+                        selectinload(CardJob.audit_events),
+                    )
+                )
+                result = await session.execute(statement)
+                db_job = result.scalar_one_or_none()
+                if db_job is None:
+                    return None, "postgres"
+
+                snapshot = self._serialize_job(db_job)
+                await session.delete(db_job)
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            record = await self._handle_db_failure_and_maybe_fallback(
+                op_name="delete_job",
+                error=exc,
+                memory_action=lambda: self._memory.delete_job(job_id),
+            )
+            return record, "memory_fallback"
+
+        await self._memory.delete_job(job_id)
+        return snapshot, "postgres"
 
     async def save_content_candidates(self, job_id: str, candidates: list[dict[str, Any]]) -> None:
         """Persist generated content candidates."""

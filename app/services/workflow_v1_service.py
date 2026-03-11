@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from io import BytesIO
 from datetime import datetime, timezone
 from functools import lru_cache
 import logging
-from textwrap import wrap
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from PIL import Image, ImageDraw, ImageFont
 
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
@@ -22,9 +21,19 @@ from app.schemas.workflow import (
     FinalAssetUrls,
     ImageApprovalRequest,
     ImageApprovalResponse,
+    JobArchiveResponse,
+    JobAssetResponse,
     JobDebugResponse,
+    JobDeleteResponse,
+    JobEventResponse,
+    JobListItemResponse,
     StartJobRequest,
     StartJobResponse,
+)
+from app.services.workflow_card_renderer import (
+    FinalCardRenderInput,
+    PreviewCardRenderInput,
+    WorkflowCardRenderer,
 )
 from app.storage import AssetStorage, get_asset_storage
 
@@ -106,6 +115,7 @@ class WorkflowV1Service:
         self._contentforge = StubContentForgeClient()
         self._repository = repository or get_workflow_job_repository()
         self._asset_storage = asset_storage or get_asset_storage()
+        self._card_renderer = WorkflowCardRenderer()
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
@@ -122,6 +132,8 @@ class WorkflowV1Service:
             f"Content approval required for {job_id}. Winner model: {winner_model}. "
             "Review preview text and approve/reject."
         )
+        output_spec = payload.output_spec.model_dump()
+        output_spec["rendering"] = payload.rendering.model_dump()
 
         job_record: dict[str, Any] = {
             "job_id": job_id,
@@ -134,7 +146,7 @@ class WorkflowV1Service:
             "visual_style": payload.tone_style,
             "audience": payload.audience,
             "cultural_context": payload.cultural_context,
-            "output_spec": payload.output_spec.model_dump(),
+            "output_spec": output_spec,
             "avoid_cliches": payload.avoid_cliches,
             "content_preview": content_preview,
             "winner_model": winner_model,
@@ -223,14 +235,28 @@ class WorkflowV1Service:
         if decision == "approved":
             image_prompt = self.build_image_prompt(job)
             image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            self._write_placeholder_preview_image(
+            approved_content = self._resolve_winning_content(job)
+            self._save_internal_preview_asset(
                 relative_path=image_preview_relative_path,
-                title="Image Preview",
-                subtitle=f"Job ID: {job_id}",
-                body=image_prompt,
+                payload=PreviewCardRenderInput(
+                    title="Content Approved - Image Review",
+                    message=image_prompt,
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="image_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Context: {job.get('cultural_context', 'N/A')}",
+                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
+                    ],
+                ),
             )
             image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
-            approved_content = self._resolve_winning_content(job)
             updates = {
                 "status": "image_pending_approval",
                 "content_approval_status": "approved",
@@ -337,11 +363,25 @@ class WorkflowV1Service:
 
         if normalized_decision == "approved":
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            self._write_placeholder_preview_image(
+            self._save_internal_preview_asset(
                 relative_path=final_preview_relative_path,
-                title="Final Approval Preview",
-                subtitle=f"Job ID: {job_id}",
-                body=self._resolve_winning_content(job),
+                payload=PreviewCardRenderInput(
+                    title="Image Approved - Final Review",
+                    message=self._resolve_winning_content(job),
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="final_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Tone: {job.get('tone_style', 'N/A')}",
+                        "Final card render queued",
+                    ],
+                ),
             )
             final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
             updates = {
@@ -568,6 +608,112 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
         return JobDebugResponse.model_validate(job)
 
+    async def list_jobs(self, *, limit: int = 100) -> list[JobListItemResponse]:
+        """Return newest-first jobs with a compact status payload for admin console."""
+
+        rows, backend = await self._repository.list_jobs(limit=limit)
+        logger.info("workflow jobs listed count=%s backend=%s", len(rows), backend)
+        items: list[JobListItemResponse] = []
+        for row in rows:
+            created_at = self._coerce_datetime(row.get("created_at"))
+            updated_at = self._coerce_datetime(row.get("updated_at"), fallback=created_at)
+            status_value = str(row.get("status") or "unknown")
+            items.append(
+                JobListItemResponse(
+                    job_id=str(row.get("job_id")),
+                    theme_name=str(row.get("theme_name") or "Untitled"),
+                    current_stage=self._resolve_current_stage(status_value),
+                    status=status_value,
+                    content_approval_status=str(row.get("content_approval_status") or "pending"),
+                    image_approval_status=str(row.get("image_approval_status") or "pending"),
+                    final_approval_status=str(row.get("final_approval_status") or "pending"),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            )
+        return items
+
+    async def get_job_assets(self, job_id: str) -> list[JobAssetResponse]:
+        """Return persisted asset metadata for a job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        assets = sorted(
+            list(job.get("assets") or []),
+            key=lambda item: self._coerce_datetime(item.get("created_at"), fallback=datetime.min.replace(tzinfo=timezone.utc)),
+            reverse=True,
+        )
+        return [JobAssetResponse.model_validate(item) for item in assets]
+
+    async def get_job_events(self, job_id: str) -> list[JobEventResponse]:
+        """Return lifecycle audit events for a job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        events = sorted(
+            list(job.get("audit_log") or []),
+            key=lambda item: self._coerce_datetime(item.get("created_at"), fallback=datetime.min.replace(tzinfo=timezone.utc)),
+        )
+        return [JobEventResponse.model_validate(item) for item in events]
+
+    async def archive_job(self, job_id: str) -> JobArchiveResponse:
+        """Archive a job without deleting any assets."""
+
+        current = await self._load_job(job_id)
+        if current is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        previous_status = str(current.get("status") or "unknown")
+        if previous_status == "archived":
+            return JobArchiveResponse(
+                job_id=job_id,
+                status=previous_status,
+                updated_at=self._coerce_datetime(current.get("updated_at")),
+            )
+
+        updated = await self._repository.update_job_status(job_id=job_id, updates={"status": "archived"})
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_archive_called", {"endpoint": f"/api/jobs/{job_id}/archive"}),
+                    ("job_archived", {"previous_status": previous_status}),
+                ],
+            ),
+        )
+        return JobArchiveResponse(
+            job_id=job_id,
+            status=str(updated["status"]),
+            updated_at=self._coerce_datetime(updated.get("updated_at")),
+        )
+
+    async def delete_job(self, job_id: str) -> JobDeleteResponse:
+        """Delete a job and remove known asset files from storage."""
+
+        deleted_snapshot, backend = await self._repository.delete_job(job_id)
+        if deleted_snapshot is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        deleted_files = 0
+        for relative_path in sorted(self._collect_relative_asset_paths(deleted_snapshot)):
+            if self._delete_relative_asset(relative_path):
+                deleted_files += 1
+
+        logger.info(
+            "workflow job deleted job_id=%s backend=%s deleted_files=%s",
+            job_id,
+            backend,
+            deleted_files,
+        )
+        return JobDeleteResponse(job_id=job_id, deleted=True, deleted_files=deleted_files)
+
     async def _load_job(self, job_id: str) -> dict[str, Any] | None:
         """Load job from Postgres when possible, otherwise from in-memory fallback."""
 
@@ -610,6 +756,103 @@ class WorkflowV1Service:
             for event_type, payload in events
         ]
 
+    @staticmethod
+    def _coerce_datetime(value: Any, *, fallback: datetime | None = None) -> datetime:
+        """Normalize unknown datetime values to an aware UTC datetime."""
+
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=timezone.utc)
+                return parsed
+            except ValueError:
+                pass
+        if fallback is not None:
+            return fallback
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _resolve_current_stage(status_value: str) -> str:
+        """Map persisted workflow status to one coarse-grained current stage."""
+
+        normalized = status_value.strip().lower()
+        if normalized.startswith("content"):
+            return "content_generation"
+        if normalized.startswith("image"):
+            return "image_generation"
+        if normalized.startswith("final"):
+            return "final_render"
+        if normalized in {"completed", "archived"}:
+            return normalized
+        return "queued"
+
+    def _collect_relative_asset_paths(self, job: dict[str, Any]) -> set[str]:
+        """Collect known relative asset paths from job metadata."""
+
+        paths: set[str] = set()
+        for asset in list(job.get("assets") or []):
+            relative_path = str(asset.get("relative_path") or "").strip().lstrip("/")
+            if relative_path:
+                paths.add(relative_path)
+            for key in ("asset_url", "public_url"):
+                maybe_relative = self._relative_path_from_asset_url(str(asset.get(key) or ""))
+                if maybe_relative:
+                    paths.add(maybe_relative)
+
+        for key in ("image_preview_url", "final_preview_url"):
+            maybe_relative = self._relative_path_from_asset_url(str(job.get(key) or ""))
+            if maybe_relative:
+                paths.add(maybe_relative)
+
+        final_asset_urls = job.get("final_asset_urls")
+        if isinstance(final_asset_urls, dict):
+            for url in final_asset_urls.values():
+                maybe_relative = self._relative_path_from_asset_url(str(url or ""))
+                if maybe_relative:
+                    paths.add(maybe_relative)
+
+        return paths
+
+    @staticmethod
+    def _relative_path_from_asset_url(value: str) -> str | None:
+        """Extract storage-relative path from asset URL-like values."""
+
+        candidate = (value or "").strip()
+        if not candidate:
+            return None
+
+        parsed = urlparse(candidate)
+        path_candidate = parsed.path or candidate
+        if "/assets/" in path_candidate:
+            path_candidate = path_candidate.split("/assets/", 1)[1]
+        elif parsed.scheme:
+            return None
+
+        normalized = unquote(path_candidate).replace("\\", "/").strip().lstrip("/")
+        if not normalized:
+            return None
+        if any(part == ".." for part in normalized.split("/")):
+            return None
+        return normalized
+
+    def _delete_relative_asset(self, relative_path: str) -> bool:
+        """Delete one relative asset file if present."""
+
+        try:
+            absolute = Path(self._asset_storage.get_absolute_path(relative_path))
+            if not absolute.exists() or not absolute.is_file():
+                return False
+            absolute.unlink(missing_ok=True)
+            return True
+        except (OSError, ValueError):
+            logger.exception("failed deleting asset path=%s", relative_path)
+            return False
+
     def build_image_prompt(self, job: dict[str, Any]) -> str:
         """Build image prompt from theme + approved winner text + audience context."""
 
@@ -643,16 +886,23 @@ class WorkflowV1Service:
         }
 
     def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, str]]:
-        """Render deterministic placeholder final assets and ensure files exist."""
+        """Render polished final card assets and ensure files exist."""
 
         relative_paths = self._build_final_asset_relative_paths(job_id)
-        self._write_placeholder_card_assets(
-            job_id=job_id,
-            theme_name=str(job.get("theme_name") or ""),
-            winner_content=self._resolve_winning_content(job),
-            png_relative_path=relative_paths["png"],
-            pdf_relative_path=relative_paths["pdf"],
+        final_payload = FinalCardRenderInput(
+            title=self._resolve_final_title(job),
+            message=self._resolve_final_message(job),
+            signoff=self._resolve_final_signoff(job),
+            theme_style=self._resolve_theme_style(job),
+            background_image_url=self._resolve_background_image_url(job),
+            text_alignment=self._resolve_text_alignment(job),
+            export_size=self._resolve_export_size(job),
         )
+        png_bytes = self._card_renderer.render_final_png(final_payload)
+        pdf_bytes = self._card_renderer.render_pdf_from_png(png_bytes)
+
+        self._asset_storage.save_bytes(relative_paths["png"], png_bytes)
+        self._asset_storage.save_bytes(relative_paths["pdf"], pdf_bytes)
 
         if not self._asset_storage.file_exists(relative_paths["png"]):
             raise HTTPException(
@@ -677,17 +927,15 @@ class WorkflowV1Service:
             },
         }
 
-    def _write_placeholder_preview_image(
+    def _save_internal_preview_asset(
         self,
         *,
         relative_path: str,
-        title: str,
-        subtitle: str,
-        body: str,
+        payload: PreviewCardRenderInput,
     ) -> None:
-        """Create and save a deterministic preview placeholder PNG."""
+        """Render and save one internal preview card image."""
 
-        image_bytes = self._create_placeholder_image_bytes(title=title, subtitle=subtitle, body=body)
+        image_bytes = self._card_renderer.render_preview_png(payload)
         self._asset_storage.save_bytes(relative_path, image_bytes)
         if not self._asset_storage.file_exists(relative_path):
             raise HTTPException(
@@ -695,83 +943,88 @@ class WorkflowV1Service:
                 detail=f"Failed to generate preview asset: {relative_path}",
             )
 
-    def _write_placeholder_card_assets(
-        self,
-        *,
-        job_id: str,
-        theme_name: str,
-        winner_content: str,
-        png_relative_path: str,
-        pdf_relative_path: str,
-    ) -> None:
-        """Create deterministic placeholder PNG/PDF assets for workflow v1."""
+    @staticmethod
+    def _resolve_rendering_options(job: dict[str, Any]) -> dict[str, Any]:
+        """Return optional rendering config stored inside output_spec.rendering."""
 
-        canvas = Image.new("RGB", (1280, 720), color=(250, 245, 236))
-        draw = ImageDraw.Draw(canvas)
-        title_font = self._load_font(size=52)
-        body_font = self._load_font(size=30)
-        meta_font = self._load_font(size=24)
+        output_spec = job.get("output_spec")
+        if not isinstance(output_spec, dict):
+            return {}
+        rendering = output_spec.get("rendering")
+        return rendering if isinstance(rendering, dict) else {}
 
-        draw.rectangle([(0, 0), (1280, 120)], fill=(38, 70, 83))
-        draw.text((40, 30), "eCardFactory Final Card", fill=(255, 255, 255), font=title_font)
+    def _resolve_theme_style(self, job: dict[str, Any]) -> str:
+        """Map theme/visual hints to one supported final card template."""
 
-        y = 150
-        draw.text((40, y), f"Theme: {theme_name or 'N/A'}", fill=(33, 33, 33), font=body_font)
-        y += 48
-        draw.text((40, y), f"Job ID: {job_id}", fill=(33, 33, 33), font=meta_font)
-        y += 46
-        draw.text((40, y), "Approved Winner Content:", fill=(33, 33, 33), font=meta_font)
-        y += 40
+        options = self._resolve_rendering_options(job)
+        explicit = str(options.get("theme_style") or "").strip().lower()
+        if explicit in {"minimal", "festive", "elegant", "playful"}:
+            return explicit
 
-        content = winner_content.strip() or "No approved content available."
-        for line in wrap(content, width=74):
-            draw.text((40, y), line, fill=(33, 33, 33), font=meta_font)
-            y += 34
-            if y > 680:
-                break
+        source = str(job.get("visual_style") or job.get("tone_style") or "").strip().lower()
+        if any(token in source for token in ("festive", "celebr", "party")):
+            return "festive"
+        if any(token in source for token in ("elegant", "classic", "formal")):
+            return "elegant"
+        if any(token in source for token in ("playful", "fun", "casual")):
+            return "playful"
+        return "minimal"
 
-        png_buffer = BytesIO()
-        canvas.save(png_buffer, format="PNG", optimize=True)
-        self._asset_storage.save_bytes(png_relative_path, png_buffer.getvalue())
+    def _resolve_export_size(self, job: dict[str, Any]) -> str:
+        """Resolve export size with default portrait 1080x1350."""
 
-        pdf_buffer = BytesIO()
-        canvas.save(pdf_buffer, format="PDF", resolution=100.0)
-        self._asset_storage.save_bytes(pdf_relative_path, pdf_buffer.getvalue())
+        options = self._resolve_rendering_options(job)
+        export_size = str(options.get("export_size") or "1080x1350").strip()
+        return export_size or "1080x1350"
 
-    def _create_placeholder_image_bytes(self, *, title: str, subtitle: str, body: str) -> bytes:
-        """Build a simple deterministic preview image payload."""
+    def _resolve_text_alignment(self, job: dict[str, Any]) -> str:
+        """Resolve final card text alignment from rendering options."""
 
-        canvas = Image.new("RGB", (1024, 576), color=(245, 247, 250))
-        draw = ImageDraw.Draw(canvas)
-        title_font = self._load_font(size=46)
-        subtitle_font = self._load_font(size=28)
-        body_font = self._load_font(size=24)
+        options = self._resolve_rendering_options(job)
+        alignment = str(options.get("text_alignment") or "center").strip().lower()
+        return alignment if alignment in {"left", "center", "right"} else "center"
 
-        draw.rectangle([(0, 0), (1024, 105)], fill=(23, 37, 84))
-        draw.text((30, 26), title, fill=(255, 255, 255), font=title_font)
-        draw.text((30, 130), subtitle, fill=(17, 24, 39), font=subtitle_font)
+    def _resolve_background_image_url(self, job: dict[str, Any]) -> str | None:
+        """Resolve optional background image URL from rendering options."""
 
-        y = 182
-        for line in wrap(body.strip() or "N/A", width=68):
-            draw.text((30, y), line, fill=(17, 24, 39), font=body_font)
-            y += 34
-            if y > 540:
-                break
+        options = self._resolve_rendering_options(job)
+        background_url = str(options.get("background_image_url") or "").strip()
+        return background_url or None
 
-        output = BytesIO()
-        canvas.save(output, format="PNG", optimize=True)
-        return output.getvalue()
+    def _resolve_final_title(self, job: dict[str, Any]) -> str | None:
+        """Resolve optional user-facing title for final card mode."""
+
+        options = self._resolve_rendering_options(job)
+        title = str(options.get("title") or "").strip()
+        if title:
+            return title
+        fallback = str(job.get("theme_name") or "").strip()
+        return fallback or None
+
+    def _resolve_final_signoff(self, job: dict[str, Any]) -> str | None:
+        """Resolve optional user-facing signoff for final card mode."""
+
+        options = self._resolve_rendering_options(job)
+        signoff = str(options.get("signoff") or "").strip()
+        return signoff or None
+
+    def _resolve_final_message(self, job: dict[str, Any]) -> str:
+        """Resolve final card message with optional explicit override."""
+
+        options = self._resolve_rendering_options(job)
+        message = str(options.get("message") or "").strip()
+        if message:
+            return message
+        return self._resolve_winning_content(job)
 
     @staticmethod
-    def _load_font(*, size: int):
-        """Load a readable font for placeholder asset rendering."""
+    def _shorten(text: str, *, max_len: int) -> str:
+        """Return text truncated to a safe single-line preview length."""
 
-        for font_name in ("DejaVuSans.ttf", "Arial.ttf", "Helvetica.ttf"):
-            try:
-                return ImageFont.truetype(font_name, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+        content = (text or "").strip()
+        if len(content) <= max_len:
+            return content
+        return f"{content[: max_len - 3].rstrip()}..."
 
     @staticmethod
     def _resolve_winning_content(job: dict[str, Any]) -> str:

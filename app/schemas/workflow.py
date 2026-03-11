@@ -29,6 +29,18 @@ class OutputSpec(BaseModel):
     structure: OutputStructure = Field(default_factory=OutputStructure)
 
 
+class RenderConfig(BaseModel):
+    """Rendering inputs for preview/final card composition."""
+
+    title: str | None = None
+    message: str | None = None
+    signoff: str | None = None
+    theme_style: Literal["minimal", "festive", "elegant", "playful"] = "minimal"
+    background_image_url: str | None = None
+    text_alignment: Literal["left", "center", "right"] = "center"
+    export_size: str = "1080x1350"
+
+
 class StartJobRequest(BaseModel):
     """Request payload used by n8n to start a new card job."""
 
@@ -40,6 +52,7 @@ class StartJobRequest(BaseModel):
     cultural_context: str
     output_spec: OutputSpec = Field(default_factory=OutputSpec)
     avoid_cliches: bool = True
+    rendering: RenderConfig = Field(default_factory=RenderConfig)
 
 
 class StartJobResponse(BaseModel):
@@ -157,3 +170,54 @@ class JobDebugResponse(BaseModel):
     candidates: list[CandidateDebugResponse] = Field(default_factory=list)
     approvals: list[ApprovalDebugResponse] = Field(default_factory=list)
     audit_log: list[AuditEventDebugResponse] = Field(default_factory=list)
+
+
+class JobListItemResponse(BaseModel):
+    """Compact workflow job row used by admin list views."""
+
+    job_id: str
+    theme_name: str
+    current_stage: str
+    status: str
+    content_approval_status: str = "pending"
+    image_approval_status: str = "pending"
+    final_approval_status: str = "pending"
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobAssetResponse(BaseModel):
+    """Asset metadata for one workflow job."""
+
+    asset_type: str
+    asset_url: str
+    relative_path: str | None = None
+    public_url: str | None = None
+    absolute_path: str | None = None
+    version: str | None = None
+    approved: bool = False
+    created_at: datetime | None = None
+
+
+class JobEventResponse(BaseModel):
+    """Audit event row for one workflow job."""
+
+    event_type: str
+    event_payload_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class JobArchiveResponse(BaseModel):
+    """Response payload for archive operation."""
+
+    job_id: str
+    status: str
+    updated_at: datetime
+
+
+class JobDeleteResponse(BaseModel):
+    """Response payload for delete operation."""
+
+    job_id: str
+    deleted: bool = True
+    deleted_files: int = 0

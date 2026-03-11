@@ -48,6 +48,21 @@ class InMemoryJobStore:
             record = self._jobs.get(job_id)
             return deepcopy(record) if record else None
 
+    async def list_jobs(self) -> list[dict[str, Any]]:
+        """Return all jobs sorted by created_at descending."""
+
+        async with self._lock:
+            rows = [deepcopy(record) for record in self._jobs.values()]
+        rows.sort(key=lambda item: item.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        return rows
+
+    async def delete_job(self, job_id: str) -> dict[str, Any] | None:
+        """Delete a job snapshot and return removed record."""
+
+        async with self._lock:
+            record = self._jobs.pop(job_id, None)
+            return deepcopy(record) if record else None
+
     async def apply_stage_update(
         self,
         *,
@@ -92,4 +107,3 @@ def get_job_store() -> InMemoryJobStore:
     """Return the shared singleton in-memory job store."""
 
     return _JOB_STORE_SINGLETON
-

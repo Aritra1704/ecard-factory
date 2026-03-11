@@ -286,3 +286,55 @@ def test_storage_health_endpoint(configured_env: dict[str, str]) -> None:
     payload = response.json()
     assert payload["backend"] == "filesystem"
     assert payload["writable"] is True
+
+
+def test_workflow_console_job_management_endpoints(configured_env: dict[str, str]) -> None:
+    """List/assets/events/archive/delete endpoints should support console workflows."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        assert start_response.status_code == 200
+        job_id = start_response.json()["job_id"]
+
+        list_response = client.get("/api/jobs")
+        assert list_response.status_code == 200
+        jobs = list_response.json()
+        assert any(item["job_id"] == job_id for item in jobs)
+
+        assets_response = client.get(f"/api/jobs/{job_id}/assets")
+        assert assets_response.status_code == 200
+        assert assets_response.json() == []
+
+        events_response = client.get(f"/api/jobs/{job_id}/events")
+        assert events_response.status_code == 200
+        assert len(events_response.json()) >= 1
+
+        archive_response = client.post(f"/api/jobs/{job_id}/archive")
+        assert archive_response.status_code == 200
+        assert archive_response.json()["status"] == "archived"
+
+        delete_response = client.delete(f"/api/jobs/{job_id}")
+        assert delete_response.status_code == 200
+        assert delete_response.json()["deleted"] is True
+
+        missing_response = client.get(f"/api/jobs/{job_id}")
+        assert missing_response.status_code == 404
+
+
+def test_storage_summary_endpoint(configured_env: dict[str, str]) -> None:
+    """Storage summary should return aggregate bytes/files and per-directory usage."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        response = client.get("/api/storage/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["backend"] == "filesystem"
+    assert payload["writable"] is True
+    assert isinstance(payload["total_files"], int)
+    assert isinstance(payload["total_bytes"], int)
+    assert isinstance(payload["directories"], list)
