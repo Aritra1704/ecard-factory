@@ -6,7 +6,7 @@ This workflow is a thin orchestration layer for approvals around card generation
 
 It is intentionally limited to:
 - manual trigger
-- localhost placeholder API calls
+- local/API-base-url configurable API calls
 - simulated human approvals using Set nodes
 - no retries, no waits, no schedules, no external notifications
 
@@ -48,7 +48,7 @@ Reason: eCardFactory is the facade and audit owner. ContentForge stays internal 
 
 2. `Start Job`
 - Type: `httpRequest` (POST)
-- Endpoint: `http://localhost:8080/api/jobs/start`
+- Endpoint: `{{$node["Runtime Config"].json.base_url}}/api/jobs/start`
 - Request body:
 ```json
 {
@@ -87,7 +87,7 @@ Reason: eCardFactory is the facade and audit owner. ContentForge stays internal 
 
 7. `Submit Content Approval`
 - Type: `httpRequest` (POST)
-- Endpoint: `http://localhost:8080/api/jobs/{{$json.job_id}}/content-approval`
+- Endpoint: `{{$node["Runtime Config"].json.base_url}}/api/jobs/{{$json.job_id}}/content-approval`
 - Request body:
 ```json
 {
@@ -116,7 +116,7 @@ Reason: eCardFactory is the facade and audit owner. ContentForge stays internal 
 
 12. `Submit Image Approval`
 - Type: `httpRequest` (POST)
-- Endpoint: `http://localhost:8080/api/jobs/{{$json.job_id}}/image-approval`
+- Endpoint: `{{$node["Runtime Config"].json.base_url}}/api/jobs/{{$json.job_id}}/image-approval`
 - Request body:
 ```json
 {
@@ -145,7 +145,7 @@ Reason: eCardFactory is the facade and audit owner. ContentForge stays internal 
 
 17. `Submit Final Approval`
 - Type: `httpRequest` (POST)
-- Endpoint: `http://localhost:8080/api/jobs/{{$json.job_id}}/final-approval`
+- Endpoint: `{{$node["Runtime Config"].json.base_url}}/api/jobs/{{$json.job_id}}/final-approval`
 - Request body:
 ```json
 {
@@ -171,12 +171,15 @@ Reason: eCardFactory is the facade and audit owner. ContentForge stays internal 
 1. Open n8n UI.
 2. Go to `Workflows`.
 3. Click `Import from File`.
-4. Select `docs/ecardfactory_n8n_workflow_v1.json`.
+4. Select `workflows/ecardfactory_n8n_workflow_v1.json`.
 5. Confirm workflow name is `eCardFactory Workflow v1`.
 6. Save workflow.
 7. Click `Execute workflow` to test with manual trigger.
 
-No credentials are required for import. The workflow uses localhost placeholder endpoints.
+No credentials are required for import. Set `base_url` in the `Runtime Config` node:
+
+- Local app: `http://localhost:8000`
+- n8n in Docker calling app on host machine: `http://host.docker.internal:8000`
 
 ## Required eCardFactory Responses for Flow Continuity
 
