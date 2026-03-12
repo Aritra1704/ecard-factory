@@ -33,6 +33,14 @@ body {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
+.boot-fallback {
+  min-height: 100vh;
+}
+
+.boot-fallback.hidden {
+  display: none;
+}
+
 a {
   color: inherit;
 }
@@ -178,6 +186,31 @@ a {
 
 .status-line.error {
   color: #fca5a5;
+}
+
+.status-stack {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-panel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(16, 27, 46, 0.6);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.status-panel.warning {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.status-panel.error {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.14);
+  color: #fecaca;
 }
 
 .cards-grid {

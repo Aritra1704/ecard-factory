@@ -24,6 +24,13 @@ This project includes local-run wrappers for eCardFactory, n8n, and (optionally)
 Expected URL:
 - `http://localhost:8080`
 
+Frontend build note:
+- Console UI is bundled locally into `app/static/console/app.js` (no CDN React scripts).
+- First-time setup:
+  - `npm install`
+  - `npm run build:console`
+- `./scripts/run-ecard.sh` also runs `npm run build:console` automatically.
+
 ## 3) Start ContentForge (optional)
 
 `./scripts/run-contentforge.sh`
@@ -56,3 +63,15 @@ In n8n:
 - For workflow testing, keep reload disabled:
   - `ECARD_RELOAD=false`
   - `CONTENTFORGE_RELOAD=false`
+
+## Frontend Troubleshooting
+
+If `/` shows only a background and no visible console:
+
+1. Verify main page and static JS are served:
+   - `curl -I http://localhost:8080/`
+   - `curl -I http://localhost:8080/static/console/app.js`
+2. Open browser DevTools console and check JS errors.
+3. Rebuild local bundle:
+   - `npm run build:console`
+4. A boot fallback panel now appears with explicit runtime errors if mount/render fails.

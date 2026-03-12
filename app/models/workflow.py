@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -175,9 +175,12 @@ class CardAsset(Base):
     )
     asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
     asset_url: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_root: Mapped[str] = mapped_column(Text, nullable=False)
     relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     absolute_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     version: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

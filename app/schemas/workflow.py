@@ -191,9 +191,12 @@ class JobAssetResponse(BaseModel):
 
     asset_type: str
     asset_url: str
+    storage_backend: str | None = None
+    storage_root: str | None = None
     relative_path: str | None = None
     public_url: str | None = None
     absolute_path: str | None = None
+    file_size_bytes: int | None = None
     version: str | None = None
     approved: bool = False
     created_at: datetime | None = None

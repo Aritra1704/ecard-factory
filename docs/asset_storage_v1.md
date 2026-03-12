@@ -1,15 +1,17 @@
 # Asset Storage v1
 
-## Purpose
+## Why Assets Are Outside The Repo
 
-eCardFactory v1 stores generated workflow assets through a configurable storage backend.
-Current backend: `filesystem`.
+Generated previews, final images, and PDFs can be large and high-volume. Keeping them inside the Git repository causes:
+- noisy untracked file churn
+- accidental commits of generated binaries
+- unnecessary repo growth
 
-This allows immediate use of an external SSD and keeps business logic ready for future cloud storage backends.
+For v1, eCardFactory stores physical files only in an external storage root (`ASSET_STORAGE_ROOT`).
 
-## Environment Variables
+## Required Environment Variables
 
-Add these values to `.env`:
+Set all three variables (no fallback defaults):
 
 ```env
 ASSET_STORAGE_BACKEND=filesystem
@@ -17,63 +19,61 @@ ASSET_STORAGE_ROOT=/Volumes/Ari_SSD_01/ecardfactory-assets
 ASSET_PUBLIC_BASE_URL=http://localhost:8080/assets
 ```
 
-Notes:
-- `ASSET_STORAGE_BACKEND` currently supports `filesystem`.
-- `ASSET_STORAGE_ROOT` can point to any writable local path, including external SSD.
-- `ASSET_PUBLIC_BASE_URL` must match your API host/port that serves `/assets`.
+Validation behavior:
+- `ASSET_STORAGE_BACKEND` must be `filesystem`.
+- `ASSET_STORAGE_ROOT` must be an absolute path.
+- Storage root inside the project repository is rejected at startup.
 
-## Directory Structure
+## Startup Validation
 
-Under `ASSET_STORAGE_ROOT`, eCardFactory creates:
+On app startup, eCardFactory:
+1. resolves storage root from `ASSET_STORAGE_ROOT`
+2. rejects repository-local roots
+3. creates required folders if missing
+4. verifies write access
+5. logs selected backend and resolved root path
 
-- `preview/`
-- `image/`
-- `final/`
-- `pdf/`
+If root setup fails or is not writable, startup fails loudly.
 
-Example files:
+## Filesystem Layout
 
-- `preview/{job_id}_content_preview.png`
-- `image/{job_id}_image_preview.png`
-- `final/{job_id}_final.png`
-- `pdf/{job_id}_final.pdf`
+All generated files are written under:
+- `{ASSET_STORAGE_ROOT}/preview/`
+- `{ASSET_STORAGE_ROOT}/image/`
+- `{ASSET_STORAGE_ROOT}/final/`
+- `{ASSET_STORAGE_ROOT}/pdf/`
+
+Example:
+- absolute path: `/Volumes/Ari_SSD_01/ecardfactory-assets/final/job_abc123_final.png`
+- public URL: `http://localhost:8080/assets/final/job_abc123_final.png`
+
+## FastAPI Asset Serving
+
+`/assets` is mounted from `ASSET_STORAGE_ROOT` (not from repo-local `assets/`).
+
+## DB Metadata And Cleanup
+
+Each `card_assets` row stores metadata needed for lifecycle cleanup:
+- `storage_backend`
+- `storage_root`
+- `relative_path`
+- `public_url`
+- `file_size_bytes`
+
+Delete flow (`DELETE /api/jobs/{job_id}`):
+1. delete job and related DB rows
+2. use saved asset metadata to resolve physical file paths
+3. remove physical files from storage root
+4. return deleted file count
+
+This keeps DB state and physical storage cleanup aligned.
 
 ## External SSD Setup (macOS)
 
-1. Connect and mount the SSD (example mount: `/Volumes/Ari_SSD_01`).
-2. Create the storage root:
+1. Connect SSD (example mount: `/Volumes/Ari_SSD_01`).
+2. Create root:
    - `mkdir -p /Volumes/Ari_SSD_01/ecardfactory-assets`
-3. Ensure your user has write access:
+3. Verify write access:
    - `touch /Volumes/Ari_SSD_01/ecardfactory-assets/.write_test && rm /Volumes/Ari_SSD_01/ecardfactory-assets/.write_test`
-4. Set `.env` values shown above.
+4. Set env vars above.
 5. Start eCardFactory.
-
-On startup, eCardFactory:
-- creates required subdirectories if missing
-- validates writability
-- logs selected backend and root path
-- fails startup if storage root is not writable
-
-## API and Serving
-
-- Final approval writes real final assets to configured storage root.
-- FastAPI serves files at `/assets` from `ASSET_STORAGE_ROOT`.
-- Storage debug endpoint:
-  - `GET /api/storage/health`
-  - returns backend, root path, writable status.
-
-## Migration Notes (Future Cloud Backends)
-
-The storage abstraction (`app/storage`) isolates backend-specific logic.
-To add a new backend (S3, R2, Supabase):
-
-1. Implement the storage interface methods.
-2. Add backend selection in the storage factory.
-3. Keep workflow service logic unchanged.
-
-Current DB metadata in `card_assets` supports:
-- `asset_type`
-- `relative_path`
-- `absolute_path` (optional)
-- `public_url`
-- `created_at`

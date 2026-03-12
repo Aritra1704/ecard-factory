@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
+
 import pytest
+
+TEST_ASSET_ROOT = str((Path(tempfile.gettempdir()) / "ecardfactory-test-assets").resolve())
 
 TEST_ENV_VARS = {
     "DATABASE_URL": "postgresql://local_user:local_pass@localhost:5432/ecard_factory",
@@ -20,7 +25,7 @@ TEST_ENV_VARS = {
     "AUTO_INIT_DB_ON_STARTUP": "false",
     "WORKFLOW_MEMORY_FALLBACK_ENABLED": "true",
     "ASSET_STORAGE_BACKEND": "filesystem",
-    "ASSET_STORAGE_ROOT": "./assets",
+    "ASSET_STORAGE_ROOT": TEST_ASSET_ROOT,
     "ASSET_PUBLIC_BASE_URL": "http://localhost:8080/assets",
 }
 

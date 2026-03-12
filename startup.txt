@@ -14,3 +14,12 @@ docker run --rm -it \
 
 
 chmod +x scripts/run-ecard.sh scripts/run-contentforge.sh scripts/run-n8n.sh
+
+ecard
+./scripts/run-ecard.sh
+
+contentforge
+./scripts/run-contentforge.sh
+
+n8n
+./scripts/run-n8n.sh

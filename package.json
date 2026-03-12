@@ -1,0 +1,18 @@
+{
+  "name": "ecardfactory-console",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local build pipeline for eCardFactory internal React console",
+  "scripts": {
+    "build:console": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=app/static/console/app.js",
+    "build:console:dev": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --sourcemap --outfile=app/static/console/app.js",
+    "watch:console": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --sourcemap --outfile=app/static/console/app.js --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.1",
+    "htm": "^3.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1"
+  }
+}

@@ -307,9 +307,12 @@ class WorkflowV1Service:
                 job_id,
                 asset_type="image_preview",
                 asset_url=str(updated.get("image_preview_url") or ""),
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
                 relative_path=image_preview_relative_path,
                 public_url=str(updated.get("image_preview_url") or ""),
                 absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
                 version="v1",
                 approved=False,
             )
@@ -455,9 +458,12 @@ class WorkflowV1Service:
                 job_id,
                 asset_type="final_preview",
                 asset_url=str(updated.get("final_preview_url") or ""),
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
                 relative_path=final_preview_relative_path,
                 public_url=str(updated.get("final_preview_url") or ""),
                 absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
                 version="v1",
                 approved=False,
             )
@@ -568,9 +574,12 @@ class WorkflowV1Service:
                     job_id,
                     asset_type="final_png",
                     asset_url=png_meta["public_url"],
+                    storage_backend=png_meta["storage_backend"],
+                    storage_root=png_meta["storage_root"],
                     relative_path=png_meta["relative_path"],
                     public_url=png_meta["public_url"],
                     absolute_path=png_meta["absolute_path"],
+                    file_size_bytes=png_meta["file_size_bytes"],
                     version="v1",
                     approved=True,
                 )
@@ -579,9 +588,12 @@ class WorkflowV1Service:
                     job_id,
                     asset_type="final_pdf",
                     asset_url=pdf_meta["public_url"],
+                    storage_backend=pdf_meta["storage_backend"],
+                    storage_root=pdf_meta["storage_root"],
                     relative_path=pdf_meta["relative_path"],
                     public_url=pdf_meta["public_url"],
                     absolute_path=pdf_meta["absolute_path"],
+                    file_size_bytes=pdf_meta["file_size_bytes"],
                     version="v1",
                     approved=True,
                 )
@@ -702,8 +714,9 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
 
         deleted_files = 0
-        for relative_path in sorted(self._collect_relative_asset_paths(deleted_snapshot)):
-            if self._delete_relative_asset(relative_path):
+        delete_targets = sorted(self._collect_asset_delete_targets(deleted_snapshot), key=lambda item: str(item))
+        for path in delete_targets:
+            if self._delete_asset_path(path):
                 deleted_files += 1
 
         logger.info(
@@ -791,32 +804,90 @@ class WorkflowV1Service:
             return normalized
         return "queued"
 
-    def _collect_relative_asset_paths(self, job: dict[str, Any]) -> set[str]:
-        """Collect known relative asset paths from job metadata."""
+    def _collect_asset_delete_targets(self, job: dict[str, Any]) -> set[Path]:
+        """Collect absolute file paths that should be removed for a deleted job."""
 
-        paths: set[str] = set()
+        targets: set[Path] = set()
+        default_root = self._asset_storage.get_absolute_path("")
+
         for asset in list(job.get("assets") or []):
-            relative_path = str(asset.get("relative_path") or "").strip().lstrip("/")
+            relative_path = self._normalize_relative_path(asset.get("relative_path"))
+            storage_root = str(asset.get("storage_root") or "").strip() or default_root
             if relative_path:
-                paths.add(relative_path)
+                resolved = self._resolve_storage_target(storage_root, relative_path)
+                if resolved is not None:
+                    targets.add(resolved)
+
+            absolute_path = str(asset.get("absolute_path") or "").strip()
+            if absolute_path:
+                resolved_absolute = self._resolve_known_absolute_target(
+                    absolute_path=absolute_path,
+                    allowed_storage_root=storage_root,
+                )
+                if resolved_absolute is not None:
+                    targets.add(resolved_absolute)
+
             for key in ("asset_url", "public_url"):
                 maybe_relative = self._relative_path_from_asset_url(str(asset.get(key) or ""))
                 if maybe_relative:
-                    paths.add(maybe_relative)
+                    resolved = self._resolve_storage_target(default_root, maybe_relative)
+                    if resolved is not None:
+                        targets.add(resolved)
 
         for key in ("image_preview_url", "final_preview_url"):
             maybe_relative = self._relative_path_from_asset_url(str(job.get(key) or ""))
             if maybe_relative:
-                paths.add(maybe_relative)
+                resolved = self._resolve_storage_target(default_root, maybe_relative)
+                if resolved is not None:
+                    targets.add(resolved)
 
         final_asset_urls = job.get("final_asset_urls")
         if isinstance(final_asset_urls, dict):
             for url in final_asset_urls.values():
                 maybe_relative = self._relative_path_from_asset_url(str(url or ""))
                 if maybe_relative:
-                    paths.add(maybe_relative)
+                    resolved = self._resolve_storage_target(default_root, maybe_relative)
+                    if resolved is not None:
+                        targets.add(resolved)
 
-        return paths
+        return targets
+
+    @staticmethod
+    def _normalize_relative_path(value: Any) -> str | None:
+        """Normalize one storage-relative path and block traversal attempts."""
+
+        candidate = str(value or "").strip().replace("\\", "/").lstrip("/")
+        if not candidate:
+            return None
+        if any(part == ".." for part in candidate.split("/")):
+            return None
+        return candidate
+
+    @staticmethod
+    def _resolve_storage_target(storage_root: str, relative_path: str) -> Path | None:
+        """Resolve one absolute storage path safely from `storage_root` + `relative_path`."""
+
+        try:
+            root = Path(storage_root).expanduser().resolve()
+            target = (root / relative_path).resolve()
+        except OSError:
+            return None
+        if root not in target.parents and target != root:
+            return None
+        return target
+
+    @staticmethod
+    def _resolve_known_absolute_target(*, absolute_path: str, allowed_storage_root: str) -> Path | None:
+        """Allow absolute-path deletes only for files under one known storage root."""
+
+        try:
+            configured_root = Path(allowed_storage_root).expanduser().resolve()
+            target = Path(absolute_path).expanduser().resolve()
+        except OSError:
+            return None
+        if configured_root not in target.parents and target != configured_root:
+            return None
+        return target
 
     @staticmethod
     def _relative_path_from_asset_url(value: str) -> str | None:
@@ -840,17 +911,16 @@ class WorkflowV1Service:
             return None
         return normalized
 
-    def _delete_relative_asset(self, relative_path: str) -> bool:
-        """Delete one relative asset file if present."""
+    def _delete_asset_path(self, absolute: Path) -> bool:
+        """Delete one absolute asset file if present."""
 
         try:
-            absolute = Path(self._asset_storage.get_absolute_path(relative_path))
             if not absolute.exists() or not absolute.is_file():
                 return False
             absolute.unlink(missing_ok=True)
             return True
         except (OSError, ValueError):
-            logger.exception("failed deleting asset path=%s", relative_path)
+            logger.exception("failed deleting asset path=%s", absolute)
             return False
 
     def build_image_prompt(self, job: dict[str, Any]) -> str:
@@ -885,7 +955,7 @@ class WorkflowV1Service:
             "pdf": f"pdf/{job_id}_final.pdf",
         }
 
-    def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, str]]:
+    def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Render polished final card assets and ensure files exist."""
 
         relative_paths = self._build_final_asset_relative_paths(job_id)
@@ -914,16 +984,23 @@ class WorkflowV1Service:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to generate final PDF asset",
             )
+        storage_root = self._asset_storage.get_absolute_path("")
         return {
             "png": {
+                "storage_backend": self._asset_storage.backend,
+                "storage_root": storage_root,
                 "relative_path": relative_paths["png"],
                 "public_url": self._asset_storage.get_public_url(relative_paths["png"]),
                 "absolute_path": self._asset_storage.get_absolute_path(relative_paths["png"]),
+                "file_size_bytes": self._read_file_size_bytes(relative_paths["png"]),
             },
             "pdf": {
+                "storage_backend": self._asset_storage.backend,
+                "storage_root": storage_root,
                 "relative_path": relative_paths["pdf"],
                 "public_url": self._asset_storage.get_public_url(relative_paths["pdf"]),
                 "absolute_path": self._asset_storage.get_absolute_path(relative_paths["pdf"]),
+                "file_size_bytes": self._read_file_size_bytes(relative_paths["pdf"]),
             },
         }
 
@@ -942,6 +1019,17 @@ class WorkflowV1Service:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to generate preview asset: {relative_path}",
             )
+
+    def _read_file_size_bytes(self, relative_path: str) -> int | None:
+        """Return file size in bytes for one stored relative path."""
+
+        try:
+            absolute = Path(self._asset_storage.get_absolute_path(relative_path))
+            if not absolute.exists() or not absolute.is_file():
+                return None
+            return absolute.stat().st_size
+        except OSError:
+            return None
 
     @staticmethod
     def _resolve_rendering_options(job: dict[str, Any]) -> dict[str, Any]:

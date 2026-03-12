@@ -4,7 +4,10 @@ This module centralizes configuration so the rest of the codebase reads from a
 single validated settings object instead of scattered environment access.
 """
 
-from pydantic import Field
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,12 +51,27 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="WORKFLOW_MEMORY_FALLBACK_ENABLED",
     )
-    asset_storage_backend: str = Field(default="filesystem", validation_alias="ASSET_STORAGE_BACKEND")
-    asset_storage_root: str = Field(default="./assets", validation_alias="ASSET_STORAGE_ROOT")
-    asset_public_base_url: str = Field(
-        default="http://localhost:8080/assets",
-        validation_alias="ASSET_PUBLIC_BASE_URL",
-    )
+    asset_storage_backend: Literal["filesystem"] = Field(..., validation_alias="ASSET_STORAGE_BACKEND")
+    asset_storage_root: str = Field(..., validation_alias="ASSET_STORAGE_ROOT")
+    asset_public_base_url: str = Field(..., validation_alias="ASSET_PUBLIC_BASE_URL")
+
+    @field_validator("asset_storage_root")
+    @classmethod
+    def _validate_asset_storage_root(cls, value: str) -> str:
+        root = value.strip()
+        if not root:
+            raise ValueError("ASSET_STORAGE_ROOT cannot be empty")
+        if not Path(root).expanduser().is_absolute():
+            raise ValueError("ASSET_STORAGE_ROOT must be an absolute path")
+        return root
+
+    @field_validator("asset_public_base_url")
+    @classmethod
+    def _validate_asset_public_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            raise ValueError("ASSET_PUBLIC_BASE_URL cannot be empty")
+        return normalized
 
     @property
     def active_db_url(self) -> str:

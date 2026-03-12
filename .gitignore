@@ -6,3 +6,4 @@ __pycache__/
 .coverage
 .DS_Store
 config/local.ports.env
+node_modules/

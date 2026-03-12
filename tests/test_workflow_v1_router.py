@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 import sys
 
@@ -50,9 +51,12 @@ def sample_start_payload() -> dict[str, object]:
 
 
 def _assets_dir() -> Path:
-    """Return the project-level assets directory used by workflow endpoints."""
+    """Return configured storage root used by workflow endpoints during tests."""
 
-    return Path(__file__).resolve().parents[1] / "assets"
+    root = os.environ.get("ASSET_STORAGE_ROOT", "").strip()
+    if not root:
+        raise RuntimeError("ASSET_STORAGE_ROOT is required for workflow router tests")
+    return Path(root).expanduser().resolve()
 
 
 def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:

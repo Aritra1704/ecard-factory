@@ -4,20 +4,43 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>eCardFactory Workflow Console</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="/static/console/console.css" />
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-router-dom@6/umd/react-router-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js" crossorigin></script>
   </head>
   <body>
+    <div id="boot-fallback" class="boot-fallback">
+      <div class="console-layout">
+        <aside class="console-sidebar">
+          <p class="brand-overline">eCardFactory</p>
+          <h1 class="brand-title">Internal Console</h1>
+          <p class="brand-subtitle">Workflow-first operations panel</p>
+          <nav class="sidebar-nav" aria-label="Primary">
+            <a class="nav-link active" href="/">Workflow Console</a>
+            <a class="nav-link" href="/compare">Compare Lab</a>
+          </nav>
+        </aside>
+        <main class="console-main">
+          <header class="page-head">
+            <div>
+              <p class="page-kicker">Workflow</p>
+              <h1 class="page-title">eCardFactory</h1>
+              <p class="page-description">Console is starting. If this remains visible, frontend scripts failed to load.</p>
+            </div>
+          </header>
+          <section class="section-panel">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Frontend Boot Status</h2>
+                <p class="section-copy" id="boot-fallback-message">Loading React console assets...</p>
+              </div>
+            </div>
+            <div class="empty-state">
+              If this persists, check browser console for local bundle/runtime errors.
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
     <div id="root"></div>
-    <script src="/static/console/app.js"></script>
+    <script src="/static/console/app.js" defer></script>
   </body>
 </html>
