@@ -141,3 +141,14 @@ def test_model_defaults_are_configured(configured_env: dict[str, str]) -> None:
     assert models.Listing.__table__.c.listed_at.server_default is not None
     assert models.Sale.__table__.c.sale_date.server_default is not None
     assert models.Watermark.__table__.c.registered_at.server_default is not None
+
+
+def test_theme_factory_tables_are_namespaced(configured_env: dict[str, str]) -> None:
+    """Theme Factory tables should stay isolated from legacy workflow theme tables."""
+
+    models = reload_models_module()
+
+    assert models.ThemeCatalog.__table__.name == "card_theme_catalog"
+    assert models.ThemeSchedule.__table__.name == "card_theme_schedule"
+    assert models.CardThemeOverride.__table__.name == "card_theme_overrides"
+    assert models.ThemeOverride.__table__.name == "theme_overrides"

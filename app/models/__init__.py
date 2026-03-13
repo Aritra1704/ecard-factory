@@ -9,7 +9,7 @@ from app.models.event import Event
 from app.models.listing import Listing
 from app.models.sale import Sale
 from app.models.social_post import SocialPost
-from app.models.theme import ThemeCatalog, ThemeOverride, ThemeSchedule, WeeklyTheme
+from app.models.theme import CardThemeOverride, ThemeCatalog, ThemeOverride, ThemeSchedule, WeeklyTheme
 from app.models.watermark import Watermark
 from app.models.workflow import (
     CardApproval,
@@ -33,6 +33,7 @@ __all__ = [
     "Sale",
     "SocialPost",
     "ThemeCatalog",
+    "CardThemeOverride",
     "ThemeOverride",
     "ThemeSchedule",
     "Watermark",

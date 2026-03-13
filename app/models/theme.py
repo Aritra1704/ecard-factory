@@ -73,9 +73,9 @@ class WeeklyTheme(Base):
 
 
 class ThemeCatalog(Base):
-    """Theme Factory catalog entry used by schedules and overrides."""
+    """Theme Factory catalog entry stored in a namespaced card theme table."""
 
-    __tablename__ = "theme_catalog"
+    __tablename__ = "card_theme_catalog"
     __table_args__ = {"schema": settings.db_schema}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -126,18 +126,21 @@ class ThemeCatalog(Base):
         back_populates="theme",
         cascade="all, delete-orphan",
     )
-    overrides: Mapped[list["ThemeOverride"]] = relationship(back_populates="theme")
+    overrides: Mapped[list["CardThemeOverride"]] = relationship(
+        back_populates="theme",
+        cascade="all, delete-orphan",
+    )
 
 
 class ThemeSchedule(Base):
     """One recurring or date-bound activation rule for a catalog theme."""
 
-    __tablename__ = "theme_schedule"
+    __tablename__ = "card_theme_schedule"
     __table_args__ = {"schema": settings.db_schema}
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     theme_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{settings.db_schema}.theme_catalog.id", ondelete="CASCADE"),
+        ForeignKey(f"{settings.db_schema}.card_theme_catalog.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -189,7 +192,7 @@ class ThemeSchedule(Base):
 
 
 class ThemeOverride(Base):
-    """Legacy override table extended to support Theme Factory override metadata."""
+    """Legacy override table used by the older daily planning workflow."""
 
     __tablename__ = "theme_overrides"
     __table_args__ = {"schema": settings.db_schema}
@@ -245,30 +248,8 @@ class ThemeOverride(Base):
         server_default=text("true"),
     )
 
-    theme_id: Mapped[int | None] = mapped_column(
-        ForeignKey(f"{settings.db_schema}.theme_catalog.id"),
-        nullable=True,
-        index=True,
-    )
-    override_scope: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    force_top_priority: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-
     daily_plans: Mapped[list["DailyContentPlan"]] = relationship(back_populates="override")
     event: Mapped["Event | None"] = relationship(back_populates="theme_overrides")
-    theme: Mapped[ThemeCatalog | None] = relationship(back_populates="overrides")
 
     @property
     def is_active(self) -> bool:
@@ -280,3 +261,40 @@ class ThemeOverride(Base):
             f"id={self.id!r}, override_type={self.override_type!r}, "
             f"theme_name={self.theme_name!r}, priority={self.priority!r})"
         )
+
+
+class CardThemeOverride(Base):
+    """Theme Factory override table isolated from the legacy workflow tables."""
+
+    __tablename__ = "card_theme_overrides"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    theme_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_theme_catalog.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    override_scope: Mapped[str] = mapped_column(String(120), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    force_top_priority: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    created_by: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="system",
+        server_default=text("'system'"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    theme: Mapped[ThemeCatalog] = relationship(back_populates="overrides")

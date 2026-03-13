@@ -1,4 +1,4 @@
-"""Database-backed Theme Factory service with read fallback seed data."""
+"""Database-backed Theme Factory service."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.theme import ThemeCatalog, ThemeOverride, ThemeSchedule
+from app.models.theme import CardThemeOverride, ThemeCatalog, ThemeSchedule
 from app.schemas.theme_factory import (
     ThemeCatalogCreate,
     ThemeCatalogResponse,
@@ -42,180 +42,6 @@ WEEKDAY_ORDER = [
     "friday",
     "saturday",
     "sunday",
-]
-
-_FALLBACK_CATALOG = [
-    ThemeCatalogResponse(
-        id=1,
-        theme_key="motivation-monday",
-        theme_name="Motivation Monday",
-        description="Weekly recurring motivation theme for Monday card runs.",
-        theme_type="evergreen",
-        cultural_context="global",
-        tone_style="conversational",
-        default_funny_pct=25,
-        default_emotion_pct=75,
-        default_audience="working professionals",
-        default_visual_style="minimal",
-        is_active=True,
-        priority=90,
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeCatalogResponse(
-        id=2,
-        theme_key="friendship-thursday",
-        theme_name="Friendship Thursday",
-        description="Weekly recurring friendship-focused greetings for Thursday.",
-        theme_type="evergreen",
-        cultural_context="global",
-        tone_style="warm",
-        default_funny_pct=35,
-        default_emotion_pct=65,
-        default_audience="friends",
-        default_visual_style="playful",
-        is_active=True,
-        priority=80,
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeCatalogResponse(
-        id=3,
-        theme_key="valentines-week",
-        theme_name="Valentine's Week",
-        description="Date-range campaign for February relationship and affection cards.",
-        theme_type="campaign",
-        cultural_context="global",
-        tone_style="romantic",
-        default_funny_pct=20,
-        default_emotion_pct=80,
-        default_audience="partners",
-        default_visual_style="elegant",
-        is_active=True,
-        priority=95,
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeCatalogResponse(
-        id=4,
-        theme_key="ramadan-month",
-        theme_name="Ramadan Month",
-        description="Month-long cultural campaign theme for Ramadan greetings.",
-        theme_type="calendar",
-        cultural_context="ramadan",
-        tone_style="heartfelt",
-        default_funny_pct=5,
-        default_emotion_pct=95,
-        default_audience="family and community",
-        default_visual_style="elegant",
-        is_active=True,
-        priority=96,
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeCatalogResponse(
-        id=5,
-        theme_key="india-trend-override",
-        theme_name="India Trend Override",
-        description="Urgent editorial override theme for an India-focused trend spike.",
-        theme_type="news",
-        cultural_context="india",
-        tone_style="energetic",
-        default_funny_pct=15,
-        default_emotion_pct=85,
-        default_audience="india audience",
-        default_visual_style="festive",
-        is_active=True,
-        priority=100,
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-]
-
-_FALLBACK_SCHEDULES = [
-    ThemeScheduleResponse(
-        id=1,
-        theme_id=1,
-        theme_key="motivation-monday",
-        theme_name="Motivation Monday",
-        schedule_type="weekly_recurring",
-        weekday_mask=["monday"],
-        month_mask=[],
-        region=None,
-        country=None,
-        is_active=True,
-        priority=90,
-        notes="Default Monday weekly recurring motivation slot.",
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeScheduleResponse(
-        id=2,
-        theme_id=2,
-        theme_key="friendship-thursday",
-        theme_name="Friendship Thursday",
-        schedule_type="weekly_recurring",
-        weekday_mask=["thursday"],
-        month_mask=[],
-        region=None,
-        country=None,
-        is_active=True,
-        priority=80,
-        notes="Friendship-focused weekly Thursday slot.",
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeScheduleResponse(
-        id=3,
-        theme_id=3,
-        theme_key="valentines-week",
-        theme_name="Valentine's Week",
-        schedule_type="date_range",
-        start_date=date(2026, 2, 7),
-        end_date=date(2026, 2, 14),
-        weekday_mask=[],
-        month_mask=[],
-        region=None,
-        country=None,
-        is_active=True,
-        priority=95,
-        notes="Week-long February affection campaign.",
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-    ThemeScheduleResponse(
-        id=4,
-        theme_id=4,
-        theme_key="ramadan-month",
-        theme_name="Ramadan Month",
-        schedule_type="monthly_recurring",
-        weekday_mask=[],
-        month_mask=[3],
-        region=None,
-        country=None,
-        is_active=True,
-        priority=96,
-        notes="Month-long recurring Ramadan campaign example.",
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        updated_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-    ),
-]
-
-_FALLBACK_OVERRIDES = [
-    ThemeOverrideResponse(
-        id=1,
-        theme_id=5,
-        theme_key="india-trend-override",
-        theme_name="India Trend Override",
-        override_scope="editorial",
-        start_at=datetime(2026, 8, 14, 0, 0, tzinfo=KOLKATA_TZ),
-        end_at=datetime(2026, 8, 16, 23, 59, 59, tzinfo=KOLKATA_TZ),
-        reason="Example urgent editorial trend override for India.",
-        force_top_priority=True,
-        created_by="seed",
-        created_at=datetime(2026, 3, 13, 0, 0, tzinfo=KOLKATA_TZ),
-        is_active=True,
-    )
 ]
 
 
@@ -335,8 +161,9 @@ class ThemeService:
         for schedule in record.schedules:
             schedule.is_active = False
             schedule.updated_at = datetime.now(tz=KOLKATA_TZ)
+        cutoff = datetime.now(tz=KOLKATA_TZ)
         for override in record.overrides:
-            override.active = False
+            override.end_at = cutoff
         try:
             await session.commit()
         except SQLAlchemyError as exc:
@@ -403,30 +230,16 @@ class ThemeService:
         if session is None:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Theme database unavailable")
         theme = await self._get_theme_record_or_404(session, payload.theme_id)
-        override_priority = theme.priority + (1000 if payload.force_top_priority else 0)
         localized_start = payload.start_at.astimezone(KOLKATA_TZ)
         localized_end = payload.end_at.astimezone(KOLKATA_TZ)
-        record = ThemeOverride(
-            override_type=payload.override_scope,
-            event_id=None,
-            theme_name=theme.theme_name,
-            tone_funny_pct=theme.default_funny_pct,
-            tone_emotion_pct=theme.default_emotion_pct,
-            prompt_keywords=[],
-            color_palette=[],
-            visual_style=theme.default_visual_style,
-            instagram_hashtags=[],
-            start_date=localized_start.date(),
-            end_date=localized_end.date(),
-            priority=override_priority,
-            created_by=payload.created_by,
-            active=True,
+        record = CardThemeOverride(
             theme_id=theme.id,
             override_scope=payload.override_scope,
             start_at=localized_start,
             end_at=localized_end,
             reason=payload.reason,
             force_top_priority=payload.force_top_priority,
+            created_by=payload.created_by,
         )
         session.add(record)
         try:
@@ -470,9 +283,9 @@ class ThemeService:
                 .order_by(ThemeSchedule.priority.desc(), ThemeSchedule.id.asc())
             )
             override_result = await session.execute(
-                select(ThemeOverride)
-                .options(selectinload(ThemeOverride.theme))
-                .order_by(ThemeOverride.priority.desc(), ThemeOverride.id.desc())
+                select(CardThemeOverride)
+                .options(selectinload(CardThemeOverride.theme))
+                .order_by(CardThemeOverride.created_at.desc(), CardThemeOverride.id.desc())
             )
         except Exception:  # noqa: BLE001
             logger.exception("theme factory database read failed; returning empty Theme Factory state")
@@ -530,12 +343,16 @@ class ThemeService:
         )
 
     @staticmethod
-    def _override_response(row: ThemeOverride, *, theme: ThemeCatalog | None) -> ThemeOverrideResponse:
+    def _override_response(row: CardThemeOverride, *, theme: ThemeCatalog | None) -> ThemeOverrideResponse:
+        is_active = True
+        current_dt = datetime.now(tz=KOLKATA_TZ)
+        if row.start_at > current_dt or row.end_at < current_dt:
+            is_active = False
         return ThemeOverrideResponse(
             id=row.id,
             theme_id=row.theme_id,
             theme_key=theme.theme_key if theme is not None else None,
-            theme_name=theme.theme_name if theme is not None else row.theme_name,
+            theme_name=theme.theme_name if theme is not None else None,
             override_scope=row.override_scope,
             start_at=row.start_at,
             end_at=row.end_at,
@@ -543,7 +360,7 @@ class ThemeService:
             force_top_priority=row.force_top_priority,
             created_by=row.created_by,
             created_at=row.created_at,
-            is_active=bool(row.active),
+            is_active=is_active,
         )
 
     def _resolve_for_date(

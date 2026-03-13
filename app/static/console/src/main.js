@@ -43,6 +43,17 @@ const html = htm.bind(React.createElement);
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }
 
+  function themeBucketLabel(bucket) {
+    const value = String(bucket || "everyday");
+    if (value === "special") {
+      return "Occasion";
+    }
+    if (value === "current_event") {
+      return "Current Event";
+    }
+    return "Everyday";
+  }
+
   function statusTone(statusValue) {
     const status = String(statusValue || "").toLowerCase();
     if (status === "completed" || status === "approved") {
@@ -1571,6 +1582,29 @@ const html = htm.bind(React.createElement);
       ),
       [catalog],
     );
+    const bucketSections = useMemo(
+      () => [
+        {
+          key: "everyday",
+          title: "Everyday Themes",
+          description: "Recurring weekday themes that keep the console stocked with steady daily runs.",
+          items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "everyday"),
+        },
+        {
+          key: "special",
+          title: "Occasion Themes",
+          description: "Date-range and seasonal campaign themes such as Ramadan, Holi, and Valentine's Week.",
+          items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "special"),
+        },
+        {
+          key: "current_event",
+          title: "Current Event Themes",
+          description: "Editorial and trend-driven themes that are intended to be activated through overrides.",
+          items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "current_event"),
+        },
+      ],
+      [catalog],
+    );
 
     async function loadThemeFactory() {
       setLoading(true);
@@ -1852,11 +1886,11 @@ const html = htm.bind(React.createElement);
             <p className="summary-value">${bucketCounts.everyday}</p>
           </article>
           <article className="summary-card">
-            <p className="summary-label">Special Themes</p>
+            <p className="summary-label">Occasion Themes</p>
             <p className="summary-value">${bucketCounts.special}</p>
           </article>
           <article className="summary-card">
-            <p className="summary-label">Current Events</p>
+            <p className="summary-label">Current Event Themes</p>
             <p className="summary-value">${bucketCounts.current_event}</p>
           </article>
           <article className="summary-card">
@@ -1881,7 +1915,7 @@ const html = htm.bind(React.createElement);
                   </article>
                   <article className="key-card">
                     <p className="key-label">Bucket</p>
-                    <p className="key-value">${humanize(resolvedTodayTheme.theme_bucket)}</p>
+                    <p className="key-value">${themeBucketLabel(resolvedTodayTheme.theme_bucket)}</p>
                   </article>
                   <article className="key-card">
                     <p className="key-label">Source</p>
@@ -1912,7 +1946,7 @@ const html = htm.bind(React.createElement);
           <div className="section-head">
             <div>
               <h2 className="section-title">Theme Catalog</h2>
-              <p className="section-copy">Source themes available for schedules, overrides, and direct daily resolution.</p>
+              <p className="section-copy">Source themes are grouped by the three operational buckets used by Theme Factory resolution.</p>
             </div>
             <div className="inline-actions">
               <button type="button" className="button primary" onClick=${() => openThemeEditor()}>Add Theme</button>
@@ -1921,52 +1955,66 @@ const html = htm.bind(React.createElement);
           ${catalog.length === 0
             ? html`<p className="empty-state">No theme catalog entries found.</p>`
             : html`
-                <div className="table-wrap">
-                  <table className="console-table">
-                    <thead>
-                      <tr>
-                        <th>theme_key</th>
-                        <th>theme_name</th>
-                        <th>theme_bucket</th>
-                        <th>theme_type</th>
-                        <th>audience</th>
-                        <th>visual_style</th>
-                        <th>priority</th>
-                        <th>status</th>
-                        <th>actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${catalog.map(
-                        (theme) => html`
-                          <tr key=${theme.id}>
-                            <td><code>${theme.theme_key}</code></td>
-                            <td>${theme.theme_name}</td>
-                            <td>${humanize(theme.theme_bucket)}</td>
-                            <td>${humanize(theme.theme_type)}</td>
-                            <td>${theme.default_audience}</td>
-                            <td>${theme.default_visual_style}</td>
-                            <td>${theme.priority}</td>
-                            <td><${StatusBadge} value=${theme.is_active ? "active" : "inactive"} /></td>
-                            <td>
-                              <div className="inline-actions">
-                                <button type="button" className="button" onClick=${() => openThemeEditor(theme)}>Edit</button>
-                                <button
-                                  type="button"
-                                  className="button danger"
-                                  onClick=${() => handleDeleteTheme(theme)}
-                                  disabled=${workingAction === `delete-theme:${theme.id}`}
-                                >
-                                  ${workingAction === `delete-theme:${theme.id}` ? "Deleting..." : "Delete"}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        `,
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                ${bucketSections.map(
+                  (section) => html`
+                    <section className="section-panel" key=${section.key}>
+                      <div className="section-head">
+                        <div>
+                          <h3 className="section-title">${section.title}</h3>
+                          <p className="section-copy">${section.description}</p>
+                        </div>
+                      </div>
+                      ${section.items.length === 0
+                        ? html`<p className="empty-state">No ${section.title.toLowerCase()} configured.</p>`
+                        : html`
+                            <div className="table-wrap">
+                              <table className="console-table">
+                                <thead>
+                                  <tr>
+                                    <th>theme_key</th>
+                                    <th>theme_name</th>
+                                    <th>theme_type</th>
+                                    <th>audience</th>
+                                    <th>visual_style</th>
+                                    <th>priority</th>
+                                    <th>status</th>
+                                    <th>actions</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  ${section.items.map(
+                                    (theme) => html`
+                                      <tr key=${theme.id}>
+                                        <td><code>${theme.theme_key}</code></td>
+                                        <td>${theme.theme_name}</td>
+                                        <td>${humanize(theme.theme_type)}</td>
+                                        <td>${theme.default_audience}</td>
+                                        <td>${theme.default_visual_style}</td>
+                                        <td>${theme.priority}</td>
+                                        <td><${StatusBadge} value=${theme.is_active ? "active" : "inactive"} /></td>
+                                        <td>
+                                          <div className="inline-actions">
+                                            <button type="button" className="button" onClick=${() => openThemeEditor(theme)}>Edit</button>
+                                            <button
+                                              type="button"
+                                              className="button danger"
+                                              onClick=${() => handleDeleteTheme(theme)}
+                                              disabled=${workingAction === `delete-theme:${theme.id}`}
+                                            >
+                                              ${workingAction === `delete-theme:${theme.id}` ? "Deleting..." : "Delete"}
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    `,
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          `}
+                    </section>
+                  `,
+                )}
               `}
         </section>
 
@@ -2120,8 +2168,8 @@ const html = htm.bind(React.createElement);
                         <label htmlFor="themeBucket">Theme Bucket</label>
                         <select id="themeBucket" value=${themeForm.theme_bucket} onChange=${(event) => setThemeForm((current) => ({ ...current, theme_bucket: event.target.value }))}>
                           <option value="everyday">everyday</option>
-                          <option value="special">special</option>
-                          <option value="current_event">current_event</option>
+                          <option value="special">occasion</option>
+                          <option value="current_event">current event</option>
                         </select>
                       </div>
                       <div className="form-field">
