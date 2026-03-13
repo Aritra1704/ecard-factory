@@ -8,6 +8,7 @@ from app.schemas.workflow import (
     ApprovalRequest,
     ContentApprovalRequest,
     ContentApprovalResponse,
+    DailyThemeJobResponse,
     FinalApprovalResponse,
     ImageApprovalRequest,
     ImageApprovalResponse,
@@ -17,12 +18,29 @@ from app.schemas.workflow import (
     JobDeleteResponse,
     JobEventResponse,
     JobListItemResponse,
+    RenderConfig,
     StartJobRequest,
     StartJobResponse,
 )
+from app.services.theme_service import ThemeService, get_theme_service
 from app.services.workflow_v1_service import WorkflowV1Service, get_workflow_v1_service
 
 router = APIRouter(prefix="/api/jobs", tags=["workflow-v1"])
+
+
+def _map_visual_style_to_template(visual_style: str) -> str:
+    """Map free-form schedule visual style to one supported rendering template."""
+
+    value = visual_style.strip().lower()
+    if value in {"minimal", "festive", "elegant", "playful"}:
+        return value
+    if any(token in value for token in ("party", "celebr", "festive")):
+        return "festive"
+    if any(token in value for token in ("formal", "classic", "elegant")):
+        return "elegant"
+    if any(token in value for token in ("playful", "fun", "casual")):
+        return "playful"
+    return "minimal"
 
 
 @router.get("", response_model=list[JobListItemResponse], status_code=status.HTTP_200_OK)
@@ -43,6 +61,35 @@ async def start_job(
     """Start a card job and return content approval payload for n8n."""
 
     return await service.start_job(payload)
+
+
+@router.post("/create-daily-theme-job", response_model=DailyThemeJobResponse, status_code=status.HTTP_201_CREATED)
+async def create_daily_theme_job(
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+    theme_service: ThemeService = Depends(get_theme_service),
+) -> DailyThemeJobResponse:
+    """Create one new workflow job using today's YAML-scheduled theme configuration."""
+
+    today_theme = theme_service.get_today_theme()
+    theme = today_theme.theme
+    start_payload = StartJobRequest(
+        theme_name=theme.theme_name,
+        tone_funny_pct=theme.tone_funny_pct,
+        tone_emotion_pct=theme.tone_emotion_pct,
+        tone_style=theme.tone_style,
+        audience=theme.audience,
+        cultural_context=theme.cultural_context,
+        avoid_cliches=theme.avoid_cliches,
+        rendering=RenderConfig(theme_style=_map_visual_style_to_template(theme.visual_style)),
+    )
+    created = await service.start_job(start_payload)
+    return DailyThemeJobResponse(
+        job_id=created.job_id,
+        status=created.status,
+        theme_name=theme.theme_name,
+        weekday=theme.weekday,
+        source=today_theme.source,
+    )
 
 
 @router.post("/{job_id}/content-approval", response_model=ContentApprovalResponse)

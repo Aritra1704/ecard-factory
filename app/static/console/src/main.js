@@ -162,17 +162,105 @@ const html = htm.bind(React.createElement);
     };
   }
 
+  function truncateText(value, maxLength = 140) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return "";
+    }
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, maxLength - 1).trimEnd()}...`;
+  }
+
+  function resolvePrimaryImageUrl(job) {
+    if (!job || typeof job !== "object") {
+      return "";
+    }
+    if (job.final_preview_url) {
+      return job.final_preview_url;
+    }
+    if (job.final_asset_urls && typeof job.final_asset_urls === "object" && job.final_asset_urls.png) {
+      return job.final_asset_urls.png;
+    }
+    if (job.image_preview_url) {
+      return job.image_preview_url;
+    }
+    return "";
+  }
+
+  function GeneratedECardTile({ job, actionState, onArchive, onDelete }) {
+    const imageUrl = resolvePrimaryImageUrl(job);
+    const contentFallback = truncateText(job.content_preview || "Content preview will appear here after generation.", 180);
+
+    return html`
+      <article className="ecard-tile">
+        <div className="ecard-media">
+          ${imageUrl
+            ? html`<img src=${imageUrl} alt=${job.theme_name || "Generated eCard"} loading="lazy" />`
+            : html`
+                <div className="ecard-placeholder">
+                  <p className="ecard-placeholder-kicker">Content Preview</p>
+                  <p className="ecard-placeholder-copy">${contentFallback}</p>
+                </div>
+              `}
+        </div>
+        <div className="ecard-body">
+          <div className="ecard-head">
+            <div>
+              <p className="ecard-theme">${job.theme_name || "Untitled Theme"}</p>
+              <p className="ecard-meta">${formatDate(job.created_at)}</p>
+            </div>
+            <${StatusBadge} value=${job.status} />
+          </div>
+          <div className="ecard-stage-row">
+            <span className="ecard-stage">${humanize(job.current_stage)}</span>
+            <span className="ecard-job-id">${job.job_id}</span>
+          </div>
+          <div className="ecard-actions">
+            <${Link} to=${`/jobs/${job.job_id}`} className="button-link">View Details<//>
+            ${imageUrl
+              ? html`<a href=${imageUrl} target="_blank" rel="noreferrer" className="button-link">Open Image</a>`
+              : html`<button type="button" className="button" disabled=${true}>Open Image</button>`}
+            <button
+              type="button"
+              className="button"
+              onClick=${() => onArchive(job)}
+              disabled=${actionState === `archive:${job.job_id}` || job.status === "archived"}
+            >
+              ${actionState === `archive:${job.job_id}` ? "Archiving..." : "Archive"}
+            </button>
+            <button
+              type="button"
+              className="button danger"
+              onClick=${() => onDelete(job)}
+              disabled=${actionState === `delete:${job.job_id}`}
+            >
+              ${actionState === `delete:${job.job_id}` ? "Deleting..." : "Delete"}
+            </button>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
   function WorkflowConsolePage() {
     const navigate = useNavigate();
     const [jobs, setJobs] = useState([]);
     const [storage, setStorage] = useState(null);
+    const [themeSchedule, setThemeSchedule] = useState([]);
+    const [todayTheme, setTodayTheme] = useState(null);
     const [jobsLoading, setJobsLoading] = useState(false);
     const [storageLoading, setStorageLoading] = useState(false);
+    const [themeLoading, setThemeLoading] = useState(false);
     const [jobsError, setJobsError] = useState("");
     const [storageError, setStorageError] = useState("");
+    const [themeError, setThemeError] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
     const [creating, setCreating] = useState(false);
+    const [creatingThemeJob, setCreatingThemeJob] = useState(false);
+    const [cardActionState, setCardActionState] = useState("");
     const [formValues, setFormValues] = useState({
       theme_name: "Internal Launch Sprint",
       audience: "operations team",
@@ -206,12 +294,16 @@ const html = htm.bind(React.createElement);
     async function loadDashboard() {
       setJobsLoading(true);
       setStorageLoading(true);
+      setThemeLoading(true);
       setJobsError("");
       setStorageError("");
+      setThemeError("");
 
-      const [jobsResult, storageResult] = await Promise.allSettled([
+      const [jobsResult, storageResult, scheduleResult, todayResult] = await Promise.allSettled([
         requestJSON("/api/jobs?limit=50"),
         requestJSON("/api/storage/summary"),
+        requestJSON("/api/themes"),
+        requestJSON("/api/themes/today"),
       ]);
 
       if (jobsResult.status === "fulfilled") {
@@ -228,9 +320,29 @@ const html = htm.bind(React.createElement);
         setStorageError(storageResult.reason?.message || "Unable to load storage summary");
       }
 
+      if (scheduleResult.status === "fulfilled") {
+        const scheduleRows = Array.isArray(scheduleResult.value?.schedule) ? scheduleResult.value.schedule : [];
+        setThemeSchedule(scheduleRows);
+      } else {
+        setThemeSchedule([]);
+        setThemeError(scheduleResult.reason?.message || "Unable to load weekly theme schedule");
+      }
+
+      if (todayResult.status === "fulfilled") {
+        setTodayTheme(todayResult.value?.theme || null);
+      } else {
+        setTodayTheme(null);
+        setThemeError(todayResult.reason?.message || "Unable to load today's theme");
+      }
+
       setJobsLoading(false);
       setStorageLoading(false);
-      const hasFailures = jobsResult.status !== "fulfilled" || storageResult.status !== "fulfilled";
+      setThemeLoading(false);
+      const hasFailures =
+        jobsResult.status !== "fulfilled" ||
+        storageResult.status !== "fulfilled" ||
+        scheduleResult.status !== "fulfilled" ||
+        todayResult.status !== "fulfilled";
       setStatusMessage(
         hasFailures
           ? `Refresh completed with errors at ${new Date().toLocaleTimeString()}`
@@ -267,6 +379,56 @@ const html = htm.bind(React.createElement);
       setFormValues((current) => ({ ...current, [key]: value }));
     }
 
+    async function handleGenerateTodayCard() {
+      setCreatingThemeJob(true);
+      setThemeError("");
+      try {
+        const created = await requestJSON("/api/jobs/create-daily-theme-job", {
+          method: "POST",
+        });
+        setStatusMessage(`Created ${created.job_id} from today's theme`);
+        await loadDashboard();
+        navigate(`/jobs/${created.job_id}`);
+      } catch (requestError) {
+        setThemeError(requestError.message || "Unable to create today's themed job");
+      } finally {
+        setCreatingThemeJob(false);
+      }
+    }
+
+    async function handleArchiveJob(job) {
+      setCardActionState(`archive:${job.job_id}`);
+      setJobsError("");
+      try {
+        await requestJSON(`/api/jobs/${job.job_id}/archive`, { method: "POST" });
+        setStatusMessage(`Archived ${job.job_id}`);
+        await loadDashboard();
+      } catch (requestError) {
+        setJobsError(requestError.message || "Unable to archive job");
+      } finally {
+        setCardActionState("");
+      }
+    }
+
+    async function handleDeleteJob(job) {
+      const confirmed = window.confirm(`Delete ${job.job_id} and associated files?`);
+      if (!confirmed) {
+        return;
+      }
+
+      setCardActionState(`delete:${job.job_id}`);
+      setJobsError("");
+      try {
+        await requestJSON(`/api/jobs/${job.job_id}`, { method: "DELETE" });
+        setStatusMessage(`Deleted ${job.job_id}`);
+        await loadDashboard();
+      } catch (requestError) {
+        setJobsError(requestError.message || "Unable to delete job");
+      } finally {
+        setCardActionState("");
+      }
+    }
+
     return html`
       <section>
         <header className="page-head">
@@ -274,19 +436,26 @@ const html = htm.bind(React.createElement);
             <p className="page-kicker">Workflow</p>
             <h1 className="page-title">Workflow Console</h1>
             <p className="page-description">
-              Internal operations dashboard for job lifecycle monitoring and intervention.
+              Generated eCards, workflow state, and intervention controls in one internal console.
             </p>
           </div>
           <div className="inline-actions">
             <button type="button" className="button primary" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
-            <button type="button" className="button" onClick=${loadDashboard} disabled=${jobsLoading || storageLoading}>Refresh</button>
+            <button
+              type="button"
+              className="button"
+              onClick=${loadDashboard}
+              disabled=${jobsLoading || storageLoading || themeLoading}
+            >
+              Refresh
+            </button>
             <${Link} to="/compare" className="button-link">Open Compare Lab<//>
           </div>
         </header>
 
         ${statusMessage ? html`<p className="status-line">${statusMessage}</p>` : null}
 
-        ${(jobsLoading || storageLoading || jobsError || storageError)
+        ${(jobsLoading || storageLoading || themeLoading || jobsError || storageError || themeError)
           ? html`
               <div className="status-stack">
                 ${jobsLoading
@@ -295,10 +464,14 @@ const html = htm.bind(React.createElement);
                 ${storageLoading
                   ? html`<div className="status-panel warning">Loading storage summary from /api/storage/summary...</div>`
                   : null}
+                ${themeLoading
+                  ? html`<div className="status-panel warning">Loading themes from /api/themes...</div>`
+                  : null}
                 ${jobsError ? html`<div className="status-panel error">Unable to load jobs: ${jobsError}</div>` : null}
                 ${storageError
                   ? html`<div className="status-panel error">Unable to load storage summary: ${storageError}</div>`
                   : null}
+                ${themeError ? html`<div className="status-panel error">Theme error: ${themeError}</div>` : null}
               </div>
             `
           : null}
@@ -323,6 +496,99 @@ const html = htm.bind(React.createElement);
         </section>
 
         <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Generated eCards</h2>
+              <p className="section-copy">Final previews, generated image previews, and content-first placeholders for each job.</p>
+            </div>
+          </div>
+          ${jobsLoading
+            ? html`<p className="empty-state">Loading generated eCards...</p>`
+            : jobsError
+              ? html`<p className="empty-state">Unable to load generated eCards. Check API availability and refresh.</p>`
+              : jobs.length === 0
+                ? html`
+                    <div className="empty-state">
+                      <p className="empty-state-title">No generated eCards yet</p>
+                      <p className="empty-state-copy">Start a workflow job to generate the first card for this console.</p>
+                      <button type="button" className="button primary" onClick=${() => setCreateOpen(true)}>
+                        Create New Card Job
+                      </button>
+                    </div>
+                  `
+                : html`
+                    <div className="ecard-grid">
+                      ${jobs.map(
+                        (job) => html`
+                          <${GeneratedECardTile}
+                            key=${job.job_id}
+                            job=${job}
+                            actionState=${cardActionState}
+                            onArchive=${handleArchiveJob}
+                            onDelete=${handleDeleteJob}
+                          />
+                        `,
+                      )}
+                    </div>
+                  `}
+        </section>
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Weekly Theme Schedule</h2>
+              <p className="section-copy">
+                ${todayTheme
+                  ? `Today's Theme: ${todayTheme.theme_name} (${humanize(todayTheme.weekday)})`
+                  : "Today's Theme: Unavailable"}
+              </p>
+            </div>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="button primary"
+                onClick=${handleGenerateTodayCard}
+                disabled=${creatingThemeJob || themeLoading || Boolean(themeError)}
+              >
+                ${creatingThemeJob ? "Generating..." : "Generate Today's Card"}
+              </button>
+            </div>
+          </div>
+          ${themeLoading
+            ? html`<p className="empty-state">Loading weekly schedule...</p>`
+            : themeSchedule.length === 0
+              ? html`<p className="empty-state">No theme schedule found.</p>`
+              : html`
+                  <div className="table-wrap">
+                    <table className="console-table">
+                      <thead>
+                        <tr>
+                          <th>weekday</th>
+                          <th>theme_name</th>
+                          <th>tone_style</th>
+                          <th>funny %</th>
+                          <th>emotion %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${themeSchedule.map(
+                          (row) => html`
+                            <tr key=${row.weekday}>
+                              <td>${humanize(row.weekday)}</td>
+                              <td>${row.theme_name || "-"}</td>
+                              <td>${row.tone_style || "-"}</td>
+                              <td>${row.tone_funny_pct ?? "-"}</td>
+                              <td>${row.tone_emotion_pct ?? "-"}</td>
+                            </tr>
+                          `,
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+        </section>
+
+        <section className="section-panel section-subdued">
           <div className="section-head">
             <div>
               <h2 className="section-title">Recent Jobs</h2>
@@ -546,6 +812,8 @@ const html = htm.bind(React.createElement);
       return rows;
     }, [job]);
 
+    const finalCardUrl = job ? resolvePrimaryImageUrl(job) : "";
+
     async function handleArchive() {
       if (!jobId) {
         return;
@@ -671,7 +939,7 @@ const html = htm.bind(React.createElement);
                   <div className="section-head">
                     <div>
                       <h2 className="section-title">Saved Assets</h2>
-                      <p className="section-copy">Persisted files and metadata references.</p>
+                      <p className="section-copy">Persisted file paths, URLs, and metadata references.</p>
                     </div>
                   </div>
                   ${assets.length === 0
@@ -682,7 +950,9 @@ const html = htm.bind(React.createElement);
                             <thead>
                               <tr>
                                 <th>asset_type</th>
-                                <th>asset_url</th>
+                                <th>public_url</th>
+                                <th>relative_path</th>
+                                <th>absolute_path</th>
                                 <th>approved</th>
                                 <th>created_at</th>
                               </tr>
@@ -697,6 +967,8 @@ const html = htm.bind(React.createElement);
                                         ? html`<a className="job-link" href=${asset.asset_url} target="_blank" rel="noreferrer">open</a>`
                                         : "-"}
                                     </td>
+                                    <td><code>${asset.relative_path || "-"}</code></td>
+                                    <td><code>${asset.absolute_path || "-"}</code></td>
                                     <td><${StatusBadge} value=${asset.approved ? "approved" : "pending"} /></td>
                                     <td>${formatDate(asset.created_at)}</td>
                                   </tr>
@@ -712,12 +984,65 @@ const html = htm.bind(React.createElement);
               <section className="section-panel">
                 <div className="section-head">
                   <div>
-                    <h2 className="section-title">Preview and Final Images</h2>
-                    <p className="section-copy">Inline preview assets if available.</p>
+                    <h2 className="section-title">Generated Card Preview</h2>
+                    <p className="section-copy">Best available final or preview image for this job.</p>
+                  </div>
+                </div>
+                ${finalCardUrl
+                  ? html`
+                      <div className="hero-preview">
+                        <a href=${finalCardUrl} target="_blank" rel="noreferrer">
+                          <img src=${finalCardUrl} alt=${job.theme_name || "Generated eCard"} loading="lazy" />
+                        </a>
+                      </div>
+                    `
+                  : html`<p className="empty-state">No preview or final image available yet.</p>`}
+              </section>
+
+              <section className="two-column">
+                <section className="section-panel">
+                  <div className="section-head">
+                    <div>
+                      <h2 className="section-title">Image Preview</h2>
+                      <p className="section-copy">Intermediate generated image if available.</p>
+                    </div>
+                  </div>
+                  ${job.image_preview_url
+                    ? html`
+                        <div className="image-grid image-grid-single">
+                          <article className="image-card">
+                            <a href=${job.image_preview_url} target="_blank" rel="noreferrer">
+                              <img src=${job.image_preview_url} alt="Image Preview" loading="lazy" />
+                            </a>
+                            <p className="image-caption">Image Preview</p>
+                          </article>
+                        </div>
+                      `
+                    : html`<p className="empty-state">No image preview available yet.</p>`}
+                </section>
+
+                <section className="section-panel">
+                  <div className="section-head">
+                    <div>
+                      <h2 className="section-title">Content Preview</h2>
+                      <p className="section-copy">Approved or generated message copy stored on the job.</p>
+                    </div>
+                  </div>
+                  ${job.content_preview
+                    ? html`<div className="content-preview-block">${job.content_preview}</div>`
+                    : html`<p className="empty-state">No content preview stored yet.</p>`}
+                </section>
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Additional Previews</h2>
+                    <p className="section-copy">All preview variants and exported images discovered on this job.</p>
                   </div>
                 </div>
                 ${previewImages.length === 0
-                  ? html`<p className="empty-state">No preview or final image available yet.</p>`
+                  ? html`<p className="empty-state">No preview variants available yet.</p>`
                   : html`
                       <div className="image-grid">
                         ${previewImages.map(

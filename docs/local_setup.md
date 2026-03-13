@@ -63,6 +63,14 @@ In n8n:
 - For workflow testing, keep reload disabled:
   - `ECARD_RELOAD=false`
   - `CONTENTFORGE_RELOAD=false`
+- Weekly theme schedule file:
+  - `config/theme_schedule.yaml`
+- Theme endpoints:
+  - `GET /api/themes`
+  - `GET /api/themes/today`
+  - `POST /api/jobs/create-daily-theme-job`
+- Optional n8n cron example:
+  - `workflows/n8n/ecardfactory_daily_theme_cron_example.json`
 
 ## Frontend Troubleshooting
 

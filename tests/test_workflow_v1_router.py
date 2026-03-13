@@ -124,6 +124,15 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         png_response = client.get(f"/assets/final/{job_id}_final.png")
         assert png_response.status_code == 200
 
+        list_response = client.get("/api/jobs")
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+        list_item = next(item for item in list_payload if item["job_id"] == job_id)
+        assert list_item["content_preview"]
+        assert list_item["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
+        assert list_item["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
+        assert list_item["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
+
         get_after_final = client.get(f"/api/jobs/{job_id}")
         assert get_after_final.status_code == 200
         debug_payload = get_after_final.json()
@@ -342,3 +351,35 @@ def test_storage_summary_endpoint(configured_env: dict[str, str]) -> None:
     assert isinstance(payload["total_files"], int)
     assert isinstance(payload["total_bytes"], int)
     assert isinstance(payload["directories"], list)
+
+
+def test_theme_schedule_endpoints_and_daily_theme_job(configured_env: dict[str, str]) -> None:
+    """Theme APIs should expose schedule/today and create a job from today's theme."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        schedule_response = client.get("/api/themes")
+        assert schedule_response.status_code == 200
+        schedule_payload = schedule_response.json()
+        assert schedule_payload["timezone"] == "Asia/Kolkata"
+        assert isinstance(schedule_payload["schedule"], list)
+        assert len(schedule_payload["schedule"]) == 7
+
+        today_response = client.get("/api/themes/today")
+        assert today_response.status_code == 200
+        today_payload = today_response.json()
+        assert today_payload["source"] == "theme_schedule"
+        assert isinstance(today_payload["theme"]["theme_name"], str)
+
+        create_response = client.post("/api/jobs/create-daily-theme-job")
+        assert create_response.status_code == 201
+        create_payload = create_response.json()
+        assert create_payload["job_id"].startswith("job_")
+        assert create_payload["theme_name"] == today_payload["theme"]["theme_name"]
+        assert create_payload["source"] == "theme_schedule"
+
+        job_response = client.get(f"/api/jobs/{create_payload['job_id']}")
+        assert job_response.status_code == 200
+        job_payload = job_response.json()
+        assert job_payload["theme_name"] == today_payload["theme"]["theme_name"]

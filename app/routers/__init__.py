@@ -12,6 +12,7 @@ from app.routers.planning import router as planning_router
 from app.routers.storage import router as storage_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
+from app.routers.themes_api import router as themes_api_router
 from app.routers.workflow_v1 import router as workflow_v1_router
 
 api_router = APIRouter()
@@ -25,6 +26,7 @@ api_router.include_router(planning_router)
 api_router.include_router(storage_router)
 api_router.include_router(telegram_router)
 api_router.include_router(theme_router)
+api_router.include_router(themes_api_router)
 api_router.include_router(workflow_v1_router)
 
 __all__ = [
@@ -38,5 +40,6 @@ __all__ = [
     "storage",
     "telegram",
     "theme",
+    "themes_api",
     "workflow_v1",
 ]

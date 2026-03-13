@@ -65,6 +65,16 @@ class StartJobResponse(BaseModel):
     approval_message: str
 
 
+class DailyThemeJobResponse(BaseModel):
+    """Response returned when creating one job from today's weekly theme."""
+
+    job_id: str
+    status: str
+    theme_name: str
+    weekday: str
+    source: str = "theme_schedule"
+
+
 class ApprovalRequest(BaseModel):
     """Final approval payload, validated in service for explicit 400 errors."""
 
@@ -179,6 +189,10 @@ class JobListItemResponse(BaseModel):
     theme_name: str
     current_stage: str
     status: str
+    content_preview: str | None = None
+    image_preview_url: str | None = None
+    final_preview_url: str | None = None
+    final_asset_urls: dict[str, str] | None = None
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
     final_approval_status: str = "pending"

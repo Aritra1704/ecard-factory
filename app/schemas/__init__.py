@@ -19,6 +19,7 @@ from app.schemas.theme import (
     ThemeOverrideResponse,
     ThemeResolved,
 )
+from app.schemas.theme_schedule import TodayThemeResponse, WeeklyThemeDay, WeeklyThemeScheduleResponse
 from app.schemas.telegram import (
     FinalApprovalRequest,
     ImageApprovalRequest,
@@ -34,6 +35,7 @@ from app.schemas.workflow import (
     ApprovalRequest,
     ContentApprovalRequest,
     ContentApprovalResponse,
+    DailyThemeJobResponse,
     FinalApprovalResponse,
     FinalAssetUrls,
     ImageApprovalRequest,
@@ -78,12 +80,16 @@ __all__ = [
     "ThemeOverrideCreate",
     "ThemeOverrideResponse",
     "ThemeResolved",
+    "TodayThemeResponse",
+    "WeeklyThemeDay",
+    "WeeklyThemeScheduleResponse",
     "StorageDirectorySummary",
     "StorageHealthResponse",
     "StorageSummaryResponse",
     "ApprovalRequest",
     "ContentApprovalRequest",
     "ContentApprovalResponse",
+    "DailyThemeJobResponse",
     "FinalApprovalResponse",
     "FinalAssetUrls",
     "ImageApprovalRequest",

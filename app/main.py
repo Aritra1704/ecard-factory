@@ -24,6 +24,7 @@ from app.routers.planning import router as planning_router
 from app.routers.storage import router as storage_router
 from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
+from app.routers.themes_api import router as themes_api_router
 from app.routers.workflow_v1 import router as workflow_v1_router
 from app.storage import get_asset_storage, initialize_asset_storage_or_raise
 
@@ -90,6 +91,7 @@ app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR), check_dir=False), na
 app.include_router(health_router)
 app.include_router(storage_router)
 app.include_router(workflow_v1_router)
+app.include_router(themes_api_router)
 app.include_router(theme_router, prefix="/theme")
 app.include_router(assembly_router, prefix="/assembly")
 app.include_router(cards_router, prefix="/cards")

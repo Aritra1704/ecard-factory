@@ -1,0 +1,79 @@
+# Weekly theme schedule used by /api/themes and daily-theme job creation.
+# Keys must be weekday names in lowercase.
+
+monday:
+  theme_name: "Monday Momentum"
+  audience: "working professionals"
+  cultural_context: "global"
+  tone_style: "conversational"
+  tone_funny_pct: 20
+  tone_emotion_pct: 80
+  visual_style: "minimal"
+  prompt_keywords: ["fresh start", "confidence", "focus"]
+  avoid_cliches: true
+
+tuesday:
+  theme_name: "Gratitude Tuesday"
+  audience: "friends and family"
+  cultural_context: "global"
+  tone_style: "warm"
+  tone_funny_pct: 15
+  tone_emotion_pct: 85
+  visual_style: "elegant"
+  prompt_keywords: ["gratitude", "appreciation", "kindness"]
+  avoid_cliches: true
+
+wednesday:
+  theme_name: "Midweek Cheer"
+  audience: "teammates"
+  cultural_context: "global"
+  tone_style: "playful"
+  tone_funny_pct: 35
+  tone_emotion_pct: 65
+  visual_style: "playful"
+  prompt_keywords: ["encouragement", "humor", "midweek"]
+  avoid_cliches: true
+
+thursday:
+  theme_name: "Thankful Thursday"
+  audience: "community"
+  cultural_context: "global"
+  tone_style: "heartfelt"
+  tone_funny_pct: 10
+  tone_emotion_pct: 90
+  visual_style: "elegant"
+  prompt_keywords: ["thankful", "support", "connection"]
+  avoid_cliches: true
+
+friday:
+  theme_name: "Friday Celebration"
+  audience: "friends"
+  cultural_context: "global"
+  tone_style: "fun"
+  tone_funny_pct: 45
+  tone_emotion_pct: 55
+  visual_style: "festive"
+  prompt_keywords: ["celebration", "weekend", "joy"]
+  avoid_cliches: true
+
+saturday:
+  theme_name: "Weekend Vibes"
+  audience: "family"
+  cultural_context: "global"
+  tone_style: "casual"
+  tone_funny_pct: 40
+  tone_emotion_pct: 60
+  visual_style: "playful"
+  prompt_keywords: ["relax", "fun", "togetherness"]
+  avoid_cliches: true
+
+sunday:
+  theme_name: "Sunday Reflection"
+  audience: "loved ones"
+  cultural_context: "global"
+  tone_style: "calm"
+  tone_funny_pct: 5
+  tone_emotion_pct: 95
+  visual_style: "minimal"
+  prompt_keywords: ["reflection", "renewal", "hope"]
+  avoid_cliches: true
