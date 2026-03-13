@@ -66,9 +66,13 @@ from app.schemas.workflow import (
     RenderedShortlistAssetResponse,
     RenderConfig,
     ShortlistEntryResponse,
+    StageActionResponse,
+    StageRerunRequest,
     StageRerunResponse,
+    StartFromThemeRequest,
     StartJobRequest,
     StartJobResponse,
+    ThemeJobCreateRequest,
 )
 
 __all__ = [
@@ -136,7 +140,11 @@ __all__ = [
     "RenderedShortlistAssetResponse",
     "RenderConfig",
     "ShortlistEntryResponse",
+    "StageActionResponse",
+    "StageRerunRequest",
     "StageRerunResponse",
+    "StartFromThemeRequest",
     "StartJobRequest",
     "StartJobResponse",
+    "ThemeJobCreateRequest",
 ]

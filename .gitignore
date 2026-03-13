@@ -7,3 +7,4 @@ __pycache__/
 .DS_Store
 config/local.ports.env
 node_modules/
+assets/

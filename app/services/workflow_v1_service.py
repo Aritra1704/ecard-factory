@@ -32,6 +32,8 @@ from app.schemas.workflow import (
     RenderShortlistResponse,
     RenderedShortlistAssetResponse,
     ShortlistEntryResponse,
+    StageActionResponse,
+    StageRerunRequest,
     StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
@@ -53,48 +55,46 @@ class StubContentForgeClient:
     the same `generate_and_judge` output contract.
     """
 
+    _MODEL_PROFILES = [
+        ("qwen2.5:7b-instruct", "ollama", "clean and balanced"),
+        ("llama3.1:8b", "ollama", "uplifting and direct"),
+        ("mistral:7b", "ollama", "warm and expressive"),
+    ]
+
     async def generate_and_judge(self, payload: StartJobRequest) -> dict[str, Any]:
         """Generate a pooled candidate set, judge it, and return a top-10 shortlist."""
 
         theme = payload.theme_name.strip()
-        audience = payload.audience.strip()
-        context = payload.cultural_context.strip()
         tone = payload.tone_style.strip() or "conversational"
         funny_pct = int(payload.tone_funny_pct)
         emotion_pct = int(payload.tone_emotion_pct)
-
-        model_profiles = [
-            ("qwen2.5:7b-instruct", "ollama", "clean and balanced"),
-            ("llama3.1:8b", "ollama", "uplifting and direct"),
-            ("mistral:7b", "ollama", "warm and expressive"),
-        ]
-        openings = [
-            "Today deserves a message that feels personal and alive.",
-            "This card should feel immediate, human, and memorable.",
-            "The right note here should land with warmth and clarity.",
-            "This moment calls for language that feels earned, not generic.",
-            "The message should feel intimate without becoming heavy.",
-        ]
-        closings = [
-            "Let the card close with a sense of momentum.",
-            "Keep the finish sincere and easy to remember.",
-            "The last line should feel shareable and warm.",
-            "End with a line that sounds spoken, not templated.",
-            "Close with confidence, then leave room for feeling.",
-        ]
+        copy_style = self._resolve_copy_style(payload)
+        target_words = self._resolve_target_words(payload)
 
         candidates: list[dict[str, Any]] = []
-        for model_index, (model, backend, style_hint) in enumerate(model_profiles):
+        for model_index, (model, backend, style_hint) in enumerate(self._MODEL_PROFILES):
             for variant in range(10):
                 raw_score = round(0.72 + (model_index * 0.04) + ((9 - variant) * 0.009), 4)
-                judge_bonus = round(((variant % 5) * 0.008) + (emotion_pct / 1000) - (funny_pct / 2000), 4)
+                brevity_bonus = 0.02 if target_words <= 18 else 0.012 if target_words <= 24 else 0.0
+                judge_bonus = round(
+                    ((variant % 5) * 0.008)
+                    + (emotion_pct / 1000)
+                    + (funny_pct / 3000)
+                    + brevity_bonus,
+                    4,
+                )
                 judged_score = round(raw_score + 0.08 + judge_bonus, 4)
-                opening = openings[(variant + model_index) % len(openings)]
-                closing = closings[(variant + (model_index * 2)) % len(closings)]
-                content_text = (
-                    f"{theme}: {opening} For {audience} in a {context} context, keep the tone {tone} "
-                    f"with a {style_hint} delivery. Variation {variant + 1} keeps the message grounded, "
-                    f"human, and specific. {closing}"
+                content_text = self._compose_candidate_text(
+                    theme=theme,
+                    audience=payload.audience,
+                    tone=tone,
+                    funny_pct=funny_pct,
+                    emotion_pct=emotion_pct,
+                    copy_style=copy_style,
+                    target_words=target_words,
+                    style_hint=style_hint,
+                    variant=variant,
+                    model_index=model_index,
                 )
                 candidates.append(
                     {
@@ -133,7 +133,7 @@ class StubContentForgeClient:
 
         winner = ranked_candidates[0]
         judge_summary = (
-            f"Evaluated {len(candidates)} pooled candidates for '{theme}'. "
+            f"Evaluated {len(candidates)} greeting-card candidates for '{theme}'. "
             f"Shortlisted top {len(shortlist)} across all models using judged score."
         )
 
@@ -143,6 +143,306 @@ class StubContentForgeClient:
             "winner": winner,
             "judge_summary": judge_summary,
         }
+
+    @staticmethod
+    def _resolve_copy_style(payload: StartJobRequest) -> str:
+        """Return one supported content style for short-form card copy."""
+
+        value = str(payload.output_spec.format or "short_crisp").strip().lower()
+        if value in {"short_crisp", "warm_note", "playful"}:
+            return value
+        if value in {"paragraph", "letter"}:
+            return "warm_note"
+        return "short_crisp"
+
+    @staticmethod
+    def _resolve_target_words(payload: StartJobRequest) -> int:
+        """Return a bounded word target from the requested output spec."""
+
+        target = int(payload.output_spec.length.target_words or 16)
+        return min(max(target, 4), 60)
+
+    def _compose_candidate_text(
+        self,
+        *,
+        theme: str,
+        audience: str,
+        tone: str,
+        funny_pct: int,
+        emotion_pct: int,
+        copy_style: str,
+        target_words: int,
+        style_hint: str,
+        variant: int,
+        model_index: int,
+    ) -> str:
+        """Build short greeting-card copy instead of editorial bulletin copy."""
+
+        sequence = variant + model_index
+        theme_line = self._pick_theme_line(theme, sequence)
+        style_line = self._pick_style_line(copy_style, style_hint, sequence)
+        humor_line = self._pick_humor_line(theme, tone, funny_pct, sequence)
+        emotion_line = self._pick_emotion_line(audience, emotion_pct, sequence)
+        closing_line = self._pick_closing_line(copy_style, sequence)
+
+        parts = [theme_line, style_line]
+        if target_words >= 12 and humor_line:
+            parts.append(humor_line)
+        if target_words >= 10 and emotion_line:
+            parts.append(emotion_line)
+        parts.append(closing_line)
+
+        text = self._trim_to_words(" ".join(part for part in parts if part), target_words)
+        if text[-1:] not in {".", "!", "?"}:
+            text = f"{text}."
+        return text
+
+    @staticmethod
+    def _pick_theme_line(theme: str, sequence: int) -> str:
+        """Pick one theme-first opening that reads like a card, not a brief."""
+
+        theme_key = theme.strip().lower()
+        library = {
+            "motivation": [
+                "New week, new fire.",
+                "Fresh start, steady heart.",
+                "Show up and raise the bar.",
+                "Start strong and stay kind.",
+                "Small step, real momentum.",
+            ],
+            "gratitude": [
+                "A quiet thank-you changes the whole day.",
+                "Gratitude makes ordinary moments glow.",
+                "This note carries real appreciation.",
+                "Good support deserves good words.",
+                "Thank you for showing up so consistently.",
+            ],
+            "love": [
+                "Love feels brightest when it stays true.",
+                "This comes straight from the heart.",
+                "Some people make the whole day softer.",
+                "Love sounds best in honest words.",
+                "You make ordinary moments feel golden.",
+            ],
+            "friendship": [
+                "Good friends make the day easier to carry.",
+                "Friendship turns routine days warm.",
+                "Life lands better with a real friend in it.",
+                "A true friend makes even chaos lighter.",
+                "This note is for the friend who stays solid.",
+            ],
+            "humor": [
+                "Weekend energy has entered the chat.",
+                "This day looks better with a grin on it.",
+                "A little laughter fixes the lighting.",
+                "Good mood, better timing.",
+                "The smile starts here.",
+            ],
+            "family": [
+                "Home feels warmer when hearts stay close.",
+                "Family makes the whole week softer.",
+                "Togetherness is still the best comfort.",
+                "The best kind of peace feels like home.",
+                "This note belongs with the people who matter most.",
+            ],
+            "reflection": [
+                "Pause, breathe, keep the good.",
+                "A calm heart changes the whole week.",
+                "Slow down and keep what matters.",
+                "Peace grows in small quiet moments.",
+                "Let this be a soft reset.",
+            ],
+            "ramadan": [
+                "Wishing peace, grace, and gentle strength this Ramadan.",
+                "May this Ramadan bring calm, light, and reflection.",
+                "Sending respectful Ramadan warmth your way.",
+                "May this Ramadan feel steady, kind, and blessed.",
+                "Holding space for peace and prayer this Ramadan.",
+            ],
+            "holi": [
+                "Sending color, joy, and bright-hearted wishes this Holi.",
+                "May Holi arrive loud with joy and warmth.",
+                "Here is a Holi note full of color and closeness.",
+                "Wishing you a Holi full of laughter and light.",
+                "May this Holi feel vibrant, warm, and shared.",
+            ],
+            "valentine": [
+                "Love looks brighter when it stays sincere.",
+                "A small romantic note can still land deeply.",
+                "Keeping this Valentine's note honest and warm.",
+                "Here is a little extra heart for your day.",
+                "Some feelings deserve a softer voice.",
+            ],
+            "eid": [
+                "Wishing your Eid joy, peace, and togetherness.",
+                "May Eid bring warmth to your whole home.",
+                "Sending an Eid greeting full of heart.",
+                "May this Eid feel bright, generous, and close.",
+                "Eid Mubarak, with warmth and goodwill.",
+            ],
+            "diwali": [
+                "May this Diwali bring light, warmth, and good fortune.",
+                "Wishing you a Diwali full of glow and joy.",
+                "May your Diwali feel bright, shared, and peaceful.",
+                "Sending a Diwali note with warmth and sparkle.",
+                "Light, laughter, and good energy for your Diwali.",
+            ],
+            "lpg": [
+                "Steady voices matter in a noisy moment.",
+                "Awareness starts with human words.",
+                "Clarity and care matter right now.",
+                "Even hard topics deserve calm language.",
+                "This moment needs steadiness more than noise.",
+            ],
+            "war": [
+                "In heavy times, humanity matters most.",
+                "Holding hope and dignity close today.",
+                "Some moments call for care before commentary.",
+                "Let this note stay human and steady.",
+                "Even difficult news needs gentle language.",
+            ],
+            "gold": [
+                "Stay sharp, stay steady, read the moment well.",
+                "A calm eye beats a rushed reaction.",
+                "The market moves fast; your judgment can stay clear.",
+                "Keep patience close when the numbers move.",
+                "Clarity matters more than panic.",
+            ],
+            "trend": [
+                "When the moment moves fast, keep your words human.",
+                "A strong note can still stay grounded.",
+                "This card should feel timely without losing warmth.",
+                "Stay current, but keep the message human.",
+                "Quick moment, clear heart.",
+            ],
+            "default": [
+                "A small note can still land deeply.",
+                "This message keeps it simple and real.",
+                "A crisp line can say a lot.",
+                "Some words work best when they stay light.",
+                "This card starts with something real.",
+            ],
+        }
+        for token, lines in library.items():
+            if token != "default" and token in theme_key:
+                return lines[sequence % len(lines)]
+        return library["default"][sequence % len(library["default"])]
+
+    @staticmethod
+    def _pick_style_line(copy_style: str, style_hint: str, sequence: int) -> str:
+        """Pick one style line that keeps the card short and readable."""
+
+        balanced = [
+            "Keep it clear and easy to feel.",
+            "Let it land simply and well.",
+            "Make the warmth feel immediate.",
+            "Keep the line clean and memorable.",
+            "Let the note stay light on its feet.",
+        ]
+        warm_note = [
+            "Sending warmth without overexplaining it.",
+            "Keeping the note soft, close, and sincere.",
+            "Let this read like a real human voice.",
+            "Gentle words, real feeling.",
+            "Warmth first, noise never.",
+        ]
+        playful = [
+            "Let the smile do some of the talking.",
+            "A little fun belongs here.",
+            "Keep the sparkle switched on.",
+            "Give the day something to grin about.",
+            "Let the note stay quick and bright.",
+        ]
+        if copy_style == "playful":
+            lines = playful
+        elif copy_style == "warm_note":
+            lines = warm_note
+        else:
+            lines = balanced
+        if "uplifting" in style_hint and copy_style != "playful":
+            lines = lines + ["Keep the energy optimistic and steady."]
+        return lines[sequence % len(lines)]
+
+    @staticmethod
+    def _pick_humor_line(theme: str, tone: str, funny_pct: int, sequence: int) -> str:
+        """Return optional humor only when the request meaningfully asks for it."""
+
+        serious_theme = any(token in theme.lower() for token in ("war", "issue", "price"))
+        serious_tone = tone.strip().lower() in {"serious", "awareness", "informative", "editorial"}
+        if funny_pct < 20:
+            return ""
+        if funny_pct < 45 or (serious_theme and serious_tone and funny_pct < 60):
+            medium_lines = [
+                "A little lightness helps the message breathe.",
+                "There is room here for a small smile.",
+                "A touch of levity keeps the note alive.",
+                "Even a simple grin can carry the point.",
+                "A softer smile keeps the message human.",
+            ]
+            return medium_lines[sequence % len(medium_lines)]
+        high_lines = [
+            "If the day acts dramatic, outshine it anyway.",
+            "Even the stress could use a tea break.",
+            "Keep the cool, lose the chaos.",
+            "Consider this your officially approved smile.",
+            "Let the mess stay funny, not fatal.",
+        ]
+        return high_lines[sequence % len(high_lines)]
+
+    @staticmethod
+    def _pick_emotion_line(audience: str, emotion_pct: int, sequence: int) -> str:
+        """Return optional emotional grounding based on the requested intensity."""
+
+        if emotion_pct < 40:
+            return ""
+        audience_key = audience.strip().lower()
+        if "partner" in audience_key or "love" in audience_key:
+            lines = [
+                "You mean more than ordinary words can say.",
+                "There is real affection in this note.",
+                "Keeping you close in every word.",
+                "This carries love without making it loud.",
+                "You stay at the center of this message.",
+            ]
+        elif "family" in audience_key:
+            lines = [
+                "This comes with closeness, comfort, and care.",
+                "Family is the feeling underneath this note.",
+                "Keeping home and heart close together.",
+                "This carries the warmth of being together.",
+                "The feeling here is simple: you matter deeply.",
+            ]
+        else:
+            lines = [
+                "This comes with real feeling behind it.",
+                "You matter more than the rush around you.",
+                "Keeping the message warm and genuine.",
+                "This note is meant to feel personal.",
+                "A little heart belongs in the line.",
+            ]
+        return lines[sequence % len(lines)]
+
+    @staticmethod
+    def _pick_closing_line(copy_style: str, sequence: int) -> str:
+        """Return a short closer that feels like a card signoff."""
+
+        closers = {
+            "short_crisp": ["You've got this.", "Keep going.", "Still rooting for you.", "Stay bright.", "Onward."],
+            "warm_note": ["With warmth.", "Sending good energy.", "Keeping you in mind.", "Right here with you.", "With love."],
+            "playful": ["Carry the smile with you.", "Go make the day jealous.", "Keep the sparkle loud.", "Now go steal the scene.", "Stay brilliant."],
+        }
+        lines = closers.get(copy_style, closers["short_crisp"])
+        return lines[sequence % len(lines)]
+
+    @staticmethod
+    def _trim_to_words(text: str, target_words: int) -> str:
+        """Trim generated copy to the requested word count ceiling."""
+
+        words = [item for item in text.split() if item]
+        if len(words) <= target_words:
+            return " ".join(words)
+        trimmed = " ".join(words[:target_words]).rstrip(",;:-")
+        return trimmed
 
 
 class WorkflowV1Service:
@@ -173,10 +473,12 @@ class WorkflowV1Service:
         shortlist_seed = list(generation.get("shortlist") or [])
         approval_message = (
             f"Content approval required for {job_id}. Winner model: {winner_model}. "
-            "Review the shortlisted copy pool and approve or rerun."
+            "Review the message text shown on the job detail page, then approve or regenerate."
         )
         output_spec = payload.output_spec.model_dump()
         output_spec["rendering"] = payload.rendering.model_dump()
+        if payload.notes:
+            output_spec["operator_notes"] = payload.notes
 
         job_record: dict[str, Any] = {
             "job_id": job_id,
@@ -200,6 +502,8 @@ class WorkflowV1Service:
             "image_preview_url": None,
             "final_preview_url": None,
             "final_asset_urls": None,
+            "cards_per_theme": int(payload.cards_per_theme),
+            "operator_notes": str(payload.notes or "").strip() or None,
             "retry_count": 0,
             "last_stage_started_at": now,
             "last_stage_finished_at": now,
@@ -272,6 +576,402 @@ class WorkflowV1Service:
             shortlist_count=len(shortlist_seed),
         )
 
+    async def approve_content(self, job_id: str) -> StageActionResponse:
+        """Approve content without auto-triggering image generation."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if not str(job.get("content_preview") or "").strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No generated content available to approve")
+
+        transition_time = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_approved",
+                "content_approval_status": "approved",
+                "image_approval_status": "pending",
+                "final_approval_status": "pending",
+                "image_prompt": None,
+                "image_preview_url": None,
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": None,
+            },
+            stage="content",
+            decision="approved",
+            notes="",
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_approve_content_called", {"endpoint": f"/api/jobs/{job_id}/approve-content"}),
+                    ("content_approved", {"decision": "approved", "mode": "operator"}),
+                ],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def reject_content(self, job_id: str) -> StageActionResponse:
+        """Reject generated content without touching downstream stages."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        transition_time = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_rejected",
+                "content_approval_status": "rejected",
+                "image_approval_status": "pending",
+                "final_approval_status": "pending",
+                "image_prompt": None,
+                "image_preview_url": None,
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": "Content rejected by operator",
+            },
+            stage="content",
+            decision="rejected",
+            notes="",
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_reject_content_called", {"endpoint": f"/api/jobs/{job_id}/reject-content"}),
+                    ("content_rejected", {"decision": "rejected", "mode": "operator"}),
+                ],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def regenerate_content(self, job_id: str) -> StageActionResponse:
+        """Rerun content generation only."""
+
+        await self.rerun_content(job_id)
+        updated = await self._load_job(job_id)
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("api_regenerate_content_called", {"endpoint": f"/api/jobs/{job_id}/regenerate-content"})],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def generate_image(self, job_id: str) -> StageActionResponse:
+        """Generate the image preview for an approved content stage."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if str(job.get("content_approval_status") or "").lower() != "approved":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Content must be approved before generating image")
+
+        started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image_generation", increment_retry=False)
+        try:
+            image_prompt = self.build_image_prompt(job)
+            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
+            approved_content = self._resolve_winning_content(job)
+            self._save_internal_preview_asset(
+                relative_path=image_preview_relative_path,
+                payload=PreviewCardRenderInput(
+                    title="Image Generation",
+                    message=image_prompt,
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="image_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Context: {job.get('cultural_context', 'N/A')}",
+                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
+                    ],
+                ),
+            )
+            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            finished_at = datetime.now(timezone.utc)
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "image_pending_approval",
+                    "image_approval_status": "pending",
+                    "final_approval_status": "pending",
+                    "image_prompt": image_prompt,
+                    "image_preview_url": image_preview_url,
+                    "final_preview_url": None,
+                    "final_asset_urls": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": finished_at,
+                    "last_error_message": None,
+                },
+            )
+            assert updated is not None
+            await self._repository.save_asset(
+                job_id,
+                asset_type="image_preview",
+                asset_url=image_preview_url,
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
+                relative_path=image_preview_relative_path,
+                public_url=image_preview_url,
+                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
+                version="v1",
+                approved=False,
+            )
+            await self._repository.append_audit_events(
+                job_id,
+                self._build_audit_events(
+                    job_id=job_id,
+                    events=[
+                        ("api_generate_image_called", {"endpoint": f"/api/jobs/{job_id}/generate-image"}),
+                        ("image_generated", {"image_preview_url": image_preview_url, "mode": "operator"}),
+                        ("image_approval_requested", {"image_preview_url": image_preview_url}),
+                    ],
+                ),
+            )
+            return self._build_stage_action_response(updated)
+        except Exception as exc:  # noqa: BLE001
+            await self._mark_stage_failed(
+                job_id=job_id,
+                job=job,
+                stage="image_generation",
+                started_at=started_at,
+                error=exc,
+            )
+            raise
+
+    async def regenerate_image(self, job_id: str) -> StageActionResponse:
+        """Regenerate image preview only."""
+
+        await self.rerun_image(job_id)
+        updated = await self._load_job(job_id)
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("api_regenerate_image_called", {"endpoint": f"/api/jobs/{job_id}/regenerate-image"})],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def approve_image(self, job_id: str) -> StageActionResponse:
+        """Approve image stage without auto-rendering the final preview."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if not str(job.get("image_preview_url") or "").strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No generated image preview available to approve")
+
+        transition_time = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "image_approved",
+                "image_approval_status": "approved",
+                "final_approval_status": "pending",
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": None,
+            },
+            stage="image",
+            decision="approved",
+            notes="",
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_approve_image_called", {"endpoint": f"/api/jobs/{job_id}/approve-image"}),
+                    ("image_approved", {"decision": "approved", "mode": "operator"}),
+                ],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def reject_image(self, job_id: str) -> StageActionResponse:
+        """Reject generated image preview."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        transition_time = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "image_rejected",
+                "image_approval_status": "rejected",
+                "final_approval_status": "pending",
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": "Image rejected by operator",
+            },
+            stage="image",
+            decision="rejected",
+            notes="",
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_reject_image_called", {"endpoint": f"/api/jobs/{job_id}/reject-image"}),
+                    ("image_rejected", {"decision": "rejected", "mode": "operator"}),
+                ],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def render_final(self, job_id: str) -> StageActionResponse:
+        """Render final review preview without final approval."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if str(job.get("image_approval_status") or "").lower() != "approved":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Image must be approved before rendering final")
+
+        started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render", increment_retry=False)
+        try:
+            final_preview_relative_path = self._build_final_preview_relative_path(job_id)
+            self._save_internal_preview_asset(
+                relative_path=final_preview_relative_path,
+                payload=PreviewCardRenderInput(
+                    title="Final Render",
+                    message=self._resolve_winning_content(job),
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="final_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Tone: {job.get('tone_style', 'N/A')}",
+                        "Final preview ready for operator approval",
+                    ],
+                ),
+            )
+            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
+            finished_at = datetime.now(timezone.utc)
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "final_pending_approval",
+                    "final_approval_status": "pending",
+                    "final_preview_url": final_preview_url,
+                    "final_asset_urls": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": finished_at,
+                    "last_error_message": None,
+                },
+            )
+            assert updated is not None
+            await self._repository.save_asset(
+                job_id,
+                asset_type="final_preview",
+                asset_url=final_preview_url,
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
+                relative_path=final_preview_relative_path,
+                public_url=final_preview_url,
+                absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
+                version="v1",
+                approved=False,
+            )
+            await self._repository.append_audit_events(
+                job_id,
+                self._build_audit_events(
+                    job_id=job_id,
+                    events=[
+                        ("api_render_final_called", {"endpoint": f"/api/jobs/{job_id}/render-final"}),
+                        ("final_render_completed", {"final_preview_url": final_preview_url, "mode": "operator"}),
+                        ("final_approval_requested", {"final_preview_url": final_preview_url}),
+                    ],
+                ),
+            )
+            return self._build_stage_action_response(updated)
+        except Exception as exc:  # noqa: BLE001
+            await self._mark_stage_failed(
+                job_id=job_id,
+                job=job,
+                stage="final_render",
+                started_at=started_at,
+                error=exc,
+            )
+            raise
+
+    async def approve_final(self, job_id: str) -> StageActionResponse:
+        """Approve final preview and export final assets."""
+
+        await self.apply_final_approval(job_id, "approved", "")
+        updated = await self._load_job(job_id)
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("api_approve_final_called", {"endpoint": f"/api/jobs/{job_id}/approve-final"})],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def reject_final(self, job_id: str) -> StageActionResponse:
+        """Reject the final preview without deleting preview assets."""
+
+        await self.apply_final_approval(job_id, "rejected", "")
+        updated = await self._load_job(job_id)
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("api_reject_final_called", {"endpoint": f"/api/jobs/{job_id}/reject-final"})],
+            ),
+        )
+        return self._build_stage_action_response(updated)
+
+    async def rerun_stage(self, job_id: str, payload: StageRerunRequest) -> StageRerunResponse:
+        """Rerun one explicit stage based on the operator-selected stage name."""
+
+        if payload.stage == "content_generation":
+            return await self.rerun_content(job_id)
+        if payload.stage == "image_generation":
+            return await self.rerun_image(job_id)
+        return await self.rerun_final_render(job_id)
+
     async def submit_content_approval(
         self,
         job_id: str,
@@ -294,6 +994,7 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
         old_status = str(job["status"])
         self._assert_expected_status(job, expected="content_pending_approval")
+        transition_time = datetime.now(timezone.utc)
 
         if decision == "approved":
             image_prompt = self.build_image_prompt(job)
@@ -326,6 +1027,9 @@ class WorkflowV1Service:
                 "image_approval_status": "pending",
                 "image_prompt": image_prompt,
                 "image_preview_url": image_preview_url,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": None,
             }
             events = [
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
@@ -338,6 +1042,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "content_rejected",
                 "content_approval_status": "rejected",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Content rejected by operator",
             }
             events = [
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
@@ -347,6 +1054,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "content_timeout",
                 "content_approval_status": "timeout",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Content approval timed out",
             }
             events = [
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
@@ -427,6 +1137,7 @@ class WorkflowV1Service:
                 detail="Invalid decision. Allowed values: approved, rejected, timeout",
             )
 
+        transition_time = datetime.now(timezone.utc)
         if normalized_decision == "approved":
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
             self._save_internal_preview_asset(
@@ -454,6 +1165,9 @@ class WorkflowV1Service:
                 "status": "final_pending_approval",
                 "image_approval_status": "approved",
                 "final_preview_url": final_preview_url,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": None,
             }
             events = [
                 ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
@@ -473,6 +1187,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "image_rejected",
                 "image_approval_status": "rejected",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Image rejected by operator",
             }
             events = [
                 ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
@@ -490,6 +1207,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "image_timeout",
                 "image_approval_status": "timeout",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Image approval timed out",
             }
             events = [
                 ("api_image_approval_called", {"endpoint": f"/api/jobs/{job_id}/image-approval"}),
@@ -573,11 +1293,12 @@ class WorkflowV1Service:
                 detail="Invalid decision. Allowed values: approved, rejected, timeout",
             )
 
+        transition_time = datetime.now(timezone.utc)
         event_payload = {
             "job_id": job_id,
             "decision": normalized_decision,
             "notes": notes,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": transition_time.isoformat(),
         }
         if normalized_decision == "approved":
             generated_assets = self._generate_final_assets(job_id=job_id, job=job)
@@ -589,6 +1310,9 @@ class WorkflowV1Service:
                 "status": "completed",
                 "final_approval_status": "approved",
                 "final_asset_urls": final_asset_urls,
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": None,
             }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
@@ -603,6 +1327,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "final_rejected",
                 "final_approval_status": "rejected",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Final output rejected by operator",
             }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
@@ -612,6 +1339,9 @@ class WorkflowV1Service:
             updates = {
                 "status": "final_timeout",
                 "final_approval_status": "timeout",
+                "last_stage_started_at": transition_time,
+                "last_stage_finished_at": transition_time,
+                "last_error_message": notes or "Final approval timed out",
             }
             events = [
                 ("api_final_approval_called", {"endpoint": f"/api/jobs/{job_id}/final-approval"}),
@@ -1082,6 +1812,7 @@ class WorkflowV1Service:
                     image_preview_url=str(row.get("image_preview_url") or "") or None,
                     final_preview_url=str(row.get("final_preview_url") or "") or None,
                     final_asset_urls=row.get("final_asset_urls") if isinstance(row.get("final_asset_urls"), dict) else None,
+                    cards_per_theme=int(row.get("cards_per_theme") or 10),
                     content_approval_status=str(row.get("content_approval_status") or "pending"),
                     image_approval_status=str(row.get("image_approval_status") or "pending"),
                     final_approval_status=str(row.get("final_approval_status") or "pending"),
@@ -1258,6 +1989,10 @@ class WorkflowV1Service:
         """Map persisted workflow status to one coarse-grained current stage."""
 
         normalized = status_value.strip().lower()
+        if normalized == "content_approved":
+            return "image_generation"
+        if normalized == "image_approved":
+            return "final_render"
         if normalized.startswith("content"):
             return "content_generation"
         if normalized.startswith("image"):
@@ -1268,14 +2003,22 @@ class WorkflowV1Service:
             return normalized
         return "queued"
 
-    async def _mark_stage_started(self, *, job_id: str, job: dict[str, Any], stage: str) -> datetime:
+    async def _mark_stage_started(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        stage: str,
+        increment_retry: bool = True,
+    ) -> datetime:
         """Persist generic rerun tracking metadata when a stage begins."""
 
         started_at = datetime.now(timezone.utc)
+        next_retry_count = int(job.get("retry_count") or 0) + (1 if increment_retry else 0)
         updated = await self._repository.update_job_status(
             job_id=job_id,
             updates={
-                "retry_count": int(job.get("retry_count") or 0) + 1,
+                "retry_count": next_retry_count,
                 "last_stage_started_at": started_at,
                 "last_stage_finished_at": None,
                 "last_error_message": None,
@@ -1346,6 +2089,36 @@ class WorkflowV1Service:
         )
 
     @staticmethod
+    def _build_stage_action_response(updated: dict[str, Any]) -> StageActionResponse:
+        """Build a normalized response for one operator stage action."""
+
+        final_asset_urls = updated.get("final_asset_urls") if isinstance(updated.get("final_asset_urls"), dict) else None
+        return StageActionResponse(
+            job_id=str(updated.get("job_id") or ""),
+            status=str(updated.get("status") or "unknown"),
+            content_approval_status=str(updated.get("content_approval_status") or "pending"),
+            image_approval_status=str(updated.get("image_approval_status") or "pending"),
+            final_approval_status=str(updated.get("final_approval_status") or "pending"),
+            image_preview_url=str(updated.get("image_preview_url") or "") or None,
+            final_preview_url=str(updated.get("final_preview_url") or "") or None,
+            final_asset_urls=FinalAssetUrls.model_validate(final_asset_urls) if final_asset_urls else None,
+            retry_count=int(updated.get("retry_count") or 0),
+            last_stage_started_at=WorkflowV1Service._coerce_datetime(
+                updated.get("last_stage_started_at"),
+                fallback=None,
+            )
+            if updated.get("last_stage_started_at")
+            else None,
+            last_stage_finished_at=WorkflowV1Service._coerce_datetime(
+                updated.get("last_stage_finished_at"),
+                fallback=None,
+            )
+            if updated.get("last_stage_finished_at")
+            else None,
+            last_error_message=str(updated.get("last_error_message") or "") or None,
+        )
+
+    @staticmethod
     def _build_shortlist_rows(
         *,
         persisted_candidates: list[dict[str, Any]],
@@ -1399,6 +2172,8 @@ class WorkflowV1Service:
             output_spec=output_spec,
             avoid_cliches=bool(job.get("avoid_cliches", True)),
             rendering=rendering,
+            cards_per_theme=int(job.get("cards_per_theme") or 10),
+            notes=str(job.get("operator_notes") or "") or None,
         )
 
     def _collect_asset_delete_targets(self, job: dict[str, Any]) -> set[Path]:

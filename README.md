@@ -1,19 +1,19 @@
 # eCardFactory
 
-Internal workflow console for theme-driven eCard generation, stage approvals, reruns, and shortlist-based card rendering.
+Internal operator console for theme-driven eCard workflows.
 
 ## Local Ports
 
 Ports are sourced from [config/local.ports.env.example](/Users/aritrarpal/Documents/workspace_biz/ecard-factory/config/local.ports.env.example).
 
-- `ECARD_HOST_BIND=0.0.0.0`
-- `ECARD_PORT=8080`
-- `CONTENTFORGE_HOST_BIND=0.0.0.0`
+- `ECARDFACTORY_HOST=0.0.0.0`
+- `ECARDFACTORY_PORT=8080`
+- `CONTENTFORGE_HOST=0.0.0.0`
 - `CONTENTFORGE_PORT=8001`
 - `N8N_PORT=5678`
-- `ECARD_BASE_URL=http://host.docker.internal:8080`
+- `N8N_HOST_BRIDGE=host.docker.internal`
 
-Typical local URLs:
+Local URLs:
 
 - eCardFactory: `http://localhost:8080`
 - ContentForge: `http://localhost:8001`
@@ -21,39 +21,38 @@ Typical local URLs:
 
 ## Workflow Overview
 
-The internal app runs a staged workflow:
+Stage 1 keeps the existing internal workflow shape and adds operator control:
 
-1. Create a job from a manual theme or from the resolved daily theme.
-2. Generate a pooled candidate set across models.
-3. Judge the pooled candidates and store a ranked shortlist.
-4. Approve content.
-5. Generate image previews.
-6. Approve image.
-7. Render final output.
-8. Approve final output or rerun a specific stage.
+1. Create a job manually, from today's theme, or from any selected theme.
+2. Review content output.
+3. Approve, reject, or regenerate content.
+4. Generate or regenerate the image preview.
+5. Approve or reject the image stage.
+6. Render the final preview.
+7. Approve or reject the final stage.
 
-Primary UI routes:
+Primary routes:
 
 - `/` Workflow Console
 - `/themes` Theme Factory
 - `/compare` Compare Lab
 - `/jobs/{job_id}` Job Detail
 
-## Theme Factory
+## Theme Buckets
 
-Theme Factory uses namespaced database tables so it does not collide with the legacy daily-planning theme tables:
+Theme Factory uses the existing namespaced tables:
 
 - `card_theme_catalog`
 - `card_theme_schedule`
 - `card_theme_overrides`
 
-Theme buckets used by the UI and API:
+Stage 1 theme buckets:
 
 - `everyday`
-- `special`
+- `occasion`
 - `current_event`
 
-Seed themes included by the local seed command:
+Fresh seed data includes exactly these theme keys:
 
 - Everyday:
   - `motivation-monday`
@@ -67,23 +66,139 @@ Seed themes included by the local seed command:
   - `ramadan-month`
   - `holi-week`
   - `valentines-week`
+  - `eid-celebration`
+  - `diwali-week`
+  - `friendship-day`
 - Current event:
+  - `india-lpg-issue`
+  - `iran-war-update`
+  - `gold-price-watch`
   - `india-trend-override`
 
-## Theme Resolution Logic
+## Theme Resolution Priority
 
 `GET /api/themes/today` resolves themes in this order:
 
-1. Active override from `card_theme_overrides`
-2. Active `single_day` or `date_range` schedule from `card_theme_schedule`
-3. Active `weekly_recurring` schedule
-4. Evergreen fallback from `card_theme_catalog`
+1. Active override
+2. Active date-range schedule
+3. Active weekly recurring schedule
+4. Evergreen fallback
 
-This keeps editorial overrides and special campaigns above weekday defaults while still guaranteeing an everyday fallback when no campaign is active.
+Default seeded schedules:
+
+- Weekly recurring:
+  - Monday -> `motivation-monday`
+  - Tuesday -> `gratitude-tuesday`
+  - Wednesday -> `love-wednesday`
+  - Thursday -> `friendship-thursday`
+  - Friday -> `humor-friday`
+  - Saturday -> `family-saturday`
+  - Sunday -> `reflection-sunday`
+- Date range:
+  - `ramadan-month`: `2026-02-18` to `2026-03-19`
+  - `holi-week`: `2026-03-09` to `2026-03-15`
+  - `valentines-week`: `2026-02-08` to `2026-02-14`
+  - `diwali-week`: `2026-11-08` to `2026-11-14`
+
+No overrides are seeded active by default.
+
+## Cards Per Theme
+
+Stage 1 adds `cards_per_theme` to workflow jobs.
+
+- default: `10`
+- allowed range: `1` to `50`
+- configurable from:
+  - Create New Card Job
+  - Use Today's Theme
+  - Generate From Theme
+
+Current scope for `cards_per_theme`:
+
+- the value is accepted, stored, and passed through job creation
+- Stage 1 does not change the generation engine based on this value yet
+
+## Manual Theme Run
+
+Operator actions added in Stage 1:
+
+- `Use Today's Theme`
+- `Generate From Theme`
+
+Theme-backed job APIs:
+
+- `POST /api/jobs/create-daily-theme-job`
+- `POST /api/jobs/start-from-theme`
+
+Example manual theme run:
+
+```bash
+curl -s -X POST http://localhost:8080/api/jobs/start-from-theme \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "theme_key": "holi-week",
+    "cards_per_theme": 10,
+    "notes": "manual run from theme factory"
+  }'
+```
+
+Create a job from today's resolved theme:
+
+```bash
+curl -s -X POST http://localhost:8080/api/jobs/create-daily-theme-job \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cards_per_theme": 10,
+    "notes": "operator-triggered daily run"
+  }'
+```
+
+Verify today's theme:
+
+```bash
+curl -s http://localhost:8080/api/themes/today
+```
+
+## Stage Control
+
+Stage 1 adds these exact operator endpoints:
+
+- `POST /api/jobs/{job_id}/approve-content`
+- `POST /api/jobs/{job_id}/reject-content`
+- `POST /api/jobs/{job_id}/regenerate-content`
+- `POST /api/jobs/{job_id}/generate-image`
+- `POST /api/jobs/{job_id}/regenerate-image`
+- `POST /api/jobs/{job_id}/approve-image`
+- `POST /api/jobs/{job_id}/reject-image`
+- `POST /api/jobs/{job_id}/render-final`
+- `POST /api/jobs/{job_id}/approve-final`
+- `POST /api/jobs/{job_id}/reject-final`
+- `POST /api/jobs/{job_id}/rerun-stage`
+
+`rerun-stage` request body:
+
+```json
+{
+  "stage": "content_generation"
+}
+```
+
+Allowed `stage` values:
+
+- `content_generation`
+- `image_generation`
+- `final_render`
+
+Jobs also track:
+
+- `retry_count`
+- `last_stage_started_at`
+- `last_stage_finished_at`
+- `last_error_message`
 
 ## Storage and Asset Location
 
-Generated assets are stored outside the repository.
+Generated files are stored outside the repository.
 
 Required environment variables:
 
@@ -91,54 +206,27 @@ Required environment variables:
 - `ASSET_STORAGE_ROOT=/absolute/path/to/external/storage`
 - `ASSET_PUBLIC_BASE_URL=http://localhost:8080/assets`
 
-FastAPI serves generated files from `/assets`, mounted against `ASSET_STORAGE_ROOT`.
-
-Typical physical directories under the storage root:
-
-- `preview/`
-- `image/`
-- `final/`
-- `pdf/`
+FastAPI serves `/assets` from `ASSET_STORAGE_ROOT`.
 
 Example:
 
-- Absolute file path: `/Volumes/Ari_SSD_01/ecardfactory-assets/final/job_ab12cd34_final.png`
+- Absolute path: `/Volumes/Ari_SSD_01/ecardfactory-assets/final/job_ab12cd34_final.png`
 - Public URL: `http://localhost:8080/assets/final/job_ab12cd34_final.png`
 
-## Stage Rerun Controls
+## Current Scope
 
-Job Detail exposes stage-level reruns:
+Stage 1 scope is intentionally limited.
 
-- `POST /api/jobs/{job_id}/rerun/content`
-- `POST /api/jobs/{job_id}/rerun/image`
-- `POST /api/jobs/{job_id}/rerun/final-render`
-- `POST /api/jobs/{job_id}/rerun/full`
+Not part of this stage:
 
-Tracked job metadata:
+- multi-model 10-per-model shortlist engine work
+- multi-image candidate selection
+- publishing/distribution workflow expansion
+- Compare Lab redesign
+- ContentForge redesign
+- n8n workflow redesign
 
-- `retry_count`
-- `last_stage_started_at`
-- `last_stage_finished_at`
-- `last_error_message`
-
-## Candidate Pool / Shortlist Logic
-
-Content generation is pooled before a winner is selected:
-
-1. Generate 10 phrases per model.
-2. Merge all candidates into one pool.
-3. Judge the full pool.
-4. Store all candidates in `card_content_candidates`.
-5. Store the ranked top 10 in `card_shortlists`.
-6. Allow shortlisted phrases to be rendered into internal preview cards.
-
-Relevant APIs:
-
-- `GET /api/jobs/{job_id}/candidates`
-- `GET /api/jobs/{job_id}/shortlist`
-- `POST /api/jobs/{job_id}/render-shortlist`
-
-## Local Run Commands
+## Local Commands
 
 Install frontend dependencies once:
 
@@ -146,13 +234,13 @@ Install frontend dependencies once:
 npm install
 ```
 
-Run database migrations:
+Apply migrations:
 
 ```bash
 ./venv/bin/alembic upgrade head
 ```
 
-Seed Theme Factory data:
+Reset and reseed Theme Factory data:
 
 ```bash
 ./venv/bin/python scripts/seed_themes.py
@@ -175,42 +263,3 @@ Run n8n:
 ```bash
 ./scripts/run-n8n.sh
 ```
-
-## Verification Commands
-
-Verify the theme catalog:
-
-```bash
-curl -s http://localhost:8080/api/themes
-```
-
-Verify today's resolved theme:
-
-```bash
-curl -s http://localhost:8080/api/themes/today
-```
-
-Verify schedule dashboard:
-
-```bash
-curl -s http://localhost:8080/api/themes/schedule
-```
-
-Create a job using today's resolved theme:
-
-```bash
-curl -s -X POST http://localhost:8080/api/jobs/create-daily-theme-job
-```
-
-Check shortlist data for one job:
-
-```bash
-curl -s http://localhost:8080/api/jobs/<job_id>/shortlist
-```
-
-## n8n and Workflow Notes
-
-- n8n should call eCardFactory through `http://host.docker.internal:8080`
-- Compare Lab remains available at `/compare` as a secondary tool
-- Theme Factory is served at `/themes`
-- Generated eCard previews and shortlist renders are visible from the Workflow Console and Job Detail pages

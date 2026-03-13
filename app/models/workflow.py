@@ -65,6 +65,13 @@ class CardJob(Base):
     image_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_asset_urls: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
+    cards_per_theme: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=10,
+        server_default=text("10"),
+    )
+    operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

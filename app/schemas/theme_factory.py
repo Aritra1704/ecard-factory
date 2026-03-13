@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ThemeType = Literal["evergreen", "calendar", "campaign", "news"]
-ThemeBucket = Literal["everyday", "special", "current_event"]
+ThemeBucket = Literal["everyday", "occasion", "current_event"]
 ScheduleType = Literal["single_day", "date_range", "weekly_recurring", "monthly_recurring"]
 
 

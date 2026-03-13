@@ -53,6 +53,8 @@ class StartJobRequest(BaseModel):
     output_spec: OutputSpec = Field(default_factory=OutputSpec)
     avoid_cliches: bool = True
     rendering: RenderConfig = Field(default_factory=RenderConfig)
+    cards_per_theme: int = Field(default=10, ge=1, le=50)
+    notes: str | None = None
 
 
 class StartJobResponse(BaseModel):
@@ -75,6 +77,23 @@ class DailyThemeJobResponse(BaseModel):
     theme_name: str
     weekday: str
     source: str = "theme_schedule"
+    cards_per_theme: int = 10
+
+
+class ThemeJobCreateRequest(BaseModel):
+    """Request payload for starting one workflow job from a resolved or selected theme."""
+
+    cards_per_theme: int = Field(default=10, ge=1, le=50)
+    notes: str | None = None
+    copy_style: Literal["short_crisp", "warm_note", "playful"] = "short_crisp"
+    target_words: int = Field(default=16, ge=4, le=60)
+    tone_funny_pct: int | None = Field(default=None, ge=0, le=100)
+
+
+class StartFromThemeRequest(ThemeJobCreateRequest):
+    """Request payload for manual Theme Factory job creation."""
+
+    theme_key: str
 
 
 class ApprovalRequest(BaseModel):
@@ -197,6 +216,8 @@ class JobDebugResponse(BaseModel):
     image_preview_url: str | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
+    cards_per_theme: int = 10
+    operator_notes: str | None = None
     retry_count: int = 0
     last_stage_started_at: datetime | None = None
     last_stage_finished_at: datetime | None = None
@@ -220,6 +241,7 @@ class JobListItemResponse(BaseModel):
     image_preview_url: str | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
+    cards_per_theme: int = 10
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
     final_approval_status: str = "pending"
@@ -279,6 +301,29 @@ class StageRerunResponse(BaseModel):
     last_stage_started_at: datetime | None = None
     last_stage_finished_at: datetime | None = None
     last_error_message: str | None = None
+
+
+class StageActionResponse(BaseModel):
+    """Response payload for one operator-driven stage action."""
+
+    job_id: str
+    status: str
+    content_approval_status: str = "pending"
+    image_approval_status: str = "pending"
+    final_approval_status: str = "pending"
+    image_preview_url: str | None = None
+    final_preview_url: str | None = None
+    final_asset_urls: FinalAssetUrls | None = None
+    retry_count: int = 0
+    last_stage_started_at: datetime | None = None
+    last_stage_finished_at: datetime | None = None
+    last_error_message: str | None = None
+
+
+class StageRerunRequest(BaseModel):
+    """Request payload for the generic rerun-stage endpoint."""
+
+    stage: Literal["content_generation", "image_generation", "final_render"]
 
 
 class RenderShortlistRequest(BaseModel):

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import htm from "htm";
@@ -45,7 +45,7 @@ const html = htm.bind(React.createElement);
 
   function themeBucketLabel(bucket) {
     const value = String(bucket || "everyday");
-    if (value === "special") {
+    if (value === "occasion") {
       return "Occasion";
     }
     if (value === "current_event") {
@@ -172,12 +172,10 @@ const html = htm.bind(React.createElement);
       tone_style: String(formValues.tone_style || "conversational"),
       audience: String(formValues.audience || "internal reviewer").trim(),
       cultural_context: String(formValues.cultural_context || "global").trim(),
-      output_spec: {
-        format: "paragraph",
-        length: { target_words: 80 },
-        structure: { no_lists: true, no_numbering: true },
-      },
+      output_spec: buildOutputSpec(formValues.copy_style, formValues.target_words),
       avoid_cliches: true,
+      cards_per_theme: Number(formValues.cards_per_theme || 10),
+      notes: String(formValues.notes || "").trim() || null,
       rendering: {
         theme_style: "minimal",
         text_alignment: "center",
@@ -197,6 +195,37 @@ const html = htm.bind(React.createElement);
       tone_style: String(theme.tone_style || "conversational").trim(),
       tone_funny_pct: Number(theme.tone_funny_pct ?? 20),
       tone_emotion_pct: Number(theme.tone_emotion_pct ?? 80),
+      copy_style: "short_crisp",
+      target_words: 16,
+    };
+  }
+
+  function buildOutputSpec(copyStyle, targetWords) {
+    return {
+      format: String(copyStyle || "short_crisp"),
+      length: { target_words: Number(targetWords || 16) },
+      structure: { no_lists: true, no_numbering: true },
+    };
+  }
+
+  function buildThemeRunDefaults(theme = null) {
+    return {
+      theme_key: "",
+      cards_per_theme: 10,
+      notes: "",
+      copy_style: "short_crisp",
+      target_words: 16,
+      tone_funny_pct: Number(theme?.tone_funny_pct ?? theme?.default_funny_pct ?? 20),
+    };
+  }
+
+  function buildThemeRunPayload(formValues) {
+    return {
+      cards_per_theme: Number(formValues.cards_per_theme || 10),
+      notes: String(formValues.notes || "").trim() || null,
+      copy_style: String(formValues.copy_style || "short_crisp"),
+      target_words: Number(formValues.target_words || 16),
+      tone_funny_pct: Number(formValues.tone_funny_pct ?? 20),
     };
   }
 
@@ -439,6 +468,9 @@ const html = htm.bind(React.createElement);
     const [themeNotice, setThemeNotice] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
+    const [themeRunOpen, setThemeRunOpen] = useState(false);
+    const [themeRunMode, setThemeRunMode] = useState("today");
+    const [themeCatalog, setThemeCatalog] = useState([]);
     const [creating, setCreating] = useState(false);
     const [creatingThemeJob, setCreatingThemeJob] = useState(false);
     const [cardActionState, setCardActionState] = useState("");
@@ -449,7 +481,12 @@ const html = htm.bind(React.createElement);
       tone_style: "conversational",
       tone_funny_pct: 20,
       tone_emotion_pct: 80,
+      copy_style: "short_crisp",
+      target_words: 16,
+      cards_per_theme: 10,
+      notes: "",
     });
+    const [themeRunValues, setThemeRunValues] = useState(buildThemeRunDefaults());
     const resolvedTodayTheme = todayTheme && typeof todayTheme === "object" ? todayTheme.theme || null : null;
 
     const summary = useMemo(() => {
@@ -596,21 +633,79 @@ const html = htm.bind(React.createElement);
       setFormValues((current) => ({ ...current, ...nextValues }));
     }
 
-    async function handleGenerateTodayCard() {
+    async function ensureThemeCatalogLoaded() {
+      if (themeCatalog.length > 0) {
+        return themeCatalog;
+      }
+      const payload = await requestJSON("/api/themes");
+      const items = Array.isArray(payload) ? payload : [];
+      setThemeCatalog(items);
+      return items;
+    }
+
+    async function openThemeRunModal(mode) {
+      setThemeRunMode(mode);
+      setThemeError("");
+      setThemeRunValues(buildThemeRunDefaults(resolvedTodayTheme));
+      if (mode === "manual") {
+        try {
+          const items = await ensureThemeCatalogLoaded();
+          const firstTheme = items[0] || null;
+          setThemeRunValues({
+            ...buildThemeRunDefaults(firstTheme),
+            theme_key: firstTheme?.theme_key || "",
+          });
+          setThemeRunOpen(true);
+        } catch (requestError) {
+          setThemeError(requestError.message || "Unable to load theme catalog");
+        }
+        return;
+      }
+      setThemeRunOpen(true);
+    }
+
+    async function handleSubmitThemeRun(event) {
+      event.preventDefault();
       setCreatingThemeJob(true);
       setThemeError("");
       try {
-        const created = await requestJSON("/api/jobs/create-daily-theme-job", {
-          method: "POST",
-        });
-        setStatusMessage(`Created ${created.job_id} from today's theme`);
+        const basePayload = buildThemeRunPayload(themeRunValues);
+        const created = themeRunMode === "manual"
+          ? await requestJSON("/api/jobs/start-from-theme", {
+              method: "POST",
+              body: JSON.stringify({
+                theme_key: themeRunValues.theme_key,
+                ...basePayload,
+              }),
+            })
+          : await requestJSON("/api/jobs/create-daily-theme-job", {
+              method: "POST",
+              body: JSON.stringify(basePayload),
+            });
+        setThemeRunOpen(false);
+        setStatusMessage(
+          themeRunMode === "manual"
+            ? `Created ${created.job_id} from ${themeRunValues.theme_key}`
+            : `Created ${created.job_id} from today's theme`,
+        );
         await loadDashboard();
         navigate(`/jobs/${created.job_id}`);
       } catch (requestError) {
-        setThemeError(requestError.message || "Unable to create today's themed job");
+        setThemeError(
+          requestError.message || (themeRunMode === "manual" ? "Unable to create theme job" : "Unable to create today's themed job"),
+        );
       } finally {
         setCreatingThemeJob(false);
       }
+    }
+
+    function handleThemeSelectionChange(themeKey) {
+      const selectedTheme = themeCatalog.find((theme) => theme.theme_key === themeKey);
+      setThemeRunValues((current) => ({
+        ...current,
+        theme_key: themeKey,
+        tone_funny_pct: Number(selectedTheme?.default_funny_pct ?? current.tone_funny_pct ?? 20),
+      }));
     }
 
     async function handleArchiveJob(job) {
@@ -658,6 +753,7 @@ const html = htm.bind(React.createElement);
           </div>
           <div className="inline-actions">
             <button type="button" className="button primary" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
+            <button type="button" className="button" onClick=${() => openThemeRunModal("manual")}>Generate From Theme</button>
             <button
               type="button"
               className="button"
@@ -765,10 +861,10 @@ const html = htm.bind(React.createElement);
               <button
                 type="button"
                 className="button primary"
-                onClick=${handleGenerateTodayCard}
+                onClick=${() => openThemeRunModal("today")}
                 disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
               >
-                ${creatingThemeJob ? "Generating..." : "Generate Today's Card"}
+                ${creatingThemeJob && themeRunMode === "today" ? "Generating..." : "Generate Today's Card"}
               </button>
               <${Link} to="/themes" className="button-link">Manage Themes<//>
             </div>
@@ -859,7 +955,7 @@ const html = htm.bind(React.createElement);
           ? html`
               <div className="modal-backdrop" onClick=${() => setCreateOpen(false)}>
                 <section className="modal" onClick=${(event) => event.stopPropagation()}>
-                  <h2 className="section-title">Create New Workflow Job</h2>
+                  <h2 className="section-title">Create New Card Job</h2>
                   <p className="section-copy">Starts generation and opens approval flow.</p>
                   <form onSubmit=${handleCreateJob}>
                     <div className="form-grid">
@@ -925,6 +1021,53 @@ const html = htm.bind(React.createElement);
                           onInput=${(event) => updateField("tone_emotion_pct", event.target.value)}
                         />
                       </div>
+                      <div className="form-field">
+                        <label htmlFor="copyStyle">Copy Style</label>
+                        <select
+                          id="copyStyle"
+                          value=${formValues.copy_style}
+                          onChange=${(event) => updateField("copy_style", event.target.value)}
+                        >
+                          <option value="short_crisp">short and crisp</option>
+                          <option value="warm_note">warm note</option>
+                          <option value="playful">playful</option>
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="targetWords">Target Words</label>
+                        <input
+                          id="targetWords"
+                          type="number"
+                          min="4"
+                          max="60"
+                          value=${formValues.target_words}
+                          onInput=${(event) => updateField("target_words", event.target.value)}
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="cardsPerTheme">Cards Per Theme</label>
+                        <input
+                          id="cardsPerTheme"
+                          type="number"
+                          min="1"
+                          max="50"
+                          value=${formValues.cards_per_theme}
+                          onInput=${(event) => updateField("cards_per_theme", event.target.value)}
+                        />
+                      </div>
+                      <div className="form-field full">
+                        <p className="form-helper">For actual eCards, use short and crisp with 12-20 words. Raise Funny % if you want lighter copy.</p>
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="jobNotes">Notes</label>
+                        <textarea
+                          id="jobNotes"
+                          rows="3"
+                          value=${formValues.notes}
+                          onInput=${(event) => updateField("notes", event.target.value)}
+                          placeholder="Optional operator notes"
+                        ></textarea>
+                      </div>
                     </div>
                     <div className="inline-actions" style=${{ marginTop: "12px" }}>
                       <button
@@ -941,6 +1084,108 @@ const html = htm.bind(React.createElement);
                       <button type="button" className="button" onClick=${() => setCreateOpen(false)}>
                         Cancel
                       </button>
+                    </div>
+                  </form>
+                </section>
+              </div>
+            `
+          : null}
+
+        ${themeRunOpen
+          ? html`
+              <div className="modal-backdrop" onClick=${() => setThemeRunOpen(false)}>
+                <section className="modal" onClick=${(event) => event.stopPropagation()}>
+                  <h2 className="section-title">${themeRunMode === "manual" ? "Generate From Theme" : "Use Today's Theme"}</h2>
+                  <p className="section-copy">
+                    ${themeRunMode === "manual"
+                      ? "Start a workflow job from any selected Theme Factory record."
+                      : resolvedTodayTheme
+                        ? `Resolved theme: ${resolvedTodayTheme.theme_name}`
+                        : "Use today's resolved theme."}
+                  </p>
+                  <form onSubmit=${handleSubmitThemeRun}>
+                    <div className="form-grid">
+                      ${themeRunMode === "manual"
+                        ? html`
+                            <div className="form-field full">
+                              <label htmlFor="runThemeKey">Theme</label>
+                              <select
+                                id="runThemeKey"
+                                value=${themeRunValues.theme_key}
+                                onChange=${(event) => handleThemeSelectionChange(event.target.value)}
+                                required
+                              >
+                                ${themeCatalog.map((theme) => html`<option key=${theme.id} value=${theme.theme_key}>${theme.theme_name}</option>`)}
+                              </select>
+                            </div>
+                          `
+                        : null}
+                      <div className="form-field">
+                        <label htmlFor="runCopyStyle">Copy Style</label>
+                        <select
+                          id="runCopyStyle"
+                          value=${themeRunValues.copy_style}
+                          onChange=${(event) => setThemeRunValues((current) => ({ ...current, copy_style: event.target.value }))}
+                        >
+                          <option value="short_crisp">short and crisp</option>
+                          <option value="warm_note">warm note</option>
+                          <option value="playful">playful</option>
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="runTargetWords">Target Words</label>
+                        <input
+                          id="runTargetWords"
+                          type="number"
+                          min="4"
+                          max="60"
+                          value=${themeRunValues.target_words}
+                          onInput=${(event) => setThemeRunValues((current) => ({ ...current, target_words: event.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="runFunnyPct">Funny %</label>
+                        <input
+                          id="runFunnyPct"
+                          type="number"
+                          min="0"
+                          max="100"
+                          value=${themeRunValues.tone_funny_pct}
+                          onInput=${(event) => setThemeRunValues((current) => ({ ...current, tone_funny_pct: event.target.value }))}
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="runCardsPerTheme">Cards Per Theme</label>
+                        <input
+                          id="runCardsPerTheme"
+                          type="number"
+                          min="1"
+                          max="50"
+                          value=${themeRunValues.cards_per_theme}
+                          onInput=${(event) => setThemeRunValues((current) => ({ ...current, cards_per_theme: event.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div className="form-field full">
+                        <p className="form-helper">This starts a real card job from the selected theme. Keep target words low if you want greeting-card copy instead of long paragraphs.</p>
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="runThemeNotes">Notes</label>
+                        <textarea
+                          id="runThemeNotes"
+                          rows="3"
+                          value=${themeRunValues.notes}
+                          onInput=${(event) => setThemeRunValues((current) => ({ ...current, notes: event.target.value }))}
+                          placeholder="Optional operator notes"
+                        ></textarea>
+                      </div>
+                    </div>
+                    <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button type="submit" className="button primary" disabled=${creatingThemeJob}>
+                        ${creatingThemeJob ? "Creating..." : themeRunMode === "manual" ? "Generate From Theme" : "Use Today's Theme"}
+                      </button>
+                      <button type="button" className="button" onClick=${() => setThemeRunOpen(false)}>Cancel</button>
                     </div>
                   </form>
                 </section>
@@ -965,11 +1210,14 @@ const html = htm.bind(React.createElement);
     const [error, setError] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
 
-    async function loadJobDetail() {
+    const loadJobDetail = useCallback(async (options = {}) => {
       if (!jobId) {
         return;
       }
-      setLoading(true);
+      const quiet = Boolean(options.quiet);
+      if (!quiet) {
+        setLoading(true);
+      }
       setError("");
       try {
         const [jobPayload, assetPayload, eventPayload, candidatePayload, shortlistPayload] = await Promise.all([
@@ -1000,13 +1248,27 @@ const html = htm.bind(React.createElement);
       } catch (requestError) {
         setError(requestError.message || "Unable to load job detail");
       } finally {
-        setLoading(false);
+        if (!quiet) {
+          setLoading(false);
+        }
       }
-    }
+    }, [jobId]);
 
     useEffect(() => {
       loadJobDetail();
-    }, [jobId]);
+    }, [loadJobDetail]);
+
+    useEffect(() => {
+      if (!jobId) {
+        return undefined;
+      }
+      const intervalId = window.setInterval(() => {
+        if (document.visibilityState === "visible") {
+          loadJobDetail({ quiet: true });
+        }
+      }, 10000);
+      return () => window.clearInterval(intervalId);
+    }, [jobId, loadJobDetail]);
 
     const stageBreakdown = useMemo(() => {
       if (!job) {
@@ -1073,25 +1335,18 @@ const html = htm.bind(React.createElement);
       [assets],
     );
 
-    async function handleStageRerun(stage) {
+    async function handleStageAction(actionKey, endpoint, successMessage) {
       if (!jobId) {
         return;
       }
-      const endpointMap = {
-        content: `/api/jobs/${jobId}/rerun/content`,
-        image: `/api/jobs/${jobId}/rerun/image`,
-        final_render: `/api/jobs/${jobId}/rerun/final-render`,
-        full: `/api/jobs/${jobId}/rerun/full`,
-      };
-      const actionKey = `rerun:${stage}`;
       setWorkingAction(actionKey);
       setError("");
       try {
-        const payload = await requestJSON(endpointMap[stage], { method: "POST" });
-        setStatusMessage(`Reran ${humanize(stage)} for ${payload.job_id} (retry ${payload.retry_count})`);
+        const payload = await requestJSON(endpoint, { method: "POST" });
+        setStatusMessage(successMessage || `${payload.job_id} updated`);
         await loadJobDetail();
       } catch (requestError) {
-        setError(requestError.message || `Unable to rerun ${humanize(stage)}`);
+        setError(requestError.message || "Unable to update stage");
       } finally {
         setWorkingAction("");
       }
@@ -1221,6 +1476,10 @@ const html = htm.bind(React.createElement);
                 </div>
                 <div className="key-value-grid job-meta-grid">
                   <article className="key-card">
+                    <p className="key-label">cards_per_theme</p>
+                    <p className="key-value">${job.cards_per_theme || 10}</p>
+                  </article>
+                  <article className="key-card">
                     <p className="key-label">retry_count</p>
                     <p className="key-value">${job.retry_count || 0}</p>
                   </article>
@@ -1233,24 +1492,171 @@ const html = htm.bind(React.createElement);
                     <p className="key-value">${formatDate(job.last_stage_finished_at)}</p>
                   </article>
                 </div>
-                <div className="section-head section-subhead">
-                  <div>
-                    <h2 className="section-title">Stage Reruns</h2>
-                    <p className="section-copy">Operational rerun controls for each major workflow stage.</p>
+                ${job.operator_notes
+                  ? html`
+                      <div className="status-panel neutral">Operator notes: ${job.operator_notes}</div>
+                    `
+                  : null}
+                <div className="status-stack padded-status-stack">
+                  <div className="status-panel neutral">
+                    Review order: approve the exact message text first, then generate and approve the image, then render and approve the final card.
+                  </div>
+                  <div className="status-panel neutral">
+                    This page refreshes automatically every 10 seconds while it stays open.
                   </div>
                 </div>
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Content Review</h2>
+                    <p className="section-copy">Approve or reject the exact message text shown below. Regenerate if the wording is wrong.</p>
+                  </div>
+                  <${StatusBadge} value=${job.content_approval_status || "pending"} />
+                </div>
+                ${job.content_preview
+                  ? html`<div className="content-preview-block">${job.content_preview}</div>`
+                  : html`<p className="empty-state">No content preview stored yet.</p>`}
                 <div className="inline-actions padded-actions">
-                  <button type="button" className="button" onClick=${() => handleStageRerun("content")} disabled=${workingAction === "rerun:content"}>
-                    ${workingAction === "rerun:content" ? "Rerunning..." : "Rerun Content"}
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("approve-content", `/api/jobs/${jobId}/approve-content`, `Content approved for ${jobId}`)}
+                    disabled=${workingAction === "approve-content" || !job.content_preview}
+                  >
+                    ${workingAction === "approve-content" ? "Working..." : "Approve Content"}
                   </button>
-                  <button type="button" className="button" onClick=${() => handleStageRerun("image")} disabled=${workingAction === "rerun:image"}>
-                    ${workingAction === "rerun:image" ? "Rerunning..." : "Rerun Image"}
+                  <button
+                    type="button"
+                    className="button danger"
+                    onClick=${() => handleStageAction("reject-content", `/api/jobs/${jobId}/reject-content`, `Content rejected for ${jobId}`)}
+                    disabled=${workingAction === "reject-content" || !job.content_preview}
+                  >
+                    ${workingAction === "reject-content" ? "Working..." : "Reject Content"}
                   </button>
-                  <button type="button" className="button" onClick=${() => handleStageRerun("final_render")} disabled=${workingAction === "rerun:final_render"}>
-                    ${workingAction === "rerun:final_render" ? "Rerunning..." : "Rerun Final Render"}
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("regenerate-content", `/api/jobs/${jobId}/regenerate-content`, `Content regenerated for ${jobId}`)}
+                    disabled=${workingAction === "regenerate-content"}
+                  >
+                    ${workingAction === "regenerate-content" ? "Working..." : "Regenerate Content"}
                   </button>
-                  <button type="button" className="button primary" onClick=${() => handleStageRerun("full")} disabled=${workingAction === "rerun:full"}>
-                    ${workingAction === "rerun:full" ? "Rerunning..." : "Rerun Full Workflow"}
+                </div>
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Image Review</h2>
+                    <p className="section-copy">These buttons apply to the exact image preview shown below. Generate it after content approval, then approve or reject it.</p>
+                  </div>
+                  <${StatusBadge} value=${job.image_approval_status || "pending"} />
+                </div>
+                ${imagePreviewSelection.currentCandidate
+                  ? html`
+                      <div className="image-grid image-grid-single">
+                        <article className="image-card">
+                          <a href=${imagePreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
+                            <img
+                              src=${imagePreviewSelection.currentCandidate.url}
+                              alt="Image Preview"
+                              loading="lazy"
+                              onError=${imagePreviewSelection.handleError}
+                            />
+                          </a>
+                          <p className="image-caption">Image Preview</p>
+                        </article>
+                      </div>
+                    `
+                  : imagePreviewSelection.exhausted
+                    ? html`<p className="empty-state">Preview unavailable.</p>`
+                    : html`<p className="empty-state">No image preview available yet.</p>`}
+                <div className="inline-actions padded-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("generate-image", `/api/jobs/${jobId}/generate-image`, `Image generated for ${jobId}`)}
+                    disabled=${workingAction === "generate-image" || job.content_approval_status !== "approved"}
+                  >
+                    ${workingAction === "generate-image" ? "Working..." : "Generate Image"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("regenerate-image", `/api/jobs/${jobId}/regenerate-image`, `Image regenerated for ${jobId}`)}
+                    disabled=${workingAction === "regenerate-image" || job.content_approval_status !== "approved"}
+                  >
+                    ${workingAction === "regenerate-image" ? "Working..." : "Regenerate Image"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("approve-image", `/api/jobs/${jobId}/approve-image`, `Image approved for ${jobId}`)}
+                    disabled=${workingAction === "approve-image" || !job.image_preview_url}
+                  >
+                    ${workingAction === "approve-image" ? "Working..." : "Approve Image"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button danger"
+                    onClick=${() => handleStageAction("reject-image", `/api/jobs/${jobId}/reject-image`, `Image rejected for ${jobId}`)}
+                    disabled=${workingAction === "reject-image" || !job.image_preview_url}
+                  >
+                    ${workingAction === "reject-image" ? "Working..." : "Reject Image"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Final Card Review</h2>
+                    <p className="section-copy">Render the final card, then approve or reject the exact final preview shown here.</p>
+                  </div>
+                  <${StatusBadge} value=${job.final_approval_status || "pending"} />
+                </div>
+                ${finalPreviewSelection.currentCandidate
+                  ? html`
+                      <div className="hero-preview">
+                        <a href=${finalPreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
+                          <img
+                            src=${finalPreviewSelection.currentCandidate.url}
+                            alt=${job.theme_name || "Generated eCard"}
+                            loading="lazy"
+                            onError=${finalPreviewSelection.handleError}
+                          />
+                        </a>
+                      </div>
+                    `
+                  : finalPreviewSelection.exhausted
+                    ? html`<p className="empty-state">Preview unavailable.</p>`
+                    : html`<p className="empty-state">No final card preview available yet.</p>`}
+                <div className="inline-actions padded-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("render-final", `/api/jobs/${jobId}/render-final`, `Final rendered for ${jobId}`)}
+                    disabled=${workingAction === "render-final" || job.image_approval_status !== "approved"}
+                  >
+                    ${workingAction === "render-final" ? "Working..." : "Render Final"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick=${() => handleStageAction("approve-final", `/api/jobs/${jobId}/approve-final`, `Final approved for ${jobId}`)}
+                    disabled=${workingAction === "approve-final" || !job.final_preview_url}
+                  >
+                    ${workingAction === "approve-final" ? "Working..." : "Approve Final"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button danger"
+                    onClick=${() => handleStageAction("reject-final", `/api/jobs/${jobId}/reject-final`, `Final rejected for ${jobId}`)}
+                    disabled=${workingAction === "reject-final" || !job.final_preview_url}
+                  >
+                    ${workingAction === "reject-final" ? "Working..." : "Reject Final"}
                   </button>
                 </div>
               </section>
@@ -1331,182 +1737,122 @@ const html = htm.bind(React.createElement);
                 </section>
               </section>
 
-              <section className="section-panel">
-                <div className="section-head">
-                  <div>
-                    <h2 className="section-title">Candidate Pool</h2>
-                    <p className="section-copy">All generated candidates across models before shortlist selection.</p>
-                  </div>
-                  <p className="section-copy">${candidates.length} total candidates</p>
-                </div>
-                ${candidates.length === 0
-                  ? html`<p className="empty-state">No candidates stored for this job yet.</p>`
-                  : html`
-                      <div className="table-wrap">
-                        <table className="console-table">
-                          <thead>
-                            <tr>
-                              <th>model</th>
-                              <th>raw_score</th>
-                              <th>judged_score</th>
-                              <th>shortlist</th>
-                              <th>selected</th>
-                              <th>text</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            ${candidates.map(
-                              (candidate) => html`
-                                <tr key=${candidate.id || `${candidate.model}_${candidate.text}`}>
-                                  <td>${candidate.model}</td>
-                                  <td>${Number(candidate.raw_score || 0).toFixed(3)}</td>
-                                  <td>${Number(candidate.judged_score ?? candidate.judge_score ?? 0).toFixed(3)}</td>
-                                  <td><${StatusBadge} value=${candidate.is_shortlisted ? "shortlisted" : "pooled"} /></td>
-                                  <td><${StatusBadge} value=${candidate.is_selected ? "selected" : "not_selected"} /></td>
-                                  <td>${truncateText(candidate.text || candidate.content_text, 200)}</td>
-                                </tr>
-                              `,
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    `}
-              </section>
+              <details className="section-panel debug-panel">
+                <summary className="debug-summary">
+                  <span>Internal Debug</span>
+                  <span className="section-copy">Candidate pool, shortlist ranking, and alternate preview renders.</span>
+                </summary>
 
-              <section className="section-panel">
-                <div className="section-head">
-                  <div>
-                    <h2 className="section-title">Top 10 Shortlist</h2>
-                    <p className="section-copy">Select shortlisted phrases and render internal card previews from them.</p>
-                  </div>
-                  <button type="button" className="button primary" onClick=${handleRenderShortlist} disabled=${workingAction === "render-shortlist" || shortlist.length === 0}>
-                    ${workingAction === "render-shortlist" ? "Rendering..." : "Render Shortlist"}
-                  </button>
-                </div>
-                ${shortlist.length === 0
-                  ? html`<p className="empty-state">No shortlist available for this job yet.</p>`
-                  : html`
-                      <div className="table-wrap">
-                        <table className="console-table">
-                          <thead>
-                            <tr>
-                              <th>use</th>
-                              <th>rank</th>
-                              <th>model</th>
-                              <th>score</th>
-                              <th>text</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            ${shortlist.map(
-                              (entry) => html`
-                                <tr key=${entry.candidate_id}>
-                                  <td>
-                                    <input
-                                      type="checkbox"
-                                      checked=${shortlistSelection.includes(Number(entry.candidate_id))}
-                                      onChange=${(event) => toggleShortlistSelection(Number(entry.candidate_id), event.target.checked)}
-                                    />
-                                  </td>
-                                  <td>${entry.rank}</td>
-                                  <td>${entry.model}</td>
-                                  <td>${Number(entry.score || 0).toFixed(3)}</td>
-                                  <td>${truncateText(entry.text, 220)}</td>
-                                </tr>
-                              `,
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    `}
-              </section>
-
-              <section className="section-panel">
-                <div className="section-head">
-                  <div>
-                    <h2 className="section-title">Generated Card Preview</h2>
-                    <p className="section-copy">Best available final or preview image for this job.</p>
-                  </div>
-                </div>
-                ${finalPreviewSelection.currentCandidate
-                  ? html`
-                      <div className="hero-preview">
-                        <a href=${finalPreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
-                          <img
-                            src=${finalPreviewSelection.currentCandidate.url}
-                            alt=${job.theme_name || "Generated eCard"}
-                            loading="lazy"
-                            onError=${finalPreviewSelection.handleError}
-                          />
-                        </a>
-                      </div>
-                    `
-                  : finalPreviewSelection.exhausted
-                    ? html`<p className="empty-state">Preview unavailable.</p>`
-                    : html`<p className="empty-state">No preview or final image available yet.</p>`}
-              </section>
-
-              <section className="two-column">
-                <section className="section-panel">
+                <section className="section-panel section-embedded">
                   <div className="section-head">
                     <div>
-                      <h2 className="section-title">Image Preview</h2>
-                      <p className="section-copy">Intermediate generated image if available.</p>
+                      <h2 className="section-title">Candidate Pool</h2>
+                      <p className="section-copy">All stored text variants for this job. Useful for debugging, not for normal approval.</p>
                     </div>
+                    <p className="section-copy">${candidates.length} total candidates</p>
                   </div>
-                  ${imagePreviewSelection.currentCandidate
-                    ? html`
-                        <div className="image-grid image-grid-single">
-                          <article className="image-card">
-                            <a href=${imagePreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
-                              <img
-                                src=${imagePreviewSelection.currentCandidate.url}
-                                alt="Image Preview"
-                                loading="lazy"
-                                onError=${imagePreviewSelection.handleError}
-                              />
-                            </a>
-                            <p className="image-caption">Image Preview</p>
-                          </article>
+                  ${candidates.length === 0
+                    ? html`<p className="empty-state">No candidates stored for this job yet.</p>`
+                    : html`
+                        <div className="table-wrap">
+                          <table className="console-table">
+                            <thead>
+                              <tr>
+                                <th>model</th>
+                                <th>raw_score</th>
+                                <th>judged_score</th>
+                                <th>shortlist</th>
+                                <th>selected</th>
+                                <th>text</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${candidates.map(
+                                (candidate) => html`
+                                  <tr key=${candidate.id || `${candidate.model}_${candidate.text}`}>
+                                    <td>${candidate.model}</td>
+                                    <td>${Number(candidate.raw_score || 0).toFixed(3)}</td>
+                                    <td>${Number(candidate.judged_score ?? candidate.judge_score ?? 0).toFixed(3)}</td>
+                                    <td><${StatusBadge} value=${candidate.is_shortlisted ? "shortlisted" : "pooled"} /></td>
+                                    <td><${StatusBadge} value=${candidate.is_selected ? "selected" : "not_selected"} /></td>
+                                    <td>${truncateText(candidate.text || candidate.content_text, 200)}</td>
+                                  </tr>
+                                `,
+                              )}
+                            </tbody>
+                          </table>
                         </div>
-                      `
-                    : imagePreviewSelection.exhausted
-                      ? html`<p className="empty-state">Preview unavailable.</p>`
-                      : html`<p className="empty-state">No image preview available yet.</p>`}
+                      `}
                 </section>
 
-                <section className="section-panel">
+                <section className="section-panel section-embedded">
                   <div className="section-head">
                     <div>
-                      <h2 className="section-title">Content Preview</h2>
-                      <p className="section-copy">Approved or generated message copy stored on the job.</p>
+                      <h2 className="section-title">Top 10 Shortlist</h2>
+                      <p className="section-copy">Internal ranking output. Only use this if you want to inspect or render alternate internal previews.</p>
+                    </div>
+                    <button type="button" className="button primary" onClick=${handleRenderShortlist} disabled=${workingAction === "render-shortlist" || shortlist.length === 0}>
+                      ${workingAction === "render-shortlist" ? "Rendering..." : "Render Shortlist"}
+                    </button>
+                  </div>
+                  ${shortlist.length === 0
+                    ? html`<p className="empty-state">No shortlist available for this job yet.</p>`
+                    : html`
+                        <div className="table-wrap">
+                          <table className="console-table">
+                            <thead>
+                              <tr>
+                                <th>use</th>
+                                <th>rank</th>
+                                <th>model</th>
+                                <th>score</th>
+                                <th>text</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${shortlist.map(
+                                (entry) => html`
+                                  <tr key=${entry.candidate_id}>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked=${shortlistSelection.includes(Number(entry.candidate_id))}
+                                        onChange=${(event) => toggleShortlistSelection(Number(entry.candidate_id), event.target.checked)}
+                                      />
+                                    </td>
+                                    <td>${entry.rank}</td>
+                                    <td>${entry.model}</td>
+                                    <td>${Number(entry.score || 0).toFixed(3)}</td>
+                                    <td>${truncateText(entry.text, 220)}</td>
+                                  </tr>
+                                `,
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      `}
+                </section>
+
+                <section className="section-panel section-embedded">
+                  <div className="section-head">
+                    <div>
+                      <h2 className="section-title">Additional Previews</h2>
+                      <p className="section-copy">Alternate preview variants, shortlist renders, and exported images discovered on this job.</p>
                     </div>
                   </div>
-                  ${job.content_preview
-                    ? html`<div className="content-preview-block">${job.content_preview}</div>`
-                    : html`<p className="empty-state">No content preview stored yet.</p>`}
+                  ${previewImages.length === 0 && shortlistPreviewImages.length === 0
+                    ? html`<p className="empty-state">No preview variants available yet.</p>`
+                    : html`
+                        <div className="image-grid">
+                          ${[...previewImages, ...shortlistPreviewImages].map(
+                            (image) => html`
+                              <${PreviewVariantCard} key=${image.url} image=${image} />
+                            `,
+                          )}
+                        </div>
+                      `}
                 </section>
-              </section>
-
-              <section className="section-panel">
-                <div className="section-head">
-                  <div>
-                    <h2 className="section-title">Additional Previews</h2>
-                    <p className="section-copy">All preview variants, shortlist renders, and exported images discovered on this job.</p>
-                  </div>
-                </div>
-                ${previewImages.length === 0 && shortlistPreviewImages.length === 0
-                  ? html`<p className="empty-state">No preview variants available yet.</p>`
-                  : html`
-                      <div className="image-grid">
-                        ${[...previewImages, ...shortlistPreviewImages].map(
-                          (image) => html`
-                            <${PreviewVariantCard} key=${image.url} image=${image} />
-                          `,
-                        )}
-                      </div>
-                    `}
-              </section>
+              </details>
             `
           : html`<p className="empty-state">${loading ? "Loading job details..." : "Job not found."}</p>`}
       </section>
@@ -1530,6 +1876,7 @@ const html = htm.bind(React.createElement);
     const [themeEditorOpen, setThemeEditorOpen] = useState(false);
     const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
     const [overrideEditorOpen, setOverrideEditorOpen] = useState(false);
+    const [todayThemeRunOpen, setTodayThemeRunOpen] = useState(false);
     const [editingThemeId, setEditingThemeId] = useState(null);
     const [editingScheduleId, setEditingScheduleId] = useState(null);
     const [themeForm, setThemeForm] = useState({
@@ -1569,6 +1916,7 @@ const html = htm.bind(React.createElement);
       force_top_priority: true,
       created_by: "console_admin",
     });
+    const [todayThemeRunForm, setTodayThemeRunForm] = useState(buildThemeRunDefaults());
 
     const resolvedTodayTheme = todayTheme && typeof todayTheme === "object" ? todayTheme.theme || null : null;
     const bucketCounts = useMemo(
@@ -1578,7 +1926,7 @@ const html = htm.bind(React.createElement);
           accumulator[bucket] = (accumulator[bucket] || 0) + 1;
           return accumulator;
         },
-        { everyday: 0, special: 0, current_event: 0 },
+        { everyday: 0, occasion: 0, current_event: 0 },
       ),
       [catalog],
     );
@@ -1591,10 +1939,10 @@ const html = htm.bind(React.createElement);
           items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "everyday"),
         },
         {
-          key: "special",
+          key: "occasion",
           title: "Occasion Themes",
           description: "Date-range and seasonal campaign themes such as Ramadan, Holi, and Valentine's Week.",
-          items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "special"),
+          items: catalog.filter((theme) => String(theme.theme_bucket || "everyday") === "occasion"),
         },
         {
           key: "current_event",
@@ -1837,11 +2185,18 @@ const html = htm.bind(React.createElement);
       }
     }
 
-    async function handleUseTodayTheme() {
+    async function handleUseTodayTheme(event) {
+      if (event) {
+        event.preventDefault();
+      }
       setWorkingAction("create-today-job");
       setError("");
       try {
-        const created = await requestJSON("/api/jobs/create-daily-theme-job", { method: "POST" });
+        const created = await requestJSON("/api/jobs/create-daily-theme-job", {
+          method: "POST",
+          body: JSON.stringify(buildThemeRunPayload(todayThemeRunForm)),
+        });
+        setTodayThemeRunOpen(false);
         setStatusMessage(`Created ${created.job_id} from today's theme`);
         navigate(`/jobs/${created.job_id}`);
       } catch (requestError) {
@@ -1865,7 +2220,10 @@ const html = htm.bind(React.createElement);
             <button
               type="button"
               className="button primary"
-              onClick=${handleUseTodayTheme}
+              onClick=${() => {
+                setTodayThemeRunForm(buildThemeRunDefaults(resolvedTodayTheme));
+                setTodayThemeRunOpen(true);
+              }}
               disabled=${workingAction === "create-today-job" || !resolvedTodayTheme}
             >
               ${workingAction === "create-today-job" ? "Creating..." : "Use Today's Theme"}
@@ -1887,7 +2245,7 @@ const html = htm.bind(React.createElement);
           </article>
           <article className="summary-card">
             <p className="summary-label">Occasion Themes</p>
-            <p className="summary-value">${bucketCounts.special}</p>
+            <p className="summary-value">${bucketCounts.occasion}</p>
           </article>
           <article className="summary-card">
             <p className="summary-label">Current Event Themes</p>
@@ -2119,7 +2477,6 @@ const html = htm.bind(React.createElement);
                         <th>start_date</th>
                         <th>end_date</th>
                         <th>weekday_mask</th>
-                        <th>month_mask</th>
                         <th>priority</th>
                         <th>actions</th>
                       </tr>
@@ -2133,7 +2490,6 @@ const html = htm.bind(React.createElement);
                             <td>${schedule.start_date ? formatDate(schedule.start_date) : "-"}</td>
                             <td>${schedule.end_date ? formatDate(schedule.end_date) : "-"}</td>
                             <td>${(schedule.weekday_mask || []).join(", ") || "-"}</td>
-                            <td>${(schedule.month_mask || []).join(", ") || "-"}</td>
                             <td>${schedule.priority}</td>
                             <td>
                               <button type="button" className="button" onClick=${() => openScheduleEditor(schedule)}>
@@ -2148,6 +2504,89 @@ const html = htm.bind(React.createElement);
                 </div>
               `}
         </section>
+
+        ${todayThemeRunOpen
+          ? html`
+              <div className="modal-backdrop" onClick=${() => setTodayThemeRunOpen(false)}>
+                <section className="modal" onClick=${(event) => event.stopPropagation()}>
+                  <h2 className="section-title">Use Today's Theme</h2>
+                  <p className="section-copy">
+                    ${resolvedTodayTheme ? `Resolved theme: ${resolvedTodayTheme.theme_name}` : "No theme resolved yet."}
+                  </p>
+                  <form onSubmit=${handleUseTodayTheme}>
+                    <div className="form-grid">
+                      <div className="form-field">
+                        <label htmlFor="todayCopyStyle">Copy Style</label>
+                        <select
+                          id="todayCopyStyle"
+                          value=${todayThemeRunForm.copy_style}
+                          onChange=${(event) => setTodayThemeRunForm((current) => ({ ...current, copy_style: event.target.value }))}
+                        >
+                          <option value="short_crisp">short and crisp</option>
+                          <option value="warm_note">warm note</option>
+                          <option value="playful">playful</option>
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="todayTargetWords">Target Words</label>
+                        <input
+                          id="todayTargetWords"
+                          type="number"
+                          min="4"
+                          max="60"
+                          value=${todayThemeRunForm.target_words}
+                          onInput=${(event) => setTodayThemeRunForm((current) => ({ ...current, target_words: event.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="todayFunnyPct">Funny %</label>
+                        <input
+                          id="todayFunnyPct"
+                          type="number"
+                          min="0"
+                          max="100"
+                          value=${todayThemeRunForm.tone_funny_pct}
+                          onInput=${(event) => setTodayThemeRunForm((current) => ({ ...current, tone_funny_pct: event.target.value }))}
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="todayCardsPerTheme">Cards Per Theme</label>
+                        <input
+                          id="todayCardsPerTheme"
+                          type="number"
+                          min="1"
+                          max="50"
+                          value=${todayThemeRunForm.cards_per_theme}
+                          onInput=${(event) => setTodayThemeRunForm((current) => ({ ...current, cards_per_theme: event.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div className="form-field full">
+                        <p className="form-helper">Use short and crisp if you want greeting-card style output. Raise Funny % only when the theme can support it.</p>
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="todayThemeNotes">Notes</label>
+                        <textarea
+                          id="todayThemeNotes"
+                          rows="3"
+                          value=${todayThemeRunForm.notes}
+                          onInput=${(event) => setTodayThemeRunForm((current) => ({ ...current, notes: event.target.value }))}
+                          placeholder="Optional operator notes"
+                        ></textarea>
+                      </div>
+                    </div>
+                    <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button type="submit" className="button primary" disabled=${workingAction === "create-today-job" || !resolvedTodayTheme}>
+                        ${workingAction === "create-today-job" ? "Creating..." : "Use Today's Theme"}
+                      </button>
+                      <button type="button" className="button" onClick=${() => setTodayThemeRunOpen(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </section>
+              </div>
+            `
+          : null}
 
         ${themeEditorOpen
           ? html`
@@ -2168,7 +2607,7 @@ const html = htm.bind(React.createElement);
                         <label htmlFor="themeBucket">Theme Bucket</label>
                         <select id="themeBucket" value=${themeForm.theme_bucket} onChange=${(event) => setThemeForm((current) => ({ ...current, theme_bucket: event.target.value }))}>
                           <option value="everyday">everyday</option>
-                          <option value="special">occasion</option>
+                          <option value="occasion">occasion</option>
                           <option value="current_event">current event</option>
                         </select>
                       </div>

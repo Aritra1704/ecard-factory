@@ -137,6 +137,7 @@ def test_model_defaults_are_configured(configured_env: dict[str, str]) -> None:
     assert models.Card.__table__.c.cost_image.default.arg == Decimal("0.0400")
     assert models.SocialPost.__table__.c.reach.default.arg == 0
     assert models.Alert.__table__.c.status.default.arg == "pending"
+    assert models.CardJob.__table__.c.cards_per_theme.default.arg == 10
     assert models.Card.__table__.c.created_at.server_default is not None
     assert models.Listing.__table__.c.listed_at.server_default is not None
     assert models.Sale.__table__.c.sale_date.server_default is not None

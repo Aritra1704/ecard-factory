@@ -61,6 +61,16 @@ class ThemeService:
         state = await self._load_state(session)
         return state.catalog
 
+    async def get_theme_by_key(self, session: AsyncSession | None, theme_key: str) -> ThemeCatalogResponse:
+        """Return one active theme catalog record by key."""
+
+        key = theme_key.strip().lower()
+        state = await self._load_state(session)
+        for theme in state.catalog:
+            if theme.is_active and theme.theme_key.strip().lower() == key:
+                return theme
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Theme not found")
+
     async def get_today_theme(
         self,
         session: AsyncSession | None,

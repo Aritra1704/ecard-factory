@@ -52,6 +52,69 @@ def sample_start_payload() -> dict[str, object]:
     }
 
 
+def override_theme_factory_dependencies(main_module):
+    """Override theme dependencies so theme-backed job routes work without a live database."""
+
+    database_module = importlib.import_module("app.database")
+    theme_factory_schemas = importlib.import_module("app.schemas.theme_factory")
+    theme_service_module = importlib.import_module("app.services.theme_service")
+
+    class StubThemeService:
+        async def get_today_theme(self, _session, **_kwargs):
+            theme = theme_factory_schemas.ThemeResolvedPayload(
+                theme_id=1,
+                theme_key="holi-week",
+                theme_name="Holi Week",
+                description="Holi celebration, colors, joy, togetherness",
+                theme_bucket="occasion",
+                theme_type="campaign",
+                cultural_context="indian",
+                tone_style="festive",
+                tone_funny_pct=20,
+                tone_emotion_pct=85,
+                audience="friends and family",
+                visual_style="festive",
+                priority=94,
+            )
+            return theme_factory_schemas.ThemeTodayResponse(
+                resolved=True,
+                timezone="Asia/Kolkata",
+                plan_date=datetime(2026, 3, 13, tzinfo=timezone.utc).date(),
+                weekday="friday",
+                source="schedule",
+                schedule_type="date_range",
+                schedule_id=11,
+                resolution_note="Holi campaign window",
+                theme=theme,
+            )
+
+        async def get_theme_by_key(self, _session, theme_key: str):
+            return theme_factory_schemas.ThemeCatalogResponse(
+                id=2,
+                theme_key=theme_key,
+                theme_name="Holi Week" if theme_key == "holi-week" else "Diwali Week",
+                description="Manual theme selection",
+                theme_bucket="occasion",
+                theme_type="campaign",
+                cultural_context="indian",
+                tone_style="festive",
+                default_funny_pct=20,
+                default_emotion_pct=85,
+                default_audience="friends and family",
+                default_visual_style="festive",
+                is_active=True,
+                priority=94,
+                created_at=None,
+                updated_at=None,
+            )
+
+    async def override_get_db():
+        yield None
+
+    main_module.app.dependency_overrides[database_module.get_db] = override_get_db
+    main_module.app.dependency_overrides[theme_service_module.get_theme_service] = lambda: StubThemeService()
+
+
 def _assets_dir() -> Path:
     """Return configured storage root used by workflow endpoints during tests."""
 
@@ -92,6 +155,7 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         get_after_start = client.get(f"/api/jobs/{job_id}")
         assert get_after_start.status_code == 200
         assert get_after_start.json()["status"] == "content_pending_approval"
+        assert get_after_start.json()["cards_per_theme"] == 10
 
         content_response = client.post(
             f"/api/jobs/{job_id}/content-approval",
@@ -145,6 +209,7 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         list_payload = list_response.json()
         list_item = next(item for item in list_payload if item["job_id"] == job_id)
         assert list_item["content_preview"]
+        assert list_item["cards_per_theme"] == 10
         assert list_item["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
         assert list_item["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
         assert list_item["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
@@ -328,6 +393,152 @@ def test_workflow_v1_rerun_and_shortlist_render_endpoints(configured_env: dict[s
         assert debug_payload["retry_count"] == 4
         assert debug_payload["last_stage_started_at"] is not None
         assert debug_payload["last_stage_finished_at"] is not None
+
+
+def test_workflow_v1_theme_start_routes_store_cards_per_theme(configured_env: dict[str, str]) -> None:
+    """Daily-theme and manual-theme job creation should persist operator settings and short card copy."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+    override_theme_factory_dependencies(main_module)
+
+    try:
+        with TestClient(main_module.app) as client:
+            daily_response = client.post(
+                "/api/jobs/create-daily-theme-job",
+                json={
+                    "cards_per_theme": 12,
+                    "notes": "today run",
+                    "copy_style": "short_crisp",
+                    "target_words": 14,
+                    "tone_funny_pct": 35,
+                },
+            )
+            assert daily_response.status_code == 201
+            daily_job_id = daily_response.json()["job_id"]
+
+            daily_debug = client.get(f"/api/jobs/{daily_job_id}")
+            assert daily_debug.status_code == 200
+            assert daily_debug.json()["theme_name"] == "Holi Week"
+            assert daily_debug.json()["cards_per_theme"] == 12
+            assert daily_debug.json()["operator_notes"] == "today run"
+            assert len(str(daily_debug.json()["content_preview"]).split()) <= 14
+
+            manual_response = client.post(
+                "/api/jobs/start-from-theme",
+                json={
+                    "theme_key": "holi-week",
+                    "cards_per_theme": 7,
+                    "notes": "manual run from theme factory",
+                    "copy_style": "playful",
+                    "target_words": 12,
+                    "tone_funny_pct": 55,
+                },
+            )
+            assert manual_response.status_code == 201
+            manual_job_id = manual_response.json()["job_id"]
+
+            manual_debug = client.get(f"/api/jobs/{manual_job_id}")
+            assert manual_debug.status_code == 200
+            assert manual_debug.json()["theme_name"] == "Holi Week"
+            assert manual_debug.json()["cards_per_theme"] == 7
+            assert manual_debug.json()["operator_notes"] == "manual run from theme factory"
+            assert len(str(manual_debug.json()["content_preview"]).split()) <= 12
+    finally:
+        main_module.app.dependency_overrides.clear()
+
+
+def test_workflow_v1_operator_stage_control_endpoints(configured_env: dict[str, str]) -> None:
+    """Operator stage control endpoints should allow approve/reject/generate/render actions per stage."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        content_job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+        reject_content = client.post(f"/api/jobs/{content_job_id}/reject-content")
+        assert reject_content.status_code == 200
+        assert reject_content.json()["status"] == "content_rejected"
+        assert reject_content.json()["content_approval_status"] == "rejected"
+
+        image_job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+        approve_content = client.post(f"/api/jobs/{image_job_id}/approve-content")
+        assert approve_content.status_code == 200
+        assert approve_content.json()["status"] == "content_approved"
+
+        generate_image = client.post(f"/api/jobs/{image_job_id}/generate-image")
+        assert generate_image.status_code == 200
+        assert generate_image.json()["status"] == "image_pending_approval"
+        assert generate_image.json()["image_preview_url"].endswith("_image_preview.png")
+
+        reject_image = client.post(f"/api/jobs/{image_job_id}/reject-image")
+        assert reject_image.status_code == 200
+        assert reject_image.json()["status"] == "image_rejected"
+        assert reject_image.json()["image_approval_status"] == "rejected"
+
+        final_job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+        assert client.post(f"/api/jobs/{final_job_id}/approve-content").status_code == 200
+        assert client.post(f"/api/jobs/{final_job_id}/generate-image").status_code == 200
+        assert client.post(f"/api/jobs/{final_job_id}/approve-image").status_code == 200
+
+        render_final = client.post(f"/api/jobs/{final_job_id}/render-final")
+        assert render_final.status_code == 200
+        assert render_final.json()["status"] == "final_pending_approval"
+        assert render_final.json()["final_preview_url"].endswith("_content_preview.png")
+
+        reject_final = client.post(f"/api/jobs/{final_job_id}/reject-final")
+        assert reject_final.status_code == 200
+        assert reject_final.json()["status"] == "final_rejected"
+        assert reject_final.json()["final_approval_status"] == "rejected"
+
+        regen_job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+        regenerate_content = client.post(f"/api/jobs/{regen_job_id}/regenerate-content")
+        assert regenerate_content.status_code == 200
+        assert regenerate_content.json()["status"] == "content_pending_approval"
+        assert regenerate_content.json()["retry_count"] == 1
+
+        assert client.post(f"/api/jobs/{regen_job_id}/approve-content").status_code == 200
+        assert client.post(f"/api/jobs/{regen_job_id}/generate-image").status_code == 200
+
+        regenerate_image = client.post(f"/api/jobs/{regen_job_id}/regenerate-image")
+        assert regenerate_image.status_code == 200
+        assert regenerate_image.json()["status"] == "image_pending_approval"
+        assert regenerate_image.json()["retry_count"] == 2
+
+        assert client.post(f"/api/jobs/{regen_job_id}/approve-image").status_code == 200
+        assert client.post(f"/api/jobs/{regen_job_id}/render-final").status_code == 200
+        approve_final = client.post(f"/api/jobs/{regen_job_id}/approve-final")
+        assert approve_final.status_code == 200
+        assert approve_final.json()["status"] == "completed"
+        assert approve_final.json()["final_asset_urls"]["png"].endswith("_final.png")
+
+
+def test_workflow_v1_generic_rerun_stage_endpoint(configured_env: dict[str, str]) -> None:
+    """The generic rerun-stage endpoint should dispatch only the requested stage."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+
+        rerun_content = client.post(f"/api/jobs/{job_id}/rerun-stage", json={"stage": "content_generation"})
+        assert rerun_content.status_code == 200
+        assert rerun_content.json()["stage"] == "content"
+        assert rerun_content.json()["retry_count"] == 1
+
+        assert client.post(f"/api/jobs/{job_id}/approve-content").status_code == 200
+        assert client.post(f"/api/jobs/{job_id}/generate-image").status_code == 200
+
+        rerun_image = client.post(f"/api/jobs/{job_id}/rerun-stage", json={"stage": "image_generation"})
+        assert rerun_image.status_code == 200
+        assert rerun_image.json()["stage"] == "image"
+        assert rerun_image.json()["retry_count"] == 2
+
+        assert client.post(f"/api/jobs/{job_id}/approve-image").status_code == 200
+        assert client.post(f"/api/jobs/{job_id}/render-final").status_code == 200
+
+        rerun_final = client.post(f"/api/jobs/{job_id}/rerun-stage", json={"stage": "final_render"})
+        assert rerun_final.status_code == 200
+        assert rerun_final.json()["stage"] == "final_render"
+        assert rerun_final.json()["retry_count"] == 3
 
 
 def test_workflow_v1_final_approval_invalid_decision_returns_400(configured_env: dict[str, str]) -> None:
