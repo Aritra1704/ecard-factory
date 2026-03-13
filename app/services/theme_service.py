@@ -256,6 +256,13 @@ class ThemeService:
     ) -> ThemeScheduleDashboardResponse:
         state = await self._load_state(session)
         today = datetime.now(tz=KOLKATA_TZ).date()
+        if not state.catalog:
+            return ThemeScheduleDashboardResponse(
+                timezone="Asia/Kolkata",
+                week_schedule=[],
+                month_schedule=[],
+                active_overrides=[],
+            )
         week_start = today - timedelta(days=today.weekday())
         week_schedule = [
             self._resolve_for_date(plan_date=week_start + timedelta(days=offset), state=state, region=region, country=country)
@@ -451,7 +458,7 @@ class ThemeService:
 
     async def _load_state(self, session: AsyncSession | None) -> _ThemeFactoryState:
         if session is None:
-            return self._fallback_state()
+            return self._empty_state()
 
         try:
             catalog_result = await session.execute(
@@ -468,8 +475,8 @@ class ThemeService:
                 .order_by(ThemeOverride.priority.desc(), ThemeOverride.id.desc())
             )
         except Exception:  # noqa: BLE001
-            logger.exception("theme factory database read failed; falling back to built-in seed data")
-            return self._fallback_state()
+            logger.exception("theme factory database read failed; returning empty Theme Factory state")
+            return self._empty_state()
 
         catalog_rows = [self._catalog_response(row) for row in catalog_result.scalars().all()]
         schedule_rows = [
@@ -484,17 +491,17 @@ class ThemeService:
         ]
 
         if not catalog_rows:
-            return self._fallback_state()
+            return self._empty_state()
 
         return _ThemeFactoryState(catalog=catalog_rows, schedules=schedule_rows, overrides=override_rows, source="database")
 
     @staticmethod
-    def _fallback_state() -> _ThemeFactoryState:
+    def _empty_state() -> _ThemeFactoryState:
         return _ThemeFactoryState(
-            catalog=[item.model_copy(deep=True) for item in _FALLBACK_CATALOG],
-            schedules=[item.model_copy(deep=True) for item in _FALLBACK_SCHEDULES],
-            overrides=[item.model_copy(deep=True) for item in _FALLBACK_OVERRIDES],
-            source="seed_fallback",
+            catalog=[],
+            schedules=[],
+            overrides=[],
+            source="empty",
         )
 
     @staticmethod
@@ -551,6 +558,21 @@ class ThemeService:
         target_dt = datetime.combine(plan_date, time(hour=12), tzinfo=KOLKATA_TZ)
         weekday = WEEKDAY_ORDER[plan_date.weekday()]
 
+        if not theme_lookup:
+            return ThemeTodayResponse(
+                resolved=False,
+                message="No theme resolved yet",
+                timezone="Asia/Kolkata",
+                plan_date=plan_date,
+                weekday=weekday,
+                source=None,
+                schedule_type=None,
+                schedule_id=None,
+                override_id=None,
+                resolution_note=None,
+                theme=None,
+            )
+
         override_candidates = [
             item
             for item in state.overrides
@@ -575,7 +597,7 @@ class ThemeService:
                 schedule_id=None,
                 override_id=chosen.id,
                 resolution_note=chosen.reason,
-                theme=self._resolved_theme_payload(theme_lookup.get(chosen.theme_id)),
+                theme=self._resolved_theme_payload(theme_lookup[chosen.theme_id]),
             )
 
         active_schedules = [
@@ -626,26 +648,6 @@ class ThemeService:
                 theme=self._resolved_theme_payload(theme_lookup[chosen.theme_id]),
             )
 
-        monthly_candidates = [
-            item
-            for item in active_schedules
-            if item.schedule_type == "monthly_recurring" and plan_date.month in set(item.month_mask)
-        ]
-        monthly_candidates.sort(key=lambda item: (item.priority, theme_lookup[item.theme_id].priority), reverse=True)
-        if monthly_candidates:
-            chosen = monthly_candidates[0]
-            return ThemeTodayResponse(
-                timezone="Asia/Kolkata",
-                plan_date=plan_date,
-                weekday=weekday,
-                source="schedule",
-                schedule_type=chosen.schedule_type,
-                schedule_id=chosen.id,
-                override_id=None,
-                resolution_note=chosen.notes,
-                theme=self._resolved_theme_payload(theme_lookup[chosen.theme_id]),
-            )
-
         evergreen_candidates = [item for item in state.catalog if item.is_active and item.theme_type == "evergreen"]
         evergreen_candidates.sort(key=lambda item: item.priority, reverse=True)
         if evergreen_candidates:
@@ -662,27 +664,29 @@ class ThemeService:
                 theme=self._resolved_theme_payload(chosen),
             )
 
-        chosen = state.catalog[0] if state.catalog else _FALLBACK_CATALOG[0]
         return ThemeTodayResponse(
+            resolved=False,
+            message="No theme resolved yet",
             timezone="Asia/Kolkata",
             plan_date=plan_date,
             weekday=weekday,
-            source=state.source,
+            source=None,
             schedule_type=None,
             schedule_id=None,
             override_id=None,
-            resolution_note="Resolved from built-in seed fallback.",
-            theme=self._resolved_theme_payload(chosen),
+            resolution_note=None,
+            theme=None,
         )
 
     @staticmethod
-    def _resolved_theme_payload(theme: ThemeCatalogResponse | None) -> ThemeResolvedPayload:
-        source_theme = theme or _FALLBACK_CATALOG[0]
+    def _resolved_theme_payload(theme: ThemeCatalogResponse) -> ThemeResolvedPayload:
+        source_theme = theme
         return ThemeResolvedPayload(
             theme_id=source_theme.id,
             theme_key=source_theme.theme_key,
             theme_name=source_theme.theme_name,
             description=source_theme.description,
+            theme_bucket=source_theme.theme_bucket,
             theme_type=source_theme.theme_type,
             cultural_context=source_theme.cultural_context,
             tone_style=source_theme.tone_style,

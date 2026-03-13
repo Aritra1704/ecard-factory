@@ -63,6 +63,8 @@ class StartJobResponse(BaseModel):
     content_preview: str
     winner_model: str
     approval_message: str
+    candidate_pool_count: int = 0
+    shortlist_count: int = 0
 
 
 class DailyThemeJobResponse(BaseModel):
@@ -131,12 +133,32 @@ class FinalApprovalResponse(BaseModel):
 class CandidateDebugResponse(BaseModel):
     """Candidate data returned by the debug endpoint."""
 
+    id: int | None = None
     model: str
     backend: str
+    text: str
     content_text: str
     raw_score: float
+    judged_score: float
     judge_score: float
     is_winner: bool
+    is_shortlisted: bool = False
+    is_selected: bool = False
+    shortlist_rank: int | None = None
+
+
+class ShortlistEntryResponse(BaseModel):
+    """Ranked shortlist entry returned by shortlist APIs."""
+
+    shortlist_id: int | None = None
+    candidate_id: int
+    rank: int
+    score: float
+    model: str
+    backend: str
+    text: str
+    is_selected: bool = False
+    created_at: datetime | None = None
 
 
 class ApprovalDebugResponse(BaseModel):
@@ -175,9 +197,14 @@ class JobDebugResponse(BaseModel):
     image_preview_url: str | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
+    retry_count: int = 0
+    last_stage_started_at: datetime | None = None
+    last_stage_finished_at: datetime | None = None
+    last_error_message: str | None = None
     created_at: datetime
     updated_at: datetime
     candidates: list[CandidateDebugResponse] = Field(default_factory=list)
+    shortlist: list[ShortlistEntryResponse] = Field(default_factory=list)
     approvals: list[ApprovalDebugResponse] = Field(default_factory=list)
     audit_log: list[AuditEventDebugResponse] = Field(default_factory=list)
 
@@ -196,6 +223,8 @@ class JobListItemResponse(BaseModel):
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
     final_approval_status: str = "pending"
+    retry_count: int = 0
+    last_error_message: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -238,3 +267,39 @@ class JobDeleteResponse(BaseModel):
     job_id: str
     deleted: bool = True
     deleted_files: int = 0
+
+
+class StageRerunResponse(BaseModel):
+    """Response payload for stage-level rerun operations."""
+
+    job_id: str
+    stage: str
+    status: str
+    retry_count: int = 0
+    last_stage_started_at: datetime | None = None
+    last_stage_finished_at: datetime | None = None
+    last_error_message: str | None = None
+
+
+class RenderShortlistRequest(BaseModel):
+    """Request payload selecting shortlisted candidates to render."""
+
+    candidate_ids: list[int] = Field(default_factory=list)
+
+
+class RenderedShortlistAssetResponse(BaseModel):
+    """Rendered shortlist preview asset metadata."""
+
+    candidate_id: int
+    rank: int | None = None
+    preview_url: str
+    asset_type: str
+    relative_path: str | None = None
+
+
+class RenderShortlistResponse(BaseModel):
+    """Response payload for shortlist rendering action."""
+
+    job_id: str
+    rendered_count: int
+    rendered_assets: list[RenderedShortlistAssetResponse] = Field(default_factory=list)

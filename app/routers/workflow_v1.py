@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.workflow import (
     ApprovalRequest,
+    CandidateDebugResponse,
     ContentApprovalRequest,
     ContentApprovalResponse,
     DailyThemeJobResponse,
@@ -20,7 +21,11 @@ from app.schemas.workflow import (
     JobDeleteResponse,
     JobEventResponse,
     JobListItemResponse,
+    RenderShortlistRequest,
+    RenderShortlistResponse,
     RenderConfig,
+    ShortlistEntryResponse,
+    StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
 )
@@ -75,6 +80,8 @@ async def create_daily_theme_job(
 
     today_theme = await theme_service.get_today_theme(db)
     theme = today_theme.theme
+    if not today_theme.resolved or theme is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No theme resolved yet")
     start_payload = StartJobRequest(
         theme_name=theme.theme_name,
         tone_funny_pct=theme.tone_funny_pct,
@@ -155,6 +162,77 @@ async def get_job_events(
     """Return lifecycle audit events for one workflow job."""
 
     return await service.get_job_events(job_id)
+
+
+@router.get("/{job_id}/candidates", response_model=list[CandidateDebugResponse], status_code=status.HTTP_200_OK)
+async def get_job_candidates(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> list[CandidateDebugResponse]:
+    """Return the full pooled content candidate set for a job."""
+
+    return await service.get_job_candidates(job_id)
+
+
+@router.get("/{job_id}/shortlist", response_model=list[ShortlistEntryResponse], status_code=status.HTTP_200_OK)
+async def get_job_shortlist(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> list[ShortlistEntryResponse]:
+    """Return the ranked shortlist for a job."""
+
+    return await service.get_job_shortlist(job_id)
+
+
+@router.post("/{job_id}/render-shortlist", response_model=RenderShortlistResponse, status_code=status.HTTP_200_OK)
+async def render_job_shortlist(
+    job_id: str,
+    payload: RenderShortlistRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> RenderShortlistResponse:
+    """Render one or more shortlisted phrases into preview cards."""
+
+    return await service.render_shortlist(job_id, payload)
+
+
+@router.post("/{job_id}/rerun/content", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
+async def rerun_content_stage(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StageRerunResponse:
+    """Rerun content generation and shortlist judging for a job."""
+
+    return await service.rerun_content(job_id)
+
+
+@router.post("/{job_id}/rerun/image", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
+async def rerun_image_stage(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StageRerunResponse:
+    """Rerun image-stage preview generation for a job."""
+
+    return await service.rerun_image(job_id)
+
+
+@router.post("/{job_id}/rerun/final-render", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
+async def rerun_final_render_stage(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StageRerunResponse:
+    """Rerun final preview rendering for a job."""
+
+    return await service.rerun_final_render(job_id)
+
+
+@router.post("/{job_id}/rerun/full", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
+async def rerun_full_job(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StageRerunResponse:
+    """Rerun the full workflow from content candidate generation."""
+
+    return await service.rerun_full(job_id)
 
 
 @router.post("/{job_id}/archive", response_model=JobArchiveResponse, status_code=status.HTTP_200_OK)

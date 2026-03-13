@@ -21,7 +21,9 @@ from app.models.workflow import (
     CardContentCandidate,
     CardJob,
     CardJudgeResult,
+    CardShortlist,
 )
+from app.storage import get_asset_storage
 from app.store.job_store import InMemoryJobStore, get_job_store
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,10 @@ class WorkflowJobRepository:
                         image_preview_url=job["image_preview_url"],
                         final_preview_url=job["final_preview_url"],
                         final_asset_urls=job["final_asset_urls"],
+                        retry_count=int(job.get("retry_count") or 0),
+                        last_stage_started_at=job.get("last_stage_started_at"),
+                        last_stage_finished_at=job.get("last_stage_finished_at"),
+                        last_error_message=job.get("last_error_message"),
                         created_at=job["created_at"],
                         updated_at=job["updated_at"],
                     )
@@ -102,6 +108,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
                 )
@@ -161,6 +168,8 @@ class WorkflowJobRepository:
                     "content_approval_status": item.content_approval_status,
                     "image_approval_status": item.image_approval_status,
                     "final_approval_status": item.final_approval_status,
+                    "retry_count": item.retry_count,
+                    "last_error_message": item.last_error_message,
                     "created_at": item.created_at,
                     "updated_at": item.updated_at,
                 }
@@ -250,6 +259,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
                 )
@@ -272,29 +282,69 @@ class WorkflowJobRepository:
         await self._memory.delete_job(job_id)
         return snapshot, "postgres"
 
-    async def save_content_candidates(self, job_id: str, candidates: list[dict[str, Any]]) -> None:
+    async def save_content_candidates(
+        self,
+        job_id: str,
+        candidates: list[dict[str, Any]],
+        *,
+        replace_existing: bool = False,
+    ) -> None:
         """Persist generated content candidates."""
 
         if self._use_memory_backend():
             job = await self._memory.get_job(job_id)
             if job is None:
                 return
-            job["candidates"] = candidates
+            normalized_candidates: list[dict[str, Any]] = []
+            for index, candidate in enumerate(candidates, start=1):
+                normalized_candidates.append(
+                    {
+                        "id": int(candidate.get("id") or index),
+                        "model": str(candidate["model"]),
+                        "backend": str(candidate["backend"]),
+                        "content_text": str(candidate.get("content_text") or candidate.get("text") or ""),
+                        "text": str(candidate.get("text") or candidate.get("content_text") or ""),
+                        "raw_score": float(candidate.get("raw_score") or 0.0),
+                        "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                        "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
+                        "is_winner": bool(candidate.get("is_winner")),
+                        "is_shortlisted": bool(candidate.get("is_shortlisted")),
+                        "is_selected": bool(candidate.get("is_selected")),
+                        "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
+                    }
+                )
+            job["candidates"] = normalized_candidates
+            if replace_existing:
+                job["shortlist"] = []
             await self._memory.merge_snapshot(job)
             return
 
         try:
             async with async_session_factory() as session:
+                if replace_existing:
+                    existing_result = await session.execute(
+                        select(CardContentCandidate).where(CardContentCandidate.job_id == job_id)
+                    )
+                    for record in existing_result.scalars().all():
+                        await session.delete(record)
+                    shortlist_result = await session.execute(
+                        select(CardShortlist).where(CardShortlist.job_id == job_id)
+                    )
+                    for record in shortlist_result.scalars().all():
+                        await session.delete(record)
+                    await session.flush()
                 for candidate in candidates:
                     session.add(
                         CardContentCandidate(
                             job_id=job_id,
                             model=candidate["model"],
                             backend=candidate["backend"],
-                            content_text=candidate["content_text"],
+                            content_text=str(candidate.get("content_text") or candidate.get("text") or ""),
                             raw_score=float(candidate["raw_score"]),
-                            judge_score=float(candidate["judge_score"]),
+                            judge_score=float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
                             is_winner=bool(candidate["is_winner"]),
+                            is_shortlisted=bool(candidate.get("is_shortlisted")),
+                            is_selected=bool(candidate.get("is_selected")),
                         )
                     )
                 await session.commit()
@@ -302,7 +352,134 @@ class WorkflowJobRepository:
             await self._handle_db_failure_and_maybe_fallback(
                 op_name="save_content_candidates",
                 error=exc,
-                memory_action=lambda: self.save_content_candidates(job_id, candidates),
+                memory_action=lambda: self.save_content_candidates(
+                    job_id,
+                    candidates,
+                    replace_existing=replace_existing,
+                ),
+            )
+
+    async def save_shortlist(
+        self,
+        job_id: str,
+        shortlist_rows: list[dict[str, Any]],
+        *,
+        replace_existing: bool = False,
+    ) -> None:
+        """Persist ranked shortlist rows and keep candidate shortlist flags in sync."""
+
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            shortlist = []
+            candidate_lookup = {
+                int(candidate.get("id") or 0): candidate
+                for candidate in list(job.get("candidates") or [])
+            }
+            selected_ids = {int(row.get("candidate_id") or 0) for row in shortlist_rows if row.get("candidate_id")}
+            rank_by_candidate = {
+                int(row.get("candidate_id") or 0): int(row.get("rank") or 0)
+                for row in shortlist_rows
+                if row.get("candidate_id")
+            }
+            for index, row in enumerate(shortlist_rows, start=1):
+                candidate_id = int(row["candidate_id"])
+                candidate = candidate_lookup.get(candidate_id, {})
+                shortlist.append(
+                    {
+                        "shortlist_id": int(row.get("id") or index),
+                        "candidate_id": candidate_id,
+                        "rank": int(row["rank"]),
+                        "score": float(row["score"]),
+                        "model": str(candidate.get("model") or ""),
+                        "backend": str(candidate.get("backend") or ""),
+                        "text": str(candidate.get("content_text") or candidate.get("text") or ""),
+                        "is_selected": bool(candidate.get("is_selected")),
+                        "created_at": row.get("created_at") or datetime.now(timezone.utc),
+                    }
+                )
+            for candidate in list(job.get("candidates") or []):
+                candidate_id = int(candidate.get("id") or 0)
+                candidate["is_shortlisted"] = candidate_id in selected_ids
+                candidate["shortlist_rank"] = rank_by_candidate.get(candidate_id)
+            if replace_existing:
+                job["shortlist"] = shortlist
+            else:
+                job["shortlist"] = list(job.get("shortlist") or []) + shortlist
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                if replace_existing:
+                    result = await session.execute(select(CardShortlist).where(CardShortlist.job_id == job_id))
+                    for record in result.scalars().all():
+                        await session.delete(record)
+                candidate_result = await session.execute(
+                    select(CardContentCandidate).where(CardContentCandidate.job_id == job_id)
+                )
+                candidates_by_id = {candidate.id: candidate for candidate in candidate_result.scalars().all()}
+                shortlisted_ids = {
+                    int(row["candidate_id"])
+                    for row in shortlist_rows
+                    if int(row.get("candidate_id") or 0) in candidates_by_id
+                }
+                for candidate in candidates_by_id.values():
+                    candidate.is_shortlisted = candidate.id in shortlisted_ids
+                await session.flush()
+                for row in shortlist_rows:
+                    candidate_id = int(row["candidate_id"])
+                    if candidate_id not in candidates_by_id:
+                        continue
+                    session.add(
+                        CardShortlist(
+                            job_id=job_id,
+                            candidate_id=candidate_id,
+                            rank=int(row["rank"]),
+                            score=float(row["score"]),
+                        )
+                    )
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="save_shortlist",
+                error=exc,
+                memory_action=lambda: self.save_shortlist(
+                    job_id,
+                    shortlist_rows,
+                    replace_existing=replace_existing,
+                ),
+            )
+
+    async def update_candidate_selection(self, job_id: str, selected_candidate_ids: list[int]) -> None:
+        """Persist shortlist candidate selection flags for rendering."""
+
+        selected_ids = {int(candidate_id) for candidate_id in selected_candidate_ids}
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            for candidate in list(job.get("candidates") or []):
+                candidate["is_selected"] = int(candidate.get("id") or 0) in selected_ids
+            for shortlist in list(job.get("shortlist") or []):
+                shortlist["is_selected"] = int(shortlist.get("candidate_id") or 0) in selected_ids
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(CardContentCandidate).where(CardContentCandidate.job_id == job_id)
+                )
+                for candidate in result.scalars().all():
+                    candidate.is_selected = candidate.id in selected_ids
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="update_candidate_selection",
+                error=exc,
+                memory_action=lambda: self.update_candidate_selection(job_id, list(selected_ids)),
             )
 
     async def save_judge_results(self, job_id: str, result: dict[str, Any]) -> None:
@@ -510,10 +687,16 @@ class WorkflowJobRepository:
         """Serialize full workflow job snapshot."""
 
         candidates = sorted(job.candidates, key=lambda item: item.id or 0)
+        shortlists = sorted(job.shortlists, key=lambda item: (item.rank, item.id or 0))
         approvals = sorted(job.approvals, key=lambda item: item.id or 0)
         assets = sorted(job.assets, key=lambda item: item.id or 0)
         judge_results = sorted(job.judge_results, key=lambda item: item.id or 0)
         audit_events = sorted(job.audit_events, key=lambda item: item.id or 0)
+        shortlist_rank_by_candidate = {
+            item.candidate_id: item.rank
+            for item in shortlists
+            if item.candidate_id is not None
+        }
 
         image_preview_url, final_preview_url, final_assets = WorkflowJobRepository._resolve_job_asset_fields(job)
 
@@ -539,18 +722,44 @@ class WorkflowJobRepository:
             "image_preview_url": image_preview_url,
             "final_preview_url": final_preview_url,
             "final_asset_urls": final_assets or None,
+            "retry_count": job.retry_count,
+            "last_stage_started_at": job.last_stage_started_at,
+            "last_stage_finished_at": job.last_stage_finished_at,
+            "last_error_message": job.last_error_message,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
             "candidates": [
                 {
+                    "id": item.id,
                     "model": item.model,
                     "backend": item.backend,
+                    "text": item.content_text,
                     "content_text": item.content_text,
                     "raw_score": float(item.raw_score),
+                    "judged_score": float(item.judge_score),
                     "judge_score": float(item.judge_score),
                     "is_winner": item.is_winner,
+                    "is_shortlisted": item.is_shortlisted,
+                    "is_selected": item.is_selected,
+                    "shortlist_rank": shortlist_rank_by_candidate.get(item.id or 0),
+                    "created_at": item.created_at,
                 }
                 for item in candidates
+            ],
+            "shortlist": [
+                {
+                    "shortlist_id": item.id,
+                    "candidate_id": item.candidate_id,
+                    "rank": item.rank,
+                    "score": float(item.score),
+                    "model": item.candidate.model if item.candidate is not None else "",
+                    "backend": item.candidate.backend if item.candidate is not None else "",
+                    "text": item.candidate.content_text if item.candidate is not None else "",
+                    "is_selected": bool(item.candidate.is_selected) if item.candidate is not None else False,
+                    "created_at": item.created_at,
+                }
+                for item in shortlists
+                if item.candidate is not None
             ],
             "judge_results": [
                 {
@@ -621,7 +830,48 @@ class WorkflowJobRepository:
             elif asset.asset_type == "final_pdf":
                 final_assets.setdefault("pdf", asset_url)
 
+        inferred = WorkflowJobRepository._infer_job_asset_urls(job.job_id)
+        image_preview_url = image_preview_url or inferred.get("image_preview_url")
+        final_preview_url = final_preview_url or inferred.get("final_preview_url")
+        if inferred.get("png"):
+            final_assets.setdefault("png", inferred["png"])
+        if inferred.get("pdf"):
+            final_assets.setdefault("pdf", inferred["pdf"])
+
+        if inferred and (
+            inferred.get("image_preview_url") == image_preview_url
+            or inferred.get("final_preview_url") == final_preview_url
+            or inferred.get("png") == final_assets.get("png")
+        ):
+            logger.info(
+                "workflow preview debug source=infer_job_assets job_id=%s image_preview_url=%s final_preview_url=%s final_asset_png=%s",
+                job.job_id,
+                image_preview_url or "",
+                final_preview_url or "",
+                str(final_assets.get("png") or ""),
+            )
+
         return image_preview_url, final_preview_url, final_assets or None
+
+    @staticmethod
+    def _infer_job_asset_urls(job_id: str) -> dict[str, str]:
+        """Recover deterministic asset URLs from filesystem when DB metadata is incomplete."""
+
+        storage = get_asset_storage()
+        paths = {
+            "image_preview_url": f"image/{job_id}_image_preview.png",
+            "final_preview_url": f"preview/{job_id}_content_preview.png",
+            "png": f"final/{job_id}_final.png",
+            "pdf": f"pdf/{job_id}_final.pdf",
+        }
+        inferred: dict[str, str] = {}
+        for key, relative_path in paths.items():
+            try:
+                if storage.file_exists(relative_path):
+                    inferred[key] = storage.get_public_url(relative_path)
+            except OSError:
+                continue
+        return inferred
 
 
 @lru_cache(maxsize=1)

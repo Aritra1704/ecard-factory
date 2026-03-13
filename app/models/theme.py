@@ -82,6 +82,13 @@ class ThemeCatalog(Base):
     theme_key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     theme_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    theme_bucket: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="everyday",
+        server_default=text("'everyday'"),
+        index=True,
+    )
     theme_type: Mapped[str] = mapped_column(String(32), nullable=False)
     cultural_context: Mapped[str | None] = mapped_column(String(120), nullable=True)
     tone_style: Mapped[str] = mapped_column(String(64), nullable=False)

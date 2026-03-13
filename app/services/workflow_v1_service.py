@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
     ApprovalRequest,
+    CandidateDebugResponse,
     ContentApprovalRequest,
     ContentApprovalResponse,
     FinalApprovalResponse,
@@ -27,6 +28,11 @@ from app.schemas.workflow import (
     JobDeleteResponse,
     JobEventResponse,
     JobListItemResponse,
+    RenderShortlistRequest,
+    RenderShortlistResponse,
+    RenderedShortlistAssetResponse,
+    ShortlistEntryResponse,
+    StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
 )
@@ -48,56 +54,92 @@ class StubContentForgeClient:
     """
 
     async def generate_and_judge(self, payload: StartJobRequest) -> dict[str, Any]:
-        """Generate deterministic candidates and a judged winner for local testing."""
+        """Generate a pooled candidate set, judge it, and return a top-10 shortlist."""
 
         theme = payload.theme_name.strip()
         audience = payload.audience.strip()
         context = payload.cultural_context.strip()
+        tone = payload.tone_style.strip() or "conversational"
+        funny_pct = int(payload.tone_funny_pct)
+        emotion_pct = int(payload.tone_emotion_pct)
 
-        candidates = [
-            {
-                "model": "qwen2.5:7b-instruct",
-                "backend": "ollama",
-                "content_text": (
-                    f"Happy birthday! You make every day brighter, {audience}. "
-                    f"Wishing you warmth, laughter, and lots of cake."
-                ),
-                "raw_score": 0.84,
-                "judge_score": 0.90,
-            },
-            {
-                "model": "llama3.1:8b",
-                "backend": "ollama",
-                "content_text": (
-                    f"{theme}: today is your day to smile big and dream bigger. "
-                    f"Sending heartfelt wishes from your people."
-                ),
-                "raw_score": 0.80,
-                "judge_score": 0.83,
-            },
-            {
-                "model": "mistral:7b",
-                "backend": "ollama",
-                "content_text": (
-                    f"Shubho jonmodin! May this year bring joy, health, and love. "
-                    f"Celebrating you with full heart and happy memories."
-                ),
-                "raw_score": 0.78,
-                "judge_score": 0.81,
-            },
+        model_profiles = [
+            ("qwen2.5:7b-instruct", "ollama", "clean and balanced"),
+            ("llama3.1:8b", "ollama", "uplifting and direct"),
+            ("mistral:7b", "ollama", "warm and expressive"),
+        ]
+        openings = [
+            "Today deserves a message that feels personal and alive.",
+            "This card should feel immediate, human, and memorable.",
+            "The right note here should land with warmth and clarity.",
+            "This moment calls for language that feels earned, not generic.",
+            "The message should feel intimate without becoming heavy.",
+        ]
+        closings = [
+            "Let the card close with a sense of momentum.",
+            "Keep the finish sincere and easy to remember.",
+            "The last line should feel shareable and warm.",
+            "End with a line that sounds spoken, not templated.",
+            "Close with confidence, then leave room for feeling.",
         ]
 
-        winner_index = max(range(len(candidates)), key=lambda idx: candidates[idx]["judge_score"])
-        for index, candidate in enumerate(candidates):
-            candidate["is_winner"] = index == winner_index
+        candidates: list[dict[str, Any]] = []
+        for model_index, (model, backend, style_hint) in enumerate(model_profiles):
+            for variant in range(10):
+                raw_score = round(0.72 + (model_index * 0.04) + ((9 - variant) * 0.009), 4)
+                judge_bonus = round(((variant % 5) * 0.008) + (emotion_pct / 1000) - (funny_pct / 2000), 4)
+                judged_score = round(raw_score + 0.08 + judge_bonus, 4)
+                opening = openings[(variant + model_index) % len(openings)]
+                closing = closings[(variant + (model_index * 2)) % len(closings)]
+                content_text = (
+                    f"{theme}: {opening} For {audience} in a {context} context, keep the tone {tone} "
+                    f"with a {style_hint} delivery. Variation {variant + 1} keeps the message grounded, "
+                    f"human, and specific. {closing}"
+                )
+                candidates.append(
+                    {
+                        "model": model,
+                        "backend": backend,
+                        "content_text": content_text,
+                        "text": content_text,
+                        "raw_score": raw_score,
+                        "judge_score": judged_score,
+                        "judged_score": judged_score,
+                        "is_winner": False,
+                        "is_shortlisted": False,
+                        "is_selected": False,
+                    }
+                )
 
-        winner = candidates[winner_index]
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: (float(item["judge_score"]), float(item["raw_score"]), item["model"]),
+            reverse=True,
+        )
+        shortlist = []
+        for rank, candidate in enumerate(ranked_candidates[:10], start=1):
+            candidate["is_shortlisted"] = True
+            candidate["is_selected"] = rank == 1
+            candidate["is_winner"] = rank == 1
+            shortlist.append(
+                {
+                    "rank": rank,
+                    "score": float(candidate["judge_score"]),
+                    "model": candidate["model"],
+                    "backend": candidate["backend"],
+                    "content_text": candidate["content_text"],
+                }
+            )
+
+        winner = ranked_candidates[0]
         judge_summary = (
-            f"Winner selected for '{theme}' with {context} context based on tone balance and clarity."
+            f"Evaluated {len(candidates)} pooled candidates for '{theme}'. "
+            f"Shortlisted top {len(shortlist)} across all models using judged score."
         )
 
         return {
             "candidates": candidates,
+            "shortlist": shortlist,
             "winner": winner,
             "judge_summary": judge_summary,
         }
@@ -128,9 +170,10 @@ class WorkflowV1Service:
         winner = generation["winner"]
         content_preview = str(winner["content_text"])
         winner_model = str(winner["model"])
+        shortlist_seed = list(generation.get("shortlist") or [])
         approval_message = (
             f"Content approval required for {job_id}. Winner model: {winner_model}. "
-            "Review preview text and approve/reject."
+            "Review the shortlisted copy pool and approve or rerun."
         )
         output_spec = payload.output_spec.model_dump()
         output_spec["rendering"] = payload.rendering.model_dump()
@@ -143,7 +186,7 @@ class WorkflowV1Service:
             "tone_funny_pct": payload.tone_funny_pct,
             "tone_emotion_pct": payload.tone_emotion_pct,
             "tone_style": payload.tone_style,
-            "visual_style": payload.tone_style,
+            "visual_style": payload.rendering.theme_style,
             "audience": payload.audience,
             "cultural_context": payload.cultural_context,
             "output_spec": output_spec,
@@ -157,6 +200,10 @@ class WorkflowV1Service:
             "image_preview_url": None,
             "final_preview_url": None,
             "final_asset_urls": None,
+            "retry_count": 0,
+            "last_stage_started_at": now,
+            "last_stage_finished_at": now,
+            "last_error_message": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -166,9 +213,13 @@ class WorkflowV1Service:
                 "model": str(candidate["model"]),
                 "backend": str(candidate["backend"]),
                 "content_text": str(candidate["content_text"]),
+                "text": str(candidate["content_text"]),
                 "raw_score": float(candidate["raw_score"]),
                 "judge_score": float(candidate["judge_score"]),
+                "judged_score": float(candidate["judge_score"]),
                 "is_winner": bool(candidate["is_winner"]),
+                "is_shortlisted": bool(candidate.get("is_shortlisted")),
+                "is_selected": bool(candidate.get("is_selected")),
             }
             for candidate in generation["candidates"]
         ]
@@ -180,20 +231,30 @@ class WorkflowV1Service:
                 ("job_created", {"status": "content_pending_approval"}),
                 ("contentforge_request_sent", {"stub": True}),
                 ("contentforge_response_received", {"candidate_count": len(candidate_records)}),
+                ("shortlist_created", {"shortlist_count": len(shortlist_seed)}),
                 ("winner_selected", {"winner_model": winner_model}),
                 ("content_approval_requested", {"approval_message": approval_message}),
             ],
         )
 
         creation_backend = await self._repository.create_job(job_record)
-        await self._repository.save_content_candidates(job_id, candidate_records)
+        await self._repository.save_content_candidates(job_id, candidate_records, replace_existing=True)
+        persisted_job = await self._load_job(job_id)
+        shortlist_rows = self._build_shortlist_rows(
+            persisted_candidates=list(persisted_job.get("candidates") or []) if persisted_job else [],
+            shortlist_seed=shortlist_seed,
+        )
+        await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
         await self._repository.save_judge_results(
             job_id,
             {
                 "judge_provider": "contentforge_stub",
                 "judge_model": "stub-judge",
                 "winner_model": winner_model,
-                "leaderboard_json": {"models": [item["model"] for item in candidate_records]},
+                "leaderboard_json": {
+                    "models": [item["model"] for item in candidate_records],
+                    "shortlist": shortlist_seed,
+                },
                 "pairwise_json": {},
                 "reason_summary": generation["judge_summary"],
             },
@@ -207,6 +268,8 @@ class WorkflowV1Service:
             content_preview=content_preview,
             winner_model=winner_model,
             approval_message=approval_message,
+            candidate_pool_count=len(candidate_records),
+            shortlist_count=len(shortlist_seed),
         )
 
     async def submit_content_approval(
@@ -612,6 +675,371 @@ class WorkflowV1Service:
             final_asset_urls=FinalAssetUrls.model_validate(asset_urls) if asset_urls else None,
         )
 
+    async def get_job_candidates(self, job_id: str) -> list[CandidateDebugResponse]:
+        """Return the full pooled candidate set for one job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        candidates = sorted(
+            list(job.get("candidates") or []),
+            key=lambda item: (
+                int(item.get("shortlist_rank") or 9999),
+                -float(item.get("judged_score") or item.get("judge_score") or 0.0),
+            ),
+        )
+        return [CandidateDebugResponse.model_validate(item) for item in candidates]
+
+    async def get_job_shortlist(self, job_id: str) -> list[ShortlistEntryResponse]:
+        """Return the ranked top-10 shortlist for one job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        shortlist = sorted(list(job.get("shortlist") or []), key=lambda item: int(item.get("rank") or 9999))
+        return [ShortlistEntryResponse.model_validate(item) for item in shortlist]
+
+    async def rerun_content(self, job_id: str) -> StageRerunResponse:
+        """Regenerate the pooled content candidates and shortlist for an existing job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="content")
+        try:
+            payload = self._build_start_payload_from_job(job)
+            generation = await self._contentforge.generate_and_judge(payload)
+            winner = generation["winner"]
+            candidate_records = [
+                {
+                    "model": str(candidate["model"]),
+                    "backend": str(candidate["backend"]),
+                    "content_text": str(candidate["content_text"]),
+                    "text": str(candidate["content_text"]),
+                    "raw_score": float(candidate["raw_score"]),
+                    "judge_score": float(candidate["judge_score"]),
+                    "judged_score": float(candidate["judge_score"]),
+                    "is_winner": bool(candidate["is_winner"]),
+                    "is_shortlisted": bool(candidate.get("is_shortlisted")),
+                    "is_selected": bool(candidate.get("is_selected")),
+                }
+                for candidate in generation["candidates"]
+            ]
+            winner_model = str(winner["model"])
+            content_preview = str(winner["content_text"])
+            await self._repository.save_content_candidates(job_id, candidate_records, replace_existing=True)
+            persisted = await self._load_job(job_id)
+            shortlist_rows = self._build_shortlist_rows(
+                persisted_candidates=list(persisted.get("candidates") or []) if persisted else [],
+                shortlist_seed=list(generation.get("shortlist") or []),
+            )
+            await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
+            finished_at = datetime.now(timezone.utc)
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "content_pending_approval",
+                    "content_preview": content_preview,
+                    "winner_model": winner_model,
+                    "content_approval_status": "pending",
+                    "image_approval_status": "pending",
+                    "final_approval_status": "pending",
+                    "image_prompt": None,
+                    "image_preview_url": None,
+                    "final_preview_url": None,
+                    "final_asset_urls": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": finished_at,
+                    "last_error_message": None,
+                },
+            )
+            assert updated is not None
+            await self._repository.save_judge_results(
+                job_id,
+                {
+                    "judge_provider": "contentforge_stub",
+                    "judge_model": "stub-judge",
+                    "winner_model": winner_model,
+                    "leaderboard_json": {
+                        "models": [item["model"] for item in candidate_records],
+                        "shortlist": generation.get("shortlist") or [],
+                    },
+                    "pairwise_json": {},
+                    "reason_summary": generation["judge_summary"],
+                },
+            )
+            await self._repository.append_audit_events(
+                job_id,
+                self._build_audit_events(
+                    job_id=job_id,
+                    events=[
+                        ("rerun_requested", {"stage": "content"}),
+                        ("content_rerun_completed", {"candidate_count": len(candidate_records), "shortlist_count": len(shortlist_rows)}),
+                    ],
+                ),
+            )
+            return self._build_stage_rerun_response("content", updated)
+        except Exception as exc:  # noqa: BLE001
+            await self._mark_stage_failed(job_id=job_id, job=job, stage="content", started_at=started_at, error=exc)
+            raise
+
+    async def rerun_image(self, job_id: str) -> StageRerunResponse:
+        """Regenerate the image-stage preview from the selected content."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if not self._resolve_winning_content(job):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No approved content available to rerun image stage")
+        started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image")
+        try:
+            image_prompt = self.build_image_prompt(job)
+            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
+            approved_content = self._resolve_winning_content(job)
+            self._save_internal_preview_asset(
+                relative_path=image_preview_relative_path,
+                payload=PreviewCardRenderInput(
+                    title="Image Stage Rerun",
+                    message=image_prompt,
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="image_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Context: {job.get('cultural_context', 'N/A')}",
+                        f"Selected content: {self._shorten(approved_content, max_len=120)}",
+                    ],
+                ),
+            )
+            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            finished_at = datetime.now(timezone.utc)
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "image_pending_approval",
+                    "image_approval_status": "pending",
+                    "final_approval_status": "pending",
+                    "image_prompt": image_prompt,
+                    "image_preview_url": image_preview_url,
+                    "final_preview_url": None,
+                    "final_asset_urls": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": finished_at,
+                    "last_error_message": None,
+                },
+            )
+            assert updated is not None
+            await self._repository.save_asset(
+                job_id,
+                asset_type="image_preview",
+                asset_url=image_preview_url,
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
+                relative_path=image_preview_relative_path,
+                public_url=image_preview_url,
+                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
+                version="v1",
+                approved=False,
+            )
+            await self._repository.append_audit_events(
+                job_id,
+                self._build_audit_events(
+                    job_id=job_id,
+                    events=[
+                        ("rerun_requested", {"stage": "image"}),
+                        ("image_rerun_completed", {"image_preview_url": image_preview_url}),
+                    ],
+                ),
+            )
+            return self._build_stage_rerun_response("image", updated)
+        except Exception as exc:  # noqa: BLE001
+            await self._mark_stage_failed(job_id=job_id, job=job, stage="image", started_at=started_at, error=exc)
+            raise
+
+    async def rerun_final_render(self, job_id: str) -> StageRerunResponse:
+        """Rebuild the final-review preview from the selected content/image state."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        if not str(job.get("image_preview_url") or "").strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No image preview available to rerun final render")
+        started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render")
+        try:
+            final_preview_relative_path = self._build_final_preview_relative_path(job_id)
+            self._save_internal_preview_asset(
+                relative_path=final_preview_relative_path,
+                payload=PreviewCardRenderInput(
+                    title="Final Render Rerun",
+                    message=self._resolve_winning_content(job),
+                    signoff="Internal Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status="final_pending_approval",
+                    metadata_lines=[
+                        f"Audience: {job.get('audience', 'N/A')}",
+                        f"Tone: {job.get('tone_style', 'N/A')}",
+                        "Final preview rebuilt from shortlisted content",
+                    ],
+                ),
+            )
+            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
+            finished_at = datetime.now(timezone.utc)
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "final_pending_approval",
+                    "final_approval_status": "pending",
+                    "final_preview_url": final_preview_url,
+                    "final_asset_urls": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": finished_at,
+                    "last_error_message": None,
+                },
+            )
+            assert updated is not None
+            await self._repository.save_asset(
+                job_id,
+                asset_type="final_preview",
+                asset_url=final_preview_url,
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
+                relative_path=final_preview_relative_path,
+                public_url=final_preview_url,
+                absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
+                file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
+                version="v1",
+                approved=False,
+            )
+            await self._repository.append_audit_events(
+                job_id,
+                self._build_audit_events(
+                    job_id=job_id,
+                    events=[
+                        ("rerun_requested", {"stage": "final_render"}),
+                        ("final_render_rerun_completed", {"final_preview_url": final_preview_url}),
+                    ],
+                ),
+            )
+            return self._build_stage_rerun_response("final_render", updated)
+        except Exception as exc:  # noqa: BLE001
+            await self._mark_stage_failed(job_id=job_id, job=job, stage="final_render", started_at=started_at, error=exc)
+            raise
+
+    async def rerun_full(self, job_id: str) -> StageRerunResponse:
+        """Rerun the workflow from pooled content generation."""
+
+        response = await self.rerun_content(job_id)
+        return StageRerunResponse(
+            job_id=response.job_id,
+            stage="full",
+            status=response.status,
+            retry_count=response.retry_count,
+            last_stage_started_at=response.last_stage_started_at,
+            last_stage_finished_at=response.last_stage_finished_at,
+            last_error_message=response.last_error_message,
+        )
+
+    async def render_shortlist(self, job_id: str, payload: RenderShortlistRequest) -> RenderShortlistResponse:
+        """Render one or more shortlisted candidates into preview assets."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        shortlist = sorted(list(job.get("shortlist") or []), key=lambda item: int(item.get("rank") or 9999))
+        if not shortlist:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No shortlist available for this job")
+        shortlist_by_candidate = {int(item["candidate_id"]): item for item in shortlist if item.get("candidate_id")}
+        selected_ids = [int(candidate_id) for candidate_id in payload.candidate_ids if int(candidate_id) in shortlist_by_candidate]
+        if not selected_ids:
+            selected_ids = [int(shortlist[0]["candidate_id"])]
+
+        await self._repository.update_candidate_selection(job_id, selected_ids)
+        rendered_assets: list[RenderedShortlistAssetResponse] = []
+        for candidate_id in selected_ids:
+            shortlist_entry = shortlist_by_candidate[candidate_id]
+            relative_path = self._build_shortlist_preview_relative_path(job_id, candidate_id)
+            message = str(shortlist_entry.get("text") or "")
+            self._save_internal_preview_asset(
+                relative_path=relative_path,
+                payload=PreviewCardRenderInput(
+                    title=f"Shortlist Render #{shortlist_entry.get('rank')}",
+                    message=message,
+                    signoff="Shortlist Preview",
+                    theme_style=self._resolve_theme_style(job),
+                    background_image_url=self._resolve_background_image_url(job),
+                    text_alignment="left",
+                    export_size=self._resolve_export_size(job),
+                    theme_name=str(job.get("theme_name") or ""),
+                    job_id=job_id,
+                    status=str(job.get("status") or "content_pending_approval"),
+                    metadata_lines=[
+                        f"Candidate model: {shortlist_entry.get('model') or 'N/A'}",
+                        f"Shortlist rank: {shortlist_entry.get('rank') or '-'}",
+                        "Rendered from candidate pool shortlist",
+                    ],
+                ),
+            )
+            preview_url = self._asset_storage.get_public_url(relative_path)
+            await self._repository.save_asset(
+                job_id,
+                asset_type="shortlist_preview",
+                asset_url=preview_url,
+                storage_backend=self._asset_storage.backend,
+                storage_root=self._asset_storage.get_absolute_path(""),
+                relative_path=relative_path,
+                public_url=preview_url,
+                absolute_path=self._asset_storage.get_absolute_path(relative_path),
+                file_size_bytes=self._read_file_size_bytes(relative_path),
+                version="v1",
+                approved=False,
+            )
+            rendered_assets.append(
+                RenderedShortlistAssetResponse(
+                    candidate_id=candidate_id,
+                    rank=int(shortlist_entry.get("rank") or 0) or None,
+                    preview_url=preview_url,
+                    asset_type="shortlist_preview",
+                    relative_path=relative_path,
+                )
+            )
+
+        primary = shortlist_by_candidate[selected_ids[0]]
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "content_preview": str(primary.get("text") or job.get("content_preview") or ""),
+                "winner_model": str(primary.get("model") or job.get("winner_model") or ""),
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("shortlist_render_requested", {"candidate_ids": selected_ids}),
+                    ("shortlist_render_completed", {"rendered_count": len(rendered_assets)}),
+                ],
+            ),
+        )
+        return RenderShortlistResponse(
+            job_id=job_id,
+            rendered_count=len(rendered_assets),
+            rendered_assets=rendered_assets,
+        )
+
     async def get_job_debug(self, job_id: str) -> JobDebugResponse:
         """Return a full job snapshot including approvals, candidates, and audit events."""
 
@@ -657,6 +1085,8 @@ class WorkflowV1Service:
                     content_approval_status=str(row.get("content_approval_status") or "pending"),
                     image_approval_status=str(row.get("image_approval_status") or "pending"),
                     final_approval_status=str(row.get("final_approval_status") or "pending"),
+                    retry_count=int(row.get("retry_count") or 0),
+                    last_error_message=str(row.get("last_error_message") or "") or None,
                     created_at=created_at,
                     updated_at=updated_at,
                 )
@@ -837,6 +1267,139 @@ class WorkflowV1Service:
         if normalized in {"completed", "archived"}:
             return normalized
         return "queued"
+
+    async def _mark_stage_started(self, *, job_id: str, job: dict[str, Any], stage: str) -> datetime:
+        """Persist generic rerun tracking metadata when a stage begins."""
+
+        started_at = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "retry_count": int(job.get("retry_count") or 0) + 1,
+                "last_stage_started_at": started_at,
+                "last_stage_finished_at": None,
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("stage_rerun_started", {"stage": stage, "retry_count": updated.get("retry_count", 0)})],
+            ),
+        )
+        return started_at
+
+    async def _mark_stage_failed(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        stage: str,
+        started_at: datetime,
+        error: Exception,
+    ) -> None:
+        """Persist rerun failure metadata for user-facing diagnostics."""
+
+        finished_at = datetime.now(timezone.utc)
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": str(job.get("status") or "unknown"),
+                "last_stage_started_at": started_at,
+                "last_stage_finished_at": finished_at,
+                "last_error_message": str(error),
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("stage_rerun_failed", {"stage": stage, "error": str(error)})],
+            ),
+        )
+
+    @staticmethod
+    def _build_stage_rerun_response(stage: str, updated: dict[str, Any]) -> StageRerunResponse:
+        """Build a normalized response for stage rerun endpoints."""
+
+        return StageRerunResponse(
+            job_id=str(updated.get("job_id") or ""),
+            stage=stage,
+            status=str(updated.get("status") or "unknown"),
+            retry_count=int(updated.get("retry_count") or 0),
+            last_stage_started_at=WorkflowV1Service._coerce_datetime(
+                updated.get("last_stage_started_at"),
+                fallback=None,
+            )
+            if updated.get("last_stage_started_at")
+            else None,
+            last_stage_finished_at=WorkflowV1Service._coerce_datetime(
+                updated.get("last_stage_finished_at"),
+                fallback=None,
+            )
+            if updated.get("last_stage_finished_at")
+            else None,
+            last_error_message=str(updated.get("last_error_message") or "") or None,
+        )
+
+    @staticmethod
+    def _build_shortlist_rows(
+        *,
+        persisted_candidates: list[dict[str, Any]],
+        shortlist_seed: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Map shortlist seed rows to persisted candidate ids."""
+
+        candidates_by_signature: dict[tuple[str, str], dict[str, Any]] = {}
+        for candidate in persisted_candidates:
+            signature = (
+                str(candidate.get("model") or ""),
+                str(candidate.get("content_text") or candidate.get("text") or ""),
+            )
+            candidates_by_signature[signature] = candidate
+
+        shortlist_rows: list[dict[str, Any]] = []
+        for row in shortlist_seed:
+            signature = (str(row.get("model") or ""), str(row.get("content_text") or ""))
+            candidate = candidates_by_signature.get(signature)
+            if candidate is None:
+                continue
+            shortlist_rows.append(
+                {
+                    "candidate_id": int(candidate.get("id") or 0),
+                    "rank": int(row.get("rank") or 0),
+                    "score": float(row.get("score") or 0.0),
+                }
+            )
+        shortlist_rows.sort(key=lambda item: item["rank"])
+        return shortlist_rows
+
+    @staticmethod
+    def _build_shortlist_preview_relative_path(job_id: str, candidate_id: int) -> str:
+        """Return relative storage path for one shortlist render preview."""
+
+        return f"preview/{job_id}_shortlist_{candidate_id}.png"
+
+    @staticmethod
+    def _build_start_payload_from_job(job: dict[str, Any]) -> StartJobRequest:
+        """Reconstruct a start payload from an existing job snapshot."""
+
+        output_spec = job.get("output_spec") if isinstance(job.get("output_spec"), dict) else {}
+        rendering = output_spec.get("rendering") if isinstance(output_spec.get("rendering"), dict) else {}
+        return StartJobRequest(
+            theme_name=str(job.get("theme_name") or "Internal Theme"),
+            tone_funny_pct=int(job.get("tone_funny_pct") or 20),
+            tone_emotion_pct=int(job.get("tone_emotion_pct") or 80),
+            tone_style=str(job.get("tone_style") or "conversational"),
+            audience=str(job.get("audience") or "internal reviewer"),
+            cultural_context=str(job.get("cultural_context") or "global"),
+            output_spec=output_spec,
+            avoid_cliches=bool(job.get("avoid_cliches", True)),
+            rendering=rendering,
+        )
 
     def _collect_asset_delete_targets(self, job: dict[str, Any]) -> set[Path]:
         """Collect absolute file paths that should be removed for a deleted job."""
@@ -1153,9 +1716,12 @@ class WorkflowV1Service:
         """Return the stored winner content for prompt building and approvals."""
 
         candidates = job.get("candidates") or []
+        selected = next((item for item in candidates if item.get("is_selected")), None)
+        if selected and (selected.get("content_text") or selected.get("text")):
+            return str(selected.get("content_text") or selected.get("text"))
         winner = next((item for item in candidates if item.get("is_winner")), None)
-        if winner and winner.get("content_text"):
-            return str(winner["content_text"])
+        if winner and (winner.get("content_text") or winner.get("text")):
+            return str(winner.get("content_text") or winner.get("text"))
         return str(job.get("content_preview") or "")
 
 

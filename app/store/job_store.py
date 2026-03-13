@@ -31,7 +31,10 @@ class InMemoryJobStore:
         async with self._lock:
             record = deepcopy(job)
             record["candidates"] = deepcopy(candidates)
+            record["shortlist"] = []
+            record["judge_results"] = []
             record["approvals"] = []
+            record["assets"] = []
             record["audit_log"] = deepcopy(audit_events)
             self._jobs[record["job_id"]] = record
 

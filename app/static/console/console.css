@@ -375,6 +375,11 @@ a {
   padding: 12px 14px;
 }
 
+.section-subhead {
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+
 .section-title {
   margin: 0;
   font-family: "Space Grotesk", sans-serif;
@@ -472,6 +477,10 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 12px;
+}
+
+.job-meta-grid {
+  padding-top: 0;
 }
 
 .key-card {
@@ -580,6 +589,10 @@ a {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #050910;
+}
+
+.padded-actions {
+  padding: 0 14px 14px;
 }
 
 .modal-backdrop {

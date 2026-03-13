@@ -44,14 +44,17 @@ async def get_today_theme(
     return await service.get_today_theme(db)
 
 
-@router.get("/schedule", response_model=ThemeScheduleDashboardResponse)
+@router.get("/schedule", response_model=ThemeScheduleDashboardResponse | list[ThemeScheduleResponse])
 async def get_theme_schedule_dashboard(
     db: AsyncSession = Depends(get_db),
     service: ThemeService = Depends(get_theme_service),
-) -> ThemeScheduleDashboardResponse:
+) -> ThemeScheduleDashboardResponse | list[ThemeScheduleResponse]:
     """Return the current week schedule, current month schedule, and active overrides."""
 
-    return await service.get_schedule_dashboard(db)
+    dashboard = await service.get_schedule_dashboard(db)
+    if not dashboard.week_schedule and not dashboard.month_schedule and not dashboard.active_overrides:
+        return []
+    return dashboard
 
 
 @router.post("", response_model=ThemeCatalogResponse, status_code=status.HTTP_201_CREATED)

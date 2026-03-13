@@ -74,6 +74,20 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert start_payload["status"] == "content_pending_approval"
         assert isinstance(start_payload["content_preview"], str)
         assert isinstance(start_payload["winner_model"], str)
+        assert start_payload["candidate_pool_count"] == 30
+        assert start_payload["shortlist_count"] == 10
+
+        candidates_response = client.get(f"/api/jobs/{job_id}/candidates")
+        assert candidates_response.status_code == 200
+        candidates_payload = candidates_response.json()
+        assert len(candidates_payload) == 30
+        assert sum(1 for item in candidates_payload if item["is_shortlisted"]) == 10
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        shortlist_payload = shortlist_response.json()
+        assert len(shortlist_payload) == 10
+        assert shortlist_payload[0]["rank"] == 1
 
         get_after_start = client.get(f"/api/jobs/{job_id}")
         assert get_after_start.status_code == 200
@@ -140,7 +154,8 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         debug_payload = get_after_final.json()
         assert debug_payload["status"] == "completed"
         assert debug_payload["final_approval_status"] == "approved"
-        assert len(debug_payload["candidates"]) >= 1
+        assert len(debug_payload["candidates"]) == 30
+        assert len(debug_payload["shortlist"]) == 10
         assert any(event["event_type"] == "job_completed" for event in debug_payload["audit_log"])
         (_assets_dir() / "image" / f"{job_id}_image_preview.png").unlink(missing_ok=True)
         (_assets_dir() / "preview" / f"{job_id}_content_preview.png").unlink(missing_ok=True)
@@ -259,6 +274,62 @@ def test_workflow_v1_final_timeout_transition(configured_env: dict[str, str]) ->
         assert any(event["event_type"] == "final_timeout" for event in debug_payload["audit_log"])
 
 
+def test_workflow_v1_rerun_and_shortlist_render_endpoints(configured_env: dict[str, str]) -> None:
+    """Rerun and shortlist-render endpoints should update job metadata and emit preview assets."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        assert start_response.status_code == 200
+        job_id = start_response.json()["job_id"]
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        shortlist_payload = shortlist_response.json()
+        selected_ids = [shortlist_payload[0]["candidate_id"], shortlist_payload[1]["candidate_id"]]
+
+        render_response = client.post(
+            f"/api/jobs/{job_id}/render-shortlist",
+            json={"candidate_ids": selected_ids},
+        )
+        assert render_response.status_code == 200
+        render_payload = render_response.json()
+        assert render_payload["rendered_count"] == 2
+        assert len(render_payload["rendered_assets"]) == 2
+        for asset in render_payload["rendered_assets"]:
+            assert asset["preview_url"].endswith(f"_shortlist_{asset['candidate_id']}.png")
+            assert (_assets_dir() / "preview" / f"{job_id}_shortlist_{asset['candidate_id']}.png").exists()
+
+        rerun_content = client.post(f"/api/jobs/{job_id}/rerun/content")
+        assert rerun_content.status_code == 200
+        assert rerun_content.json()["stage"] == "content"
+        assert rerun_content.json()["retry_count"] == 1
+
+        rerun_image = client.post(f"/api/jobs/{job_id}/rerun/image")
+        assert rerun_image.status_code == 200
+        assert rerun_image.json()["stage"] == "image"
+        assert rerun_image.json()["status"] == "image_pending_approval"
+
+        rerun_final = client.post(f"/api/jobs/{job_id}/rerun/final-render")
+        assert rerun_final.status_code == 200
+        assert rerun_final.json()["stage"] == "final_render"
+        assert rerun_final.json()["status"] == "final_pending_approval"
+
+        rerun_full = client.post(f"/api/jobs/{job_id}/rerun/full")
+        assert rerun_full.status_code == 200
+        assert rerun_full.json()["stage"] == "full"
+        assert rerun_full.json()["status"] == "content_pending_approval"
+        assert rerun_full.json()["retry_count"] == 4
+
+        debug_response = client.get(f"/api/jobs/{job_id}")
+        assert debug_response.status_code == 200
+        debug_payload = debug_response.json()
+        assert debug_payload["retry_count"] == 4
+        assert debug_payload["last_stage_started_at"] is not None
+        assert debug_payload["last_stage_finished_at"] is not None
+
+
 def test_workflow_v1_final_approval_invalid_decision_returns_400(configured_env: dict[str, str]) -> None:
     """Final approval should validate decision with explicit 400 response."""
 
@@ -355,8 +426,8 @@ def test_storage_summary_endpoint(configured_env: dict[str, str]) -> None:
     assert isinstance(payload["directories"], list)
 
 
-def test_theme_schedule_endpoints_and_daily_theme_job(configured_env: dict[str, str]) -> None:
-    """Theme Factory APIs should expose catalog/schedule/today and create a job from today's theme."""
+def test_theme_factory_endpoints_return_empty_payloads_without_db_theme_data(configured_env: dict[str, str]) -> None:
+    """Theme Factory read APIs should degrade to empty payloads when no DB-backed theme data is available."""
 
     main_module, _workflow_module = reload_workflow_modules()
 
@@ -364,41 +435,27 @@ def test_theme_schedule_endpoints_and_daily_theme_job(configured_env: dict[str, 
         catalog_response = client.get("/api/themes")
         assert catalog_response.status_code == 200
         catalog_payload = catalog_response.json()
-        assert isinstance(catalog_payload, list)
-        assert any(item["theme_key"] == "motivation-monday" for item in catalog_payload)
+        assert catalog_payload == []
 
         schedule_response = client.get("/api/themes/schedule")
         assert schedule_response.status_code == 200
         schedule_payload = schedule_response.json()
-        assert schedule_payload["timezone"] == "Asia/Kolkata"
-        assert isinstance(schedule_payload["week_schedule"], list)
-        assert len(schedule_payload["week_schedule"]) == 7
-        assert isinstance(schedule_payload["month_schedule"], list)
-        assert isinstance(schedule_payload["active_overrides"], list)
+        assert schedule_payload == []
 
         today_response = client.get("/api/themes/today")
         assert today_response.status_code == 200
         today_payload = today_response.json()
-        assert today_payload["source"] in {"schedule", "evergreen", "override", "seed_fallback"}
-        assert today_payload["weekday"]
-        assert isinstance(today_payload["theme"]["theme_name"], str)
+        assert today_payload["resolved"] is False
+        assert today_payload["message"] == "No theme resolved yet"
+        assert today_payload["theme"] is None
 
         create_response = client.post("/api/jobs/create-daily-theme-job")
-        assert create_response.status_code == 201
-        create_payload = create_response.json()
-        assert create_payload["job_id"].startswith("job_")
-        assert create_payload["theme_name"] == today_payload["theme"]["theme_name"]
-        assert create_payload["weekday"] == today_payload["weekday"]
-        assert create_payload["source"] == today_payload["source"]
-
-        job_response = client.get(f"/api/jobs/{create_payload['job_id']}")
-        assert job_response.status_code == 200
-        job_payload = job_response.json()
-        assert job_payload["theme_name"] == today_payload["theme"]["theme_name"]
+        assert create_response.status_code == 409
+        assert create_response.json()["detail"] == "No theme resolved yet"
 
 
-def test_theme_service_returns_seed_fallback_when_database_is_unavailable(configured_env: dict[str, str]) -> None:
-    """Theme service should degrade to built-in seed data instead of failing when DB is unavailable."""
+def test_theme_service_returns_empty_state_when_database_is_unavailable(configured_env: dict[str, str]) -> None:
+    """Theme service should degrade to empty Theme Factory responses instead of failing when DB is unavailable."""
 
     reload_workflow_modules()
     theme_service_module = importlib.import_module("app.services.theme_service")
@@ -409,15 +466,14 @@ def test_theme_service_returns_seed_fallback_when_database_is_unavailable(config
     schedule = asyncio.run(service.get_schedule_dashboard(None))
     today = asyncio.run(service.get_today_theme(None))
 
-    assert len(catalog) >= 4
-    assert any(item.theme_key == "motivation-monday" for item in catalog)
+    assert catalog == []
     assert schedule.timezone == "Asia/Kolkata"
-    assert len(schedule.week_schedule) == 7
-    assert today.source in {"schedule", "evergreen", "seed_fallback"}
-    assert today.theme.theme_name
-    assert isinstance(today.theme.tone_style, str)
-    assert today.theme.tone_style
-    assert today.theme.audience
+    assert schedule.week_schedule == []
+    assert schedule.month_schedule == []
+    assert schedule.active_overrides == []
+    assert today.resolved is False
+    assert today.message == "No theme resolved yet"
+    assert today.theme is None
 
 
 def test_repository_recovers_preview_urls_from_asset_rows_for_legacy_jobs(configured_env: dict[str, str]) -> None:
@@ -508,3 +564,62 @@ def test_repository_recovers_preview_urls_from_asset_rows_for_legacy_jobs(config
     assert snapshot["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
     assert snapshot["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
     assert snapshot["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
+
+
+def test_repository_recovers_preview_urls_from_filesystem_when_metadata_is_missing(configured_env: dict[str, str]) -> None:
+    """Legacy jobs should still expose previews when files exist but DB metadata is incomplete."""
+
+    reload_workflow_modules()
+    workflow_models = importlib.import_module("app.models.workflow")
+    repository_module = importlib.import_module("app.repositories.workflow_repository")
+
+    CardJob = workflow_models.CardJob
+    WorkflowJobRepository = repository_module.WorkflowJobRepository
+
+    now = datetime.now(timezone.utc)
+    job_id = "job_legacy_filesystem_preview"
+    assets_dir = _assets_dir()
+    (assets_dir / "image").mkdir(parents=True, exist_ok=True)
+    (assets_dir / "preview").mkdir(parents=True, exist_ok=True)
+    (assets_dir / "final").mkdir(parents=True, exist_ok=True)
+    (assets_dir / "pdf").mkdir(parents=True, exist_ok=True)
+    (assets_dir / "image" / f"{job_id}_image_preview.png").write_bytes(b"png")
+    (assets_dir / "preview" / f"{job_id}_content_preview.png").write_bytes(b"png")
+    (assets_dir / "final" / f"{job_id}_final.png").write_bytes(b"png")
+
+    job = CardJob(
+        job_id=job_id,
+        trace_id="trace_legacy_filesystem_preview",
+        status="completed",
+        theme_name="Legacy Filesystem Theme",
+        tone_funny_pct=20,
+        tone_emotion_pct=80,
+        tone_style="conversational",
+        visual_style="minimal",
+        audience="internal reviewer",
+        cultural_context="global",
+        output_spec={"format": "paragraph"},
+        avoid_cliches=True,
+        content_preview="Legacy content preview",
+        winner_model="gpt-test",
+        content_approval_status="approved",
+        image_approval_status="approved",
+        final_approval_status="approved",
+        image_prompt="legacy prompt",
+        image_preview_url=None,
+        final_preview_url=None,
+        final_asset_urls=None,
+        created_at=now,
+        updated_at=now,
+    )
+    job.assets = []
+
+    snapshot = WorkflowJobRepository._serialize_job(job)
+
+    assert snapshot["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
+    assert snapshot["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
+    assert snapshot["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
+
+    (assets_dir / "image" / f"{job_id}_image_preview.png").unlink(missing_ok=True)
+    (assets_dir / "preview" / f"{job_id}_content_preview.png").unlink(missing_ok=True)
+    (assets_dir / "final" / f"{job_id}_final.png").unlink(missing_ok=True)

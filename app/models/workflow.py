@@ -65,6 +65,15 @@ class CardJob(Base):
     image_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_asset_urls: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    last_stage_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_stage_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -78,6 +87,10 @@ class CardJob(Base):
     )
 
     candidates: Mapped[list["CardContentCandidate"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    shortlists: Mapped[list["CardShortlist"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
@@ -122,6 +135,18 @@ class CardContentCandidate(Base):
         default=False,
         server_default=text("false"),
     )
+    is_shortlisted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    is_selected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -129,6 +154,39 @@ class CardContentCandidate(Base):
     )
 
     job: Mapped[CardJob] = relationship(back_populates="candidates")
+    shortlist_entries: Mapped[list["CardShortlist"]] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+    )
+
+
+class CardShortlist(Base):
+    """Ranked shortlist rows derived from the full candidate pool."""
+
+    __tablename__ = "card_shortlists"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_content_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    job: Mapped[CardJob] = relationship(back_populates="shortlists")
+    candidate: Mapped[CardContentCandidate] = relationship(back_populates="shortlist_entries")
 
 
 class CardApproval(Base):

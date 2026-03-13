@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ThemeType = Literal["evergreen", "calendar", "campaign", "news"]
+ThemeBucket = Literal["everyday", "special", "current_event"]
 ScheduleType = Literal["single_day", "date_range", "weekly_recurring", "monthly_recurring"]
 
 
@@ -17,6 +18,7 @@ class ThemeCatalogBase(BaseModel):
     theme_key: str
     theme_name: str
     description: str | None = None
+    theme_bucket: ThemeBucket = "everyday"
     theme_type: ThemeType
     cultural_context: str | None = None
     tone_style: str = "conversational"
@@ -38,6 +40,7 @@ class ThemeCatalogUpdate(BaseModel):
     theme_key: str | None = None
     theme_name: str | None = None
     description: str | None = None
+    theme_bucket: ThemeBucket | None = None
     theme_type: ThemeType | None = None
     cultural_context: str | None = None
     tone_style: str | None = None
@@ -191,6 +194,7 @@ class ThemeResolvedPayload(BaseModel):
     theme_key: str
     theme_name: str
     description: str | None = None
+    theme_bucket: ThemeBucket = "everyday"
     theme_type: str
     cultural_context: str | None = None
     tone_style: str = "conversational"
@@ -204,15 +208,17 @@ class ThemeResolvedPayload(BaseModel):
 class ThemeTodayResponse(BaseModel):
     """Response payload for GET /api/themes/today."""
 
+    resolved: bool = True
+    message: str | None = None
     timezone: str
-    plan_date: date
-    weekday: str
-    source: str
+    plan_date: date | None = None
+    weekday: str | None = None
+    source: str | None = None
     schedule_type: str | None = None
     schedule_id: int | None = None
     override_id: int | None = None
     resolution_note: str | None = None
-    theme: ThemeResolvedPayload
+    theme: ThemeResolvedPayload | None = None
 
 
 class ThemeWeekDayResponse(BaseModel):

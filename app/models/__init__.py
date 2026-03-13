@@ -18,6 +18,7 @@ from app.models.workflow import (
     CardContentCandidate,
     CardJob,
     CardJudgeResult,
+    CardShortlist,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "CardContentCandidate",
     "CardJob",
     "CardJudgeResult",
+    "CardShortlist",
 ]

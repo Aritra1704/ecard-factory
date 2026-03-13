@@ -47,6 +47,7 @@ from app.schemas.telegram import (
 )
 from app.schemas.workflow import (
     ApprovalRequest,
+    CandidateDebugResponse,
     ContentApprovalRequest,
     ContentApprovalResponse,
     DailyThemeJobResponse,
@@ -60,7 +61,12 @@ from app.schemas.workflow import (
     JobDeleteResponse,
     JobEventResponse,
     JobListItemResponse,
+    RenderShortlistRequest,
+    RenderShortlistResponse,
+    RenderedShortlistAssetResponse,
     RenderConfig,
+    ShortlistEntryResponse,
+    StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
 )
@@ -111,6 +117,7 @@ __all__ = [
     "StorageHealthResponse",
     "StorageSummaryResponse",
     "ApprovalRequest",
+    "CandidateDebugResponse",
     "ContentApprovalRequest",
     "ContentApprovalResponse",
     "DailyThemeJobResponse",
@@ -124,7 +131,12 @@ __all__ = [
     "JobDeleteResponse",
     "JobEventResponse",
     "JobListItemResponse",
+    "RenderShortlistRequest",
+    "RenderShortlistResponse",
+    "RenderedShortlistAssetResponse",
     "RenderConfig",
+    "ShortlistEntryResponse",
+    "StageRerunResponse",
     "StartJobRequest",
     "StartJobResponse",
 ]

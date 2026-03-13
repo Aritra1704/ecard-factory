@@ -494,7 +494,11 @@ const html = htm.bind(React.createElement);
       }
 
       if (scheduleResult.status === "fulfilled") {
-        const scheduleRows = Array.isArray(scheduleResult.value?.week_schedule) ? scheduleResult.value.week_schedule : [];
+        const scheduleRows = Array.isArray(scheduleResult.value)
+          ? []
+          : Array.isArray(scheduleResult.value?.week_schedule)
+            ? scheduleResult.value.week_schedule
+            : [];
         setThemeSchedule(scheduleRows);
         if (scheduleRows.length === 0) {
           nextThemeNotice = "Theme schedule not configured yet";
@@ -510,7 +514,9 @@ const html = htm.bind(React.createElement);
 
       if (todayResult.status === "fulfilled") {
         setTodayTheme(todayResult.value || null);
-        if (!nextThemeNotice && !todayResult.value?.theme) {
+        if (!nextThemeNotice && todayResult.value?.resolved === false) {
+          nextThemeNotice = todayResult.value?.message || "Theme schedule not configured yet";
+        } else if (!nextThemeNotice && !todayResult.value?.theme) {
           nextThemeNotice = "Theme schedule not configured yet";
         }
       } else {
@@ -526,11 +532,15 @@ const html = htm.bind(React.createElement);
       setJobsLoading(false);
       setStorageLoading(false);
       setThemeLoading(false);
+      const themeScheduleFailure =
+        scheduleResult.status !== "fulfilled" && !isOptionalThemeMissingError(scheduleResult.reason);
+      const todayThemeFailure =
+        todayResult.status !== "fulfilled" && !isOptionalThemeMissingError(todayResult.reason);
       const hasFailures =
         jobsResult.status !== "fulfilled" ||
         storageResult.status !== "fulfilled" ||
-        scheduleResult.status !== "fulfilled" ||
-        todayResult.status !== "fulfilled";
+        themeScheduleFailure ||
+        todayThemeFailure;
       setStatusMessage(
         hasFailures
           ? `Refresh completed with errors at ${new Date().toLocaleTimeString()}`
@@ -936,6 +946,9 @@ const html = htm.bind(React.createElement);
     const [job, setJob] = useState(null);
     const [assets, setAssets] = useState([]);
     const [events, setEvents] = useState([]);
+    const [candidates, setCandidates] = useState([]);
+    const [shortlist, setShortlist] = useState([]);
+    const [shortlistSelection, setShortlistSelection] = useState([]);
     const [loading, setLoading] = useState(false);
     const [workingAction, setWorkingAction] = useState("");
     const [error, setError] = useState("");
@@ -948,14 +961,31 @@ const html = htm.bind(React.createElement);
       setLoading(true);
       setError("");
       try {
-        const [jobPayload, assetPayload, eventPayload] = await Promise.all([
+        const [jobPayload, assetPayload, eventPayload, candidatePayload, shortlistPayload] = await Promise.all([
           requestJSON(`/api/jobs/${jobId}`),
           requestJSON(`/api/jobs/${jobId}/assets`),
           requestJSON(`/api/jobs/${jobId}/events`),
+          requestJSON(`/api/jobs/${jobId}/candidates`),
+          requestJSON(`/api/jobs/${jobId}/shortlist`),
         ]);
         setJob(jobPayload || null);
         setAssets(Array.isArray(assetPayload) ? assetPayload : []);
         setEvents(Array.isArray(eventPayload) ? eventPayload : []);
+        const nextCandidates = Array.isArray(candidatePayload) ? candidatePayload : [];
+        const nextShortlist = Array.isArray(shortlistPayload) ? shortlistPayload : [];
+        setCandidates(nextCandidates);
+        setShortlist(nextShortlist);
+        const selectedIds = nextShortlist
+          .filter((entry) => entry.is_selected)
+          .map((entry) => Number(entry.candidate_id))
+          .filter((value) => Number.isInteger(value));
+        setShortlistSelection(
+          selectedIds.length > 0
+            ? selectedIds
+            : nextShortlist[0]
+              ? [Number(nextShortlist[0].candidate_id)]
+              : [],
+        );
       } catch (requestError) {
         setError(requestError.message || "Unable to load job detail");
       } finally {
@@ -1020,6 +1050,73 @@ const html = htm.bind(React.createElement);
       );
     }, [job, assets]);
     const imagePreviewSelection = usePreviewSelection(imagePreviewCandidates);
+    const shortlistPreviewImages = useMemo(
+      () => assets
+        .filter((asset) => String(asset?.asset_type || "").toLowerCase() === "shortlist_preview")
+        .map((asset, index) => ({
+          label: `Shortlist Preview ${index + 1}`,
+          url: asset.public_url || asset.asset_url,
+          source: `shortlist_preview:${index}`,
+        }))
+        .filter((entry) => entry.url),
+      [assets],
+    );
+
+    async function handleStageRerun(stage) {
+      if (!jobId) {
+        return;
+      }
+      const endpointMap = {
+        content: `/api/jobs/${jobId}/rerun/content`,
+        image: `/api/jobs/${jobId}/rerun/image`,
+        final_render: `/api/jobs/${jobId}/rerun/final-render`,
+        full: `/api/jobs/${jobId}/rerun/full`,
+      };
+      const actionKey = `rerun:${stage}`;
+      setWorkingAction(actionKey);
+      setError("");
+      try {
+        const payload = await requestJSON(endpointMap[stage], { method: "POST" });
+        setStatusMessage(`Reran ${humanize(stage)} for ${payload.job_id} (retry ${payload.retry_count})`);
+        await loadJobDetail();
+      } catch (requestError) {
+        setError(requestError.message || `Unable to rerun ${humanize(stage)}`);
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    function toggleShortlistSelection(candidateId, checked) {
+      setShortlistSelection((current) => {
+        const next = new Set(current);
+        if (checked) {
+          next.add(candidateId);
+        } else {
+          next.delete(candidateId);
+        }
+        return Array.from(next);
+      });
+    }
+
+    async function handleRenderShortlist() {
+      if (!jobId) {
+        return;
+      }
+      setWorkingAction("render-shortlist");
+      setError("");
+      try {
+        const payload = await requestJSON(`/api/jobs/${jobId}/render-shortlist`, {
+          method: "POST",
+          body: JSON.stringify({ candidate_ids: shortlistSelection }),
+        });
+        setStatusMessage(`Rendered ${payload.rendered_count} shortlist preview card(s)`);
+        await loadJobDetail();
+      } catch (requestError) {
+        setError(requestError.message || "Unable to render shortlist");
+      } finally {
+        setWorkingAction("");
+      }
+    }
 
     async function handleArchive() {
       if (!jobId) {
@@ -1089,6 +1186,7 @@ const html = htm.bind(React.createElement);
 
         ${error ? html`<p className="status-line error">${error}</p>` : null}
         ${statusMessage ? html`<p className="status-line">${statusMessage}</p>` : null}
+        ${job?.last_error_message ? html`<div className="status-panel error">Last stage error: ${job.last_error_message}</div>` : null}
 
         ${job
           ? html`
@@ -1109,6 +1207,40 @@ const html = htm.bind(React.createElement);
                       </article>
                     `,
                   )}
+                </div>
+                <div className="key-value-grid job-meta-grid">
+                  <article className="key-card">
+                    <p className="key-label">retry_count</p>
+                    <p className="key-value">${job.retry_count || 0}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">last_stage_started_at</p>
+                    <p className="key-value">${formatDate(job.last_stage_started_at)}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">last_stage_finished_at</p>
+                    <p className="key-value">${formatDate(job.last_stage_finished_at)}</p>
+                  </article>
+                </div>
+                <div className="section-head section-subhead">
+                  <div>
+                    <h2 className="section-title">Stage Reruns</h2>
+                    <p className="section-copy">Operational rerun controls for each major workflow stage.</p>
+                  </div>
+                </div>
+                <div className="inline-actions padded-actions">
+                  <button type="button" className="button" onClick=${() => handleStageRerun("content")} disabled=${workingAction === "rerun:content"}>
+                    ${workingAction === "rerun:content" ? "Rerunning..." : "Rerun Content"}
+                  </button>
+                  <button type="button" className="button" onClick=${() => handleStageRerun("image")} disabled=${workingAction === "rerun:image"}>
+                    ${workingAction === "rerun:image" ? "Rerunning..." : "Rerun Image"}
+                  </button>
+                  <button type="button" className="button" onClick=${() => handleStageRerun("final_render")} disabled=${workingAction === "rerun:final_render"}>
+                    ${workingAction === "rerun:final_render" ? "Rerunning..." : "Rerun Final Render"}
+                  </button>
+                  <button type="button" className="button primary" onClick=${() => handleStageRerun("full")} disabled=${workingAction === "rerun:full"}>
+                    ${workingAction === "rerun:full" ? "Rerunning..." : "Rerun Full Workflow"}
+                  </button>
                 </div>
               </section>
 
@@ -1191,6 +1323,96 @@ const html = htm.bind(React.createElement);
               <section className="section-panel">
                 <div className="section-head">
                   <div>
+                    <h2 className="section-title">Candidate Pool</h2>
+                    <p className="section-copy">All generated candidates across models before shortlist selection.</p>
+                  </div>
+                  <p className="section-copy">${candidates.length} total candidates</p>
+                </div>
+                ${candidates.length === 0
+                  ? html`<p className="empty-state">No candidates stored for this job yet.</p>`
+                  : html`
+                      <div className="table-wrap">
+                        <table className="console-table">
+                          <thead>
+                            <tr>
+                              <th>model</th>
+                              <th>raw_score</th>
+                              <th>judged_score</th>
+                              <th>shortlist</th>
+                              <th>selected</th>
+                              <th>text</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            ${candidates.map(
+                              (candidate) => html`
+                                <tr key=${candidate.id || `${candidate.model}_${candidate.text}`}>
+                                  <td>${candidate.model}</td>
+                                  <td>${Number(candidate.raw_score || 0).toFixed(3)}</td>
+                                  <td>${Number(candidate.judged_score ?? candidate.judge_score ?? 0).toFixed(3)}</td>
+                                  <td><${StatusBadge} value=${candidate.is_shortlisted ? "shortlisted" : "pooled"} /></td>
+                                  <td><${StatusBadge} value=${candidate.is_selected ? "selected" : "not_selected"} /></td>
+                                  <td>${truncateText(candidate.text || candidate.content_text, 200)}</td>
+                                </tr>
+                              `,
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    `}
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Top 10 Shortlist</h2>
+                    <p className="section-copy">Select shortlisted phrases and render internal card previews from them.</p>
+                  </div>
+                  <button type="button" className="button primary" onClick=${handleRenderShortlist} disabled=${workingAction === "render-shortlist" || shortlist.length === 0}>
+                    ${workingAction === "render-shortlist" ? "Rendering..." : "Render Shortlist"}
+                  </button>
+                </div>
+                ${shortlist.length === 0
+                  ? html`<p className="empty-state">No shortlist available for this job yet.</p>`
+                  : html`
+                      <div className="table-wrap">
+                        <table className="console-table">
+                          <thead>
+                            <tr>
+                              <th>use</th>
+                              <th>rank</th>
+                              <th>model</th>
+                              <th>score</th>
+                              <th>text</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            ${shortlist.map(
+                              (entry) => html`
+                                <tr key=${entry.candidate_id}>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked=${shortlistSelection.includes(Number(entry.candidate_id))}
+                                      onChange=${(event) => toggleShortlistSelection(Number(entry.candidate_id), event.target.checked)}
+                                    />
+                                  </td>
+                                  <td>${entry.rank}</td>
+                                  <td>${entry.model}</td>
+                                  <td>${Number(entry.score || 0).toFixed(3)}</td>
+                                  <td>${truncateText(entry.text, 220)}</td>
+                                </tr>
+                              `,
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    `}
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
                     <h2 className="section-title">Generated Card Preview</h2>
                     <p className="section-copy">Best available final or preview image for this job.</p>
                   </div>
@@ -1259,14 +1481,14 @@ const html = htm.bind(React.createElement);
                 <div className="section-head">
                   <div>
                     <h2 className="section-title">Additional Previews</h2>
-                    <p className="section-copy">All preview variants and exported images discovered on this job.</p>
+                    <p className="section-copy">All preview variants, shortlist renders, and exported images discovered on this job.</p>
                   </div>
                 </div>
-                ${previewImages.length === 0
+                ${previewImages.length === 0 && shortlistPreviewImages.length === 0
                   ? html`<p className="empty-state">No preview variants available yet.</p>`
                   : html`
                       <div className="image-grid">
-                        ${previewImages.map(
+                        ${[...previewImages, ...shortlistPreviewImages].map(
                           (image) => html`
                             <${PreviewVariantCard} key=${image.url} image=${image} />
                           `,
@@ -1291,6 +1513,7 @@ const html = htm.bind(React.createElement);
     const [todayTheme, setTodayTheme] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [notice, setNotice] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
     const [workingAction, setWorkingAction] = useState("");
     const [themeEditorOpen, setThemeEditorOpen] = useState(false);
@@ -1302,6 +1525,7 @@ const html = htm.bind(React.createElement);
       theme_key: "",
       theme_name: "",
       description: "",
+      theme_bucket: "everyday",
       theme_type: "evergreen",
       cultural_context: "global",
       tone_style: "conversational",
@@ -1336,10 +1560,22 @@ const html = htm.bind(React.createElement);
     });
 
     const resolvedTodayTheme = todayTheme && typeof todayTheme === "object" ? todayTheme.theme || null : null;
+    const bucketCounts = useMemo(
+      () => catalog.reduce(
+        (accumulator, theme) => {
+          const bucket = String(theme.theme_bucket || "everyday");
+          accumulator[bucket] = (accumulator[bucket] || 0) + 1;
+          return accumulator;
+        },
+        { everyday: 0, special: 0, current_event: 0 },
+      ),
+      [catalog],
+    );
 
     async function loadThemeFactory() {
       setLoading(true);
       setError("");
+      setNotice("");
       const [catalogResult, todayResult, scheduleResult] = await Promise.allSettled([
         requestJSON("/api/themes"),
         requestJSON("/api/themes/today"),
@@ -1353,19 +1589,39 @@ const html = htm.bind(React.createElement);
           setScheduleForm((current) => ({ ...current, theme_id: String(current.theme_id || items[0].id) }));
           setOverrideForm((current) => ({ ...current, theme_id: String(current.theme_id || items[0].id) }));
         }
+        if (items.length === 0) {
+          setNotice("Theme schedule not configured yet");
+        }
       } else {
         setCatalog([]);
-        setError(normalizeDashboardError("theme catalog", catalogResult.reason));
+        if (isOptionalThemeMissingError(catalogResult.reason)) {
+          setNotice("Theme schedule not configured yet");
+        } else {
+          setError(normalizeDashboardError("theme catalog", catalogResult.reason));
+        }
       }
 
       if (todayResult.status === "fulfilled") {
         setTodayTheme(todayResult.value || null);
+        if (todayResult.value?.resolved === false) {
+          setNotice((current) => current || todayResult.value?.message || "No theme resolved yet");
+        }
       } else {
         setTodayTheme(null);
-        setError((current) => current || normalizeDashboardError("today's theme", todayResult.reason));
+        if (isOptionalThemeMissingError(todayResult.reason)) {
+          setNotice((current) => current || "No theme resolved yet");
+        } else {
+          setError((current) => current || normalizeDashboardError("today's theme", todayResult.reason));
+        }
       }
 
       if (scheduleResult.status === "fulfilled") {
+        if (Array.isArray(scheduleResult.value)) {
+          setScheduleDashboard({ week_schedule: [], month_schedule: [], active_overrides: [] });
+          setNotice((current) => current || "Theme schedule not configured yet");
+          setLoading(false);
+          return;
+        }
         setScheduleDashboard({
           week_schedule: Array.isArray(scheduleResult.value?.week_schedule) ? scheduleResult.value.week_schedule : [],
           month_schedule: Array.isArray(scheduleResult.value?.month_schedule) ? scheduleResult.value.month_schedule : [],
@@ -1373,7 +1629,11 @@ const html = htm.bind(React.createElement);
         });
       } else {
         setScheduleDashboard({ week_schedule: [], month_schedule: [], active_overrides: [] });
-        setError((current) => current || normalizeDashboardError("theme schedule", scheduleResult.reason));
+        if (isOptionalThemeMissingError(scheduleResult.reason)) {
+          setNotice((current) => current || "Theme schedule not configured yet");
+        } else {
+          setError((current) => current || normalizeDashboardError("theme schedule", scheduleResult.reason));
+        }
       }
 
       setLoading(false);
@@ -1389,6 +1649,7 @@ const html = htm.bind(React.createElement);
         theme_key: theme?.theme_key || "",
         theme_name: theme?.theme_name || "",
         description: theme?.description || "",
+        theme_bucket: theme?.theme_bucket || "everyday",
         theme_type: theme?.theme_type || "evergreen",
         cultural_context: theme?.cultural_context || "global",
         tone_style: theme?.tone_style || "conversational",
@@ -1444,6 +1705,7 @@ const html = htm.bind(React.createElement);
           theme_key: String(themeForm.theme_key || "").trim(),
           theme_name: String(themeForm.theme_name || "").trim(),
           description: String(themeForm.description || "").trim() || null,
+          theme_bucket: themeForm.theme_bucket,
           theme_type: themeForm.theme_type,
           cultural_context: String(themeForm.cultural_context || "").trim() || null,
           tone_style: String(themeForm.tone_style || "").trim(),
@@ -1580,8 +1842,28 @@ const html = htm.bind(React.createElement);
         </header>
 
         ${error ? html`<div className="status-panel error">${error}</div>` : null}
+        ${notice ? html`<div className="status-panel neutral">${notice}</div>` : null}
         ${statusMessage ? html`<p className="status-line">${statusMessage}</p>` : null}
         ${loading ? html`<div className="status-panel warning">Loading Theme Factory data...</div>` : null}
+
+        <section className="cards-grid">
+          <article className="summary-card">
+            <p className="summary-label">Everyday Themes</p>
+            <p className="summary-value">${bucketCounts.everyday}</p>
+          </article>
+          <article className="summary-card">
+            <p className="summary-label">Special Themes</p>
+            <p className="summary-value">${bucketCounts.special}</p>
+          </article>
+          <article className="summary-card">
+            <p className="summary-label">Current Events</p>
+            <p className="summary-value">${bucketCounts.current_event}</p>
+          </article>
+          <article className="summary-card">
+            <p className="summary-label">Active Overrides</p>
+            <p className="summary-value">${scheduleDashboard.active_overrides.length}</p>
+          </article>
+        </section>
 
         <section className="section-panel">
           <div className="section-head">
@@ -1596,6 +1878,10 @@ const html = htm.bind(React.createElement);
                   <article className="key-card">
                     <p className="key-label">Theme</p>
                     <p className="key-value">${resolvedTodayTheme.theme_name}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Bucket</p>
+                    <p className="key-value">${humanize(resolvedTodayTheme.theme_bucket)}</p>
                   </article>
                   <article className="key-card">
                     <p className="key-label">Source</p>
@@ -1641,6 +1927,7 @@ const html = htm.bind(React.createElement);
                       <tr>
                         <th>theme_key</th>
                         <th>theme_name</th>
+                        <th>theme_bucket</th>
                         <th>theme_type</th>
                         <th>audience</th>
                         <th>visual_style</th>
@@ -1655,6 +1942,7 @@ const html = htm.bind(React.createElement);
                           <tr key=${theme.id}>
                             <td><code>${theme.theme_key}</code></td>
                             <td>${theme.theme_name}</td>
+                            <td>${humanize(theme.theme_bucket)}</td>
                             <td>${humanize(theme.theme_type)}</td>
                             <td>${theme.default_audience}</td>
                             <td>${theme.default_visual_style}</td>
@@ -1827,6 +2115,14 @@ const html = htm.bind(React.createElement);
                       <div className="form-field">
                         <label htmlFor="themeNameFactory">Theme Name</label>
                         <input id="themeNameFactory" value=${themeForm.theme_name} onInput=${(event) => setThemeForm((current) => ({ ...current, theme_name: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeBucket">Theme Bucket</label>
+                        <select id="themeBucket" value=${themeForm.theme_bucket} onChange=${(event) => setThemeForm((current) => ({ ...current, theme_bucket: event.target.value }))}>
+                          <option value="everyday">everyday</option>
+                          <option value="special">special</option>
+                          <option value="current_event">current_event</option>
+                        </select>
                       </div>
                       <div className="form-field">
                         <label htmlFor="themeType">Theme Type</label>
