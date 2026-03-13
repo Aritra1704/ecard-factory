@@ -618,6 +618,20 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        final_assets = job.get("final_asset_urls") if isinstance(job.get("final_asset_urls"), dict) else {}
+        asset_urls = [
+            str(asset.get("asset_url") or asset.get("public_url") or "")
+            for asset in list(job.get("assets") or [])
+            if str(asset.get("asset_url") or asset.get("public_url") or "").strip()
+        ]
+        logger.info(
+            "workflow preview debug source=get_job_debug job_id=%s image_preview_url=%s final_preview_url=%s final_asset_png=%s asset_urls=%s",
+            job_id,
+            str(job.get("image_preview_url") or ""),
+            str(job.get("final_preview_url") or ""),
+            str(final_assets.get("png") or ""),
+            asset_urls[:4],
+        )
         return JobDebugResponse.model_validate(job)
 
     async def list_jobs(self, *, limit: int = 100) -> list[JobListItemResponse]:
@@ -647,6 +661,16 @@ class WorkflowV1Service:
                     updated_at=updated_at,
                 )
             )
+        if items:
+            sample = items[0]
+            final_assets = sample.final_asset_urls if isinstance(sample.final_asset_urls, dict) else {}
+            logger.info(
+                "workflow preview debug source=list_jobs job_id=%s image_preview_url=%s final_preview_url=%s final_asset_png=%s",
+                sample.job_id,
+                sample.image_preview_url or "",
+                sample.final_preview_url or "",
+                str(final_assets.get("png") or ""),
+            )
         return items
 
     async def get_job_assets(self, job_id: str) -> list[JobAssetResponse]:
@@ -661,7 +685,13 @@ class WorkflowV1Service:
             key=lambda item: self._coerce_datetime(item.get("created_at"), fallback=datetime.min.replace(tzinfo=timezone.utc)),
             reverse=True,
         )
-        return [JobAssetResponse.model_validate(item) for item in assets]
+        models = [JobAssetResponse.model_validate(item) for item in assets]
+        logger.info(
+            "workflow preview debug source=get_job_assets job_id=%s asset_urls=%s",
+            job_id,
+            [asset.asset_url for asset in models[:4]],
+        )
+        return models
 
     async def get_job_events(self, job_id: str) -> list[JobEventResponse]:
         """Return lifecycle audit events for a job."""

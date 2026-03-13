@@ -66,7 +66,7 @@ class StartJobResponse(BaseModel):
 
 
 class DailyThemeJobResponse(BaseModel):
-    """Response returned when creating one job from today's weekly theme."""
+    """Response returned when creating one job from today's resolved Theme Factory theme."""
 
     job_id: str
     status: str

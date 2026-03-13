@@ -27,6 +27,9 @@ class WeeklyThemeScheduleResponse(BaseModel):
 
     timezone: str
     today_weekday: str
+    source: str = "theme_schedule"
+    configured: bool = True
+    message: str | None = None
     schedule: list[WeeklyThemeDay] = Field(default_factory=list)
 
 
@@ -36,4 +39,6 @@ class TodayThemeResponse(BaseModel):
     timezone: str
     plan_date: date
     source: str = "theme_schedule"
+    configured: bool = True
+    message: str | None = None
     theme: WeeklyThemeDay

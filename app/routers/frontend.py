@@ -38,6 +38,13 @@ async def compare_lab_home() -> FileResponse:
     return _serve_console_index()
 
 
+@router.get("/themes", include_in_schema=False)
+async def theme_factory_home() -> FileResponse:
+    """Serve the React Theme Factory route shell."""
+
+    return _serve_console_index()
+
+
 @router.get("/jobs/{job_id}", include_in_schema=False)
 async def workflow_job_detail(job_id: str) -> FileResponse:
     """Serve job detail shell route."""

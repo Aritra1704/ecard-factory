@@ -140,6 +140,19 @@ const html = htm.bind(React.createElement);
     return payload;
   }
 
+  function normalizeDashboardError(scope, error) {
+    const message = String(error?.message || "").trim();
+    if (!message) {
+      return `Unable to load ${scope}`;
+    }
+    return message;
+  }
+
+  function isOptionalThemeMissingError(error) {
+    const message = String(error?.message || "").trim().toLowerCase();
+    return message === "not found" || message.includes("404");
+  }
+
   function buildStartPayload(formValues) {
     return {
       theme_name: String(formValues.theme_name || "Internal Theme").trim(),
@@ -162,6 +175,50 @@ const html = htm.bind(React.createElement);
     };
   }
 
+  function buildFormValuesFromResolvedTheme(theme) {
+    if (!theme || typeof theme !== "object") {
+      return null;
+    }
+    return {
+      theme_name: String(theme.theme_name || "Internal Theme").trim(),
+      audience: String(theme.audience || "internal reviewer").trim(),
+      cultural_context: String(theme.cultural_context || "global").trim(),
+      tone_style: String(theme.tone_style || "conversational").trim(),
+      tone_funny_pct: Number(theme.tone_funny_pct ?? 20),
+      tone_emotion_pct: Number(theme.tone_emotion_pct ?? 80),
+    };
+  }
+
+  function splitCsv(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function formatDateInput(value) {
+    if (!value) {
+      return "";
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "";
+    }
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  function formatDateTimeLocalInput(value) {
+    if (!value) {
+      return "";
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "";
+    }
+    const offsetMs = parsed.getTimezoneOffset() * 60 * 1000;
+    return new Date(parsed.getTime() - offsetMs).toISOString().slice(0, 16);
+  }
+
   function truncateText(value, maxLength = 140) {
     const text = String(value || "").trim();
     if (!text) {
@@ -173,31 +230,139 @@ const html = htm.bind(React.createElement);
     return `${text.slice(0, maxLength - 1).trimEnd()}...`;
   }
 
-  function resolvePrimaryImageUrl(job) {
+  function normalizePreviewUrl(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  function isLikelyImageUrl(value) {
+    const url = normalizePreviewUrl(value);
+    if (!url) {
+      return false;
+    }
+    if (url.startsWith("data:image/")) {
+      return true;
+    }
+    try {
+      const parsed = new URL(url, window.location.origin);
+      return /\.(png|jpe?g|webp|gif|svg)$/i.test(parsed.pathname);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function collectPreviewCandidates(job, assetRows = []) {
     if (!job || typeof job !== "object") {
-      return "";
+      return [];
     }
-    if (job.final_preview_url) {
-      return job.final_preview_url;
+
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = (label, url, source) => {
+      const normalized = normalizePreviewUrl(url);
+      if (!normalized || seen.has(normalized) || !isLikelyImageUrl(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      candidates.push({ label, url: normalized, source });
+    };
+
+    pushCandidate("Final Preview", job.final_preview_url, "final_preview_url");
+    pushCandidate(
+      "Final PNG",
+      job.final_asset_urls && typeof job.final_asset_urls === "object" ? job.final_asset_urls.png : "",
+      "final_asset_urls.png",
+    );
+    pushCandidate("Image Preview", job.image_preview_url, "image_preview_url");
+    pushCandidate("Content Preview", job.content_preview_url, "content_preview_url");
+
+    if (Array.isArray(assetRows)) {
+      const assetTypeMap = {
+        final_preview: "Final Preview",
+        final_png: "Final PNG",
+        image_preview: "Image Preview",
+        content_preview: "Content Preview",
+      };
+      assetRows.forEach((asset) => {
+        const assetType = String(asset?.asset_type || "").toLowerCase();
+        const label = assetTypeMap[assetType];
+        if (!label) {
+          return;
+        }
+        pushCandidate(label, asset.public_url || asset.asset_url, `asset:${assetType}`);
+      });
     }
-    if (job.final_asset_urls && typeof job.final_asset_urls === "object" && job.final_asset_urls.png) {
-      return job.final_asset_urls.png;
+
+    return candidates;
+  }
+
+  function usePreviewSelection(candidates) {
+    const candidateKey = useMemo(
+      () => candidates.map((candidate) => `${candidate.source}:${candidate.url}`).join("|"),
+      [candidates],
+    );
+    const [activeIndex, setActiveIndex] = useState(0);
+
+    useEffect(() => {
+      setActiveIndex(0);
+    }, [candidateKey]);
+
+    const currentCandidate = activeIndex < candidates.length ? candidates[activeIndex] : null;
+    const exhausted = candidates.length > 0 && activeIndex >= candidates.length;
+
+    function handleError() {
+      setActiveIndex((current) => current + 1);
     }
-    if (job.image_preview_url) {
-      return job.image_preview_url;
-    }
-    return "";
+
+    return { currentCandidate, exhausted, handleError };
+  }
+
+  function PreviewVariantCard({ image }) {
+    const candidates = useMemo(() => {
+      if (!image || !image.url) {
+        return [];
+      }
+      return [{ label: image.label || "Preview", url: image.url, source: image.label || "preview" }];
+    }, [image]);
+    const { currentCandidate, exhausted, handleError } = usePreviewSelection(candidates);
+
+    return html`
+      <article className="image-card">
+        ${currentCandidate
+          ? html`
+              <a href=${currentCandidate.url} target="_blank" rel="noreferrer">
+                <img src=${currentCandidate.url} alt=${image.label} loading="lazy" onError=${handleError} />
+              </a>
+            `
+          : html`<p className="empty-state">${exhausted ? "Preview unavailable." : "No preview available yet."}</p>`}
+        <p className="image-caption">${image.label}</p>
+      </article>
+    `;
   }
 
   function GeneratedECardTile({ job, actionState, onArchive, onDelete }) {
-    const imageUrl = resolvePrimaryImageUrl(job);
+    const previewCandidates = useMemo(() => collectPreviewCandidates(job), [job]);
+    const { currentCandidate, exhausted, handleError } = usePreviewSelection(previewCandidates);
     const contentFallback = truncateText(job.content_preview || "Content preview will appear here after generation.", 180);
 
     return html`
       <article className="ecard-tile">
         <div className="ecard-media">
-          ${imageUrl
-            ? html`<img src=${imageUrl} alt=${job.theme_name || "Generated eCard"} loading="lazy" />`
+          ${currentCandidate
+            ? html`
+                <img
+                  src=${currentCandidate.url}
+                  alt=${job.theme_name || "Generated eCard"}
+                  loading="lazy"
+                  onError=${handleError}
+                />
+              `
+            : exhausted
+              ? html`
+                  <div className="ecard-placeholder">
+                    <p className="ecard-placeholder-kicker">Preview Unavailable</p>
+                    <p className="ecard-placeholder-copy">The stored preview URL did not load.</p>
+                  </div>
+                `
             : html`
                 <div className="ecard-placeholder">
                   <p className="ecard-placeholder-kicker">Content Preview</p>
@@ -219,8 +384,12 @@ const html = htm.bind(React.createElement);
           </div>
           <div className="ecard-actions">
             <${Link} to=${`/jobs/${job.job_id}`} className="button-link">View Details<//>
-            ${imageUrl
-              ? html`<a href=${imageUrl} target="_blank" rel="noreferrer" className="button-link">Open Image</a>`
+            ${currentCandidate
+              ? html`
+                  <a href=${currentCandidate.url} target="_blank" rel="noreferrer" className="button-link">
+                    Open Image
+                  </a>
+                `
               : html`<button type="button" className="button" disabled=${true}>Open Image</button>`}
             <button
               type="button"
@@ -256,6 +425,7 @@ const html = htm.bind(React.createElement);
     const [jobsError, setJobsError] = useState("");
     const [storageError, setStorageError] = useState("");
     const [themeError, setThemeError] = useState("");
+    const [themeNotice, setThemeNotice] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
     const [createOpen, setCreateOpen] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -269,6 +439,7 @@ const html = htm.bind(React.createElement);
       tone_funny_pct: 20,
       tone_emotion_pct: 80,
     });
+    const resolvedTodayTheme = todayTheme && typeof todayTheme === "object" ? todayTheme.theme || null : null;
 
     const summary = useMemo(() => {
       let active = 0;
@@ -298,42 +469,59 @@ const html = htm.bind(React.createElement);
       setJobsError("");
       setStorageError("");
       setThemeError("");
+      setThemeNotice("");
 
       const [jobsResult, storageResult, scheduleResult, todayResult] = await Promise.allSettled([
         requestJSON("/api/jobs?limit=50"),
         requestJSON("/api/storage/summary"),
-        requestJSON("/api/themes"),
+        requestJSON("/api/themes/schedule"),
         requestJSON("/api/themes/today"),
       ]);
+      let nextThemeNotice = "";
 
       if (jobsResult.status === "fulfilled") {
         setJobs(Array.isArray(jobsResult.value) ? jobsResult.value : []);
       } else {
         setJobs([]);
-        setJobsError(jobsResult.reason?.message || "Unable to load jobs");
+        setJobsError(normalizeDashboardError("jobs", jobsResult.reason));
       }
 
       if (storageResult.status === "fulfilled") {
         setStorage(storageResult.value || null);
       } else {
         setStorage(null);
-        setStorageError(storageResult.reason?.message || "Unable to load storage summary");
+        setStorageError(normalizeDashboardError("storage summary", storageResult.reason));
       }
 
       if (scheduleResult.status === "fulfilled") {
-        const scheduleRows = Array.isArray(scheduleResult.value?.schedule) ? scheduleResult.value.schedule : [];
+        const scheduleRows = Array.isArray(scheduleResult.value?.week_schedule) ? scheduleResult.value.week_schedule : [];
         setThemeSchedule(scheduleRows);
+        if (scheduleRows.length === 0) {
+          nextThemeNotice = "Theme schedule not configured yet";
+        }
       } else {
         setThemeSchedule([]);
-        setThemeError(scheduleResult.reason?.message || "Unable to load weekly theme schedule");
+        if (isOptionalThemeMissingError(scheduleResult.reason)) {
+          nextThemeNotice = "Theme Factory not configured yet";
+        } else {
+          setThemeError(normalizeDashboardError("Theme Factory schedule", scheduleResult.reason));
+        }
       }
 
       if (todayResult.status === "fulfilled") {
-        setTodayTheme(todayResult.value?.theme || null);
+        setTodayTheme(todayResult.value || null);
+        if (!nextThemeNotice && !todayResult.value?.theme) {
+          nextThemeNotice = "Theme schedule not configured yet";
+        }
       } else {
         setTodayTheme(null);
-        setThemeError(todayResult.reason?.message || "Unable to load today's theme");
+        if (isOptionalThemeMissingError(todayResult.reason)) {
+          nextThemeNotice = nextThemeNotice || "Theme schedule not configured yet";
+        } else {
+          setThemeError(normalizeDashboardError("today's theme", todayResult.reason));
+        }
       }
+      setThemeNotice(nextThemeNotice);
 
       setJobsLoading(false);
       setStorageLoading(false);
@@ -377,6 +565,14 @@ const html = htm.bind(React.createElement);
 
     function updateField(key, value) {
       setFormValues((current) => ({ ...current, [key]: value }));
+    }
+
+    function applyTodayThemeToForm() {
+      const nextValues = buildFormValuesFromResolvedTheme(resolvedTodayTheme);
+      if (!nextValues) {
+        return;
+      }
+      setFormValues((current) => ({ ...current, ...nextValues }));
     }
 
     async function handleGenerateTodayCard() {
@@ -449,6 +645,7 @@ const html = htm.bind(React.createElement);
             >
               Refresh
             </button>
+            <${Link} to="/themes" className="button-link">Open Theme Factory<//>
             <${Link} to="/compare" className="button-link">Open Compare Lab<//>
           </div>
         </header>
@@ -465,7 +662,7 @@ const html = htm.bind(React.createElement);
                   ? html`<div className="status-panel warning">Loading storage summary from /api/storage/summary...</div>`
                   : null}
                 ${themeLoading
-                  ? html`<div className="status-panel warning">Loading themes from /api/themes...</div>`
+                  ? html`<div className="status-panel warning">Loading Theme Factory data from /api/themes/schedule...</div>`
                   : null}
                 ${jobsError ? html`<div className="status-panel error">Unable to load jobs: ${jobsError}</div>` : null}
                 ${storageError
@@ -538,9 +735,9 @@ const html = htm.bind(React.createElement);
             <div>
               <h2 className="section-title">Weekly Theme Schedule</h2>
               <p className="section-copy">
-                ${todayTheme
-                  ? `Today's Theme: ${todayTheme.theme_name} (${humanize(todayTheme.weekday)})`
-                  : "Today's Theme: Unavailable"}
+                ${resolvedTodayTheme
+                  ? `Today's Theme: ${resolvedTodayTheme.theme_name} (${humanize(todayTheme?.weekday)})`
+                  : themeNotice || "Today's Theme: Unavailable"}
               </p>
             </div>
             <div className="inline-actions">
@@ -548,37 +745,41 @@ const html = htm.bind(React.createElement);
                 type="button"
                 className="button primary"
                 onClick=${handleGenerateTodayCard}
-                disabled=${creatingThemeJob || themeLoading || Boolean(themeError)}
+                disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
               >
                 ${creatingThemeJob ? "Generating..." : "Generate Today's Card"}
               </button>
+              <${Link} to="/themes" className="button-link">Manage Themes<//>
             </div>
           </div>
+          ${themeNotice ? html`<div className="status-panel neutral">${themeNotice}</div>` : null}
           ${themeLoading
             ? html`<p className="empty-state">Loading weekly schedule...</p>`
             : themeSchedule.length === 0
-              ? html`<p className="empty-state">No theme schedule found.</p>`
+              ? html`<p className="empty-state">Theme schedule not configured yet.</p>`
               : html`
                   <div className="table-wrap">
                     <table className="console-table">
                       <thead>
                         <tr>
+                          <th>date</th>
                           <th>weekday</th>
                           <th>theme_name</th>
+                          <th>source</th>
                           <th>tone_style</th>
-                          <th>funny %</th>
-                          <th>emotion %</th>
+                          <th>audience</th>
                         </tr>
                       </thead>
                       <tbody>
                         ${themeSchedule.map(
                           (row) => html`
-                            <tr key=${row.weekday}>
+                            <tr key=${`${row.plan_date}_${row.weekday}`}>
+                              <td>${formatDate(row.plan_date)}</td>
                               <td>${humanize(row.weekday)}</td>
-                              <td>${row.theme_name || "-"}</td>
-                              <td>${row.tone_style || "-"}</td>
-                              <td>${row.tone_funny_pct ?? "-"}</td>
-                              <td>${row.tone_emotion_pct ?? "-"}</td>
+                              <td>${row.theme?.theme_name || "-"}</td>
+                              <td>${humanize(row.source)}</td>
+                              <td>${row.theme?.tone_style || "-"}</td>
+                              <td>${row.theme?.audience || "-"}</td>
                             </tr>
                           `,
                         )}
@@ -705,6 +906,14 @@ const html = htm.bind(React.createElement);
                       </div>
                     </div>
                     <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick=${applyTodayThemeToForm}
+                        disabled=${!resolvedTodayTheme}
+                      >
+                        Use Today's Theme
+                      </button>
                       <button type="submit" className="button primary" disabled=${creating}>
                         ${creating ? "Creating..." : "Create Job"}
                       </button>
@@ -794,25 +1003,23 @@ const html = htm.bind(React.createElement);
       if (!job) {
         return [];
       }
-      const rows = [];
-      const seen = new Set();
-      const pushIfPresent = (label, url) => {
-        if (!url || seen.has(url)) {
-          return;
-        }
-        seen.add(url);
-        rows.push({ label, url });
-      };
+      return collectPreviewCandidates(job, assets);
+    }, [job, assets]);
 
-      pushIfPresent("Image Preview", job.image_preview_url);
-      pushIfPresent("Final Preview", job.final_preview_url);
-      if (job.final_asset_urls && typeof job.final_asset_urls === "object") {
-        pushIfPresent("Final PNG", job.final_asset_urls.png);
+    const finalPreviewSelection = usePreviewSelection(previewImages);
+    const imagePreviewCandidates = useMemo(() => {
+      if (!job) {
+        return [];
       }
-      return rows;
-    }, [job]);
-
-    const finalCardUrl = job ? resolvePrimaryImageUrl(job) : "";
+      return collectPreviewCandidates(
+        {
+          image_preview_url: job.image_preview_url,
+          content_preview_url: job.content_preview_url,
+        },
+        assets.filter((asset) => String(asset?.asset_type || "").toLowerCase() === "image_preview"),
+      );
+    }, [job, assets]);
+    const imagePreviewSelection = usePreviewSelection(imagePreviewCandidates);
 
     async function handleArchive() {
       if (!jobId) {
@@ -988,15 +1195,22 @@ const html = htm.bind(React.createElement);
                     <p className="section-copy">Best available final or preview image for this job.</p>
                   </div>
                 </div>
-                ${finalCardUrl
+                ${finalPreviewSelection.currentCandidate
                   ? html`
                       <div className="hero-preview">
-                        <a href=${finalCardUrl} target="_blank" rel="noreferrer">
-                          <img src=${finalCardUrl} alt=${job.theme_name || "Generated eCard"} loading="lazy" />
+                        <a href=${finalPreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
+                          <img
+                            src=${finalPreviewSelection.currentCandidate.url}
+                            alt=${job.theme_name || "Generated eCard"}
+                            loading="lazy"
+                            onError=${finalPreviewSelection.handleError}
+                          />
                         </a>
                       </div>
                     `
-                  : html`<p className="empty-state">No preview or final image available yet.</p>`}
+                  : finalPreviewSelection.exhausted
+                    ? html`<p className="empty-state">Preview unavailable.</p>`
+                    : html`<p className="empty-state">No preview or final image available yet.</p>`}
               </section>
 
               <section className="two-column">
@@ -1007,18 +1221,25 @@ const html = htm.bind(React.createElement);
                       <p className="section-copy">Intermediate generated image if available.</p>
                     </div>
                   </div>
-                  ${job.image_preview_url
+                  ${imagePreviewSelection.currentCandidate
                     ? html`
                         <div className="image-grid image-grid-single">
                           <article className="image-card">
-                            <a href=${job.image_preview_url} target="_blank" rel="noreferrer">
-                              <img src=${job.image_preview_url} alt="Image Preview" loading="lazy" />
+                            <a href=${imagePreviewSelection.currentCandidate.url} target="_blank" rel="noreferrer">
+                              <img
+                                src=${imagePreviewSelection.currentCandidate.url}
+                                alt="Image Preview"
+                                loading="lazy"
+                                onError=${imagePreviewSelection.handleError}
+                              />
                             </a>
                             <p className="image-caption">Image Preview</p>
                           </article>
                         </div>
                       `
-                    : html`<p className="empty-state">No image preview available yet.</p>`}
+                    : imagePreviewSelection.exhausted
+                      ? html`<p className="empty-state">Preview unavailable.</p>`
+                      : html`<p className="empty-state">No image preview available yet.</p>`}
                 </section>
 
                 <section className="section-panel">
@@ -1047,12 +1268,7 @@ const html = htm.bind(React.createElement);
                       <div className="image-grid">
                         ${previewImages.map(
                           (image) => html`
-                            <article key=${image.url} className="image-card">
-                              <a href=${image.url} target="_blank" rel="noreferrer">
-                                <img src=${image.url} alt=${image.label} loading="lazy" />
-                              </a>
-                              <p className="image-caption">${image.label}</p>
-                            </article>
+                            <${PreviewVariantCard} key=${image.url} image=${image} />
                           `,
                         )}
                       </div>
@@ -1060,6 +1276,736 @@ const html = htm.bind(React.createElement);
               </section>
             `
           : html`<p className="empty-state">${loading ? "Loading job details..." : "Job not found."}</p>`}
+      </section>
+    `;
+  }
+
+  function ThemeFactoryPage() {
+    const navigate = useNavigate();
+    const [catalog, setCatalog] = useState([]);
+    const [scheduleDashboard, setScheduleDashboard] = useState({
+      week_schedule: [],
+      month_schedule: [],
+      active_overrides: [],
+    });
+    const [todayTheme, setTodayTheme] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [statusMessage, setStatusMessage] = useState("");
+    const [workingAction, setWorkingAction] = useState("");
+    const [themeEditorOpen, setThemeEditorOpen] = useState(false);
+    const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
+    const [overrideEditorOpen, setOverrideEditorOpen] = useState(false);
+    const [editingThemeId, setEditingThemeId] = useState(null);
+    const [editingScheduleId, setEditingScheduleId] = useState(null);
+    const [themeForm, setThemeForm] = useState({
+      theme_key: "",
+      theme_name: "",
+      description: "",
+      theme_type: "evergreen",
+      cultural_context: "global",
+      tone_style: "conversational",
+      default_funny_pct: 20,
+      default_emotion_pct: 80,
+      default_audience: "general audience",
+      default_visual_style: "minimal",
+      is_active: true,
+      priority: 0,
+    });
+    const [scheduleForm, setScheduleForm] = useState({
+      theme_id: "",
+      schedule_type: "weekly_recurring",
+      start_date: "",
+      end_date: "",
+      weekday_mask: "monday",
+      month_mask: "",
+      region: "",
+      country: "",
+      is_active: true,
+      priority: 0,
+      notes: "",
+    });
+    const [overrideForm, setOverrideForm] = useState({
+      theme_id: "",
+      override_scope: "editorial",
+      start_at: "",
+      end_at: "",
+      reason: "",
+      force_top_priority: true,
+      created_by: "console_admin",
+    });
+
+    const resolvedTodayTheme = todayTheme && typeof todayTheme === "object" ? todayTheme.theme || null : null;
+
+    async function loadThemeFactory() {
+      setLoading(true);
+      setError("");
+      const [catalogResult, todayResult, scheduleResult] = await Promise.allSettled([
+        requestJSON("/api/themes"),
+        requestJSON("/api/themes/today"),
+        requestJSON("/api/themes/schedule"),
+      ]);
+
+      if (catalogResult.status === "fulfilled") {
+        const items = Array.isArray(catalogResult.value) ? catalogResult.value : [];
+        setCatalog(items);
+        if (items.length > 0) {
+          setScheduleForm((current) => ({ ...current, theme_id: String(current.theme_id || items[0].id) }));
+          setOverrideForm((current) => ({ ...current, theme_id: String(current.theme_id || items[0].id) }));
+        }
+      } else {
+        setCatalog([]);
+        setError(normalizeDashboardError("theme catalog", catalogResult.reason));
+      }
+
+      if (todayResult.status === "fulfilled") {
+        setTodayTheme(todayResult.value || null);
+      } else {
+        setTodayTheme(null);
+        setError((current) => current || normalizeDashboardError("today's theme", todayResult.reason));
+      }
+
+      if (scheduleResult.status === "fulfilled") {
+        setScheduleDashboard({
+          week_schedule: Array.isArray(scheduleResult.value?.week_schedule) ? scheduleResult.value.week_schedule : [],
+          month_schedule: Array.isArray(scheduleResult.value?.month_schedule) ? scheduleResult.value.month_schedule : [],
+          active_overrides: Array.isArray(scheduleResult.value?.active_overrides) ? scheduleResult.value.active_overrides : [],
+        });
+      } else {
+        setScheduleDashboard({ week_schedule: [], month_schedule: [], active_overrides: [] });
+        setError((current) => current || normalizeDashboardError("theme schedule", scheduleResult.reason));
+      }
+
+      setLoading(false);
+    }
+
+    useEffect(() => {
+      loadThemeFactory();
+    }, []);
+
+    function openThemeEditor(theme = null) {
+      setEditingThemeId(theme ? theme.id : null);
+      setThemeForm({
+        theme_key: theme?.theme_key || "",
+        theme_name: theme?.theme_name || "",
+        description: theme?.description || "",
+        theme_type: theme?.theme_type || "evergreen",
+        cultural_context: theme?.cultural_context || "global",
+        tone_style: theme?.tone_style || "conversational",
+        default_funny_pct: theme?.default_funny_pct ?? 20,
+        default_emotion_pct: theme?.default_emotion_pct ?? 80,
+        default_audience: theme?.default_audience || "general audience",
+        default_visual_style: theme?.default_visual_style || "minimal",
+        is_active: theme?.is_active ?? true,
+        priority: theme?.priority ?? 0,
+      });
+      setThemeEditorOpen(true);
+    }
+
+    function openScheduleEditor(schedule = null) {
+      setEditingScheduleId(schedule ? schedule.id : null);
+      setScheduleForm({
+        theme_id: String(schedule?.theme_id || catalog[0]?.id || ""),
+        schedule_type: schedule?.schedule_type || "weekly_recurring",
+        start_date: formatDateInput(schedule?.start_date),
+        end_date: formatDateInput(schedule?.end_date),
+        weekday_mask: Array.isArray(schedule?.weekday_mask) ? schedule.weekday_mask.join(", ") : "monday",
+        month_mask: Array.isArray(schedule?.month_mask) ? schedule.month_mask.join(", ") : "",
+        region: schedule?.region || "",
+        country: schedule?.country || "",
+        is_active: schedule?.is_active ?? true,
+        priority: schedule?.priority ?? 0,
+        notes: schedule?.notes || "",
+      });
+      setScheduleEditorOpen(true);
+    }
+
+    function openOverrideEditor(themeId = null) {
+      const start = new Date();
+      const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+      setOverrideForm({
+        theme_id: String(themeId || resolvedTodayTheme?.theme_id || catalog[0]?.id || ""),
+        override_scope: "editorial",
+        start_at: formatDateTimeLocalInput(start.toISOString()),
+        end_at: formatDateTimeLocalInput(end.toISOString()),
+        reason: "",
+        force_top_priority: true,
+        created_by: "console_admin",
+      });
+      setOverrideEditorOpen(true);
+    }
+
+    async function handleSaveTheme(event) {
+      event.preventDefault();
+      setWorkingAction("save-theme");
+      setError("");
+      try {
+        const payload = {
+          theme_key: String(themeForm.theme_key || "").trim(),
+          theme_name: String(themeForm.theme_name || "").trim(),
+          description: String(themeForm.description || "").trim() || null,
+          theme_type: themeForm.theme_type,
+          cultural_context: String(themeForm.cultural_context || "").trim() || null,
+          tone_style: String(themeForm.tone_style || "").trim(),
+          default_funny_pct: Number(themeForm.default_funny_pct || 0),
+          default_emotion_pct: Number(themeForm.default_emotion_pct || 0),
+          default_audience: String(themeForm.default_audience || "").trim(),
+          default_visual_style: String(themeForm.default_visual_style || "").trim(),
+          is_active: Boolean(themeForm.is_active),
+          priority: Number(themeForm.priority || 0),
+        };
+        const url = editingThemeId ? `/api/themes/${editingThemeId}` : "/api/themes";
+        const method = editingThemeId ? "PUT" : "POST";
+        await requestJSON(url, { method, body: JSON.stringify(payload) });
+        setThemeEditorOpen(false);
+        setStatusMessage(editingThemeId ? "Theme updated" : "Theme created");
+        await loadThemeFactory();
+      } catch (requestError) {
+        setError(requestError.message || "Unable to save theme");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    async function handleDeleteTheme(theme) {
+      const confirmed = window.confirm(`Deactivate theme ${theme.theme_name}?`);
+      if (!confirmed) {
+        return;
+      }
+      setWorkingAction(`delete-theme:${theme.id}`);
+      setError("");
+      try {
+        await requestJSON(`/api/themes/${theme.id}`, { method: "DELETE" });
+        setStatusMessage(`Theme deactivated: ${theme.theme_name}`);
+        await loadThemeFactory();
+      } catch (requestError) {
+        setError(requestError.message || "Unable to delete theme");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    async function handleSaveSchedule(event) {
+      event.preventDefault();
+      setWorkingAction("save-schedule");
+      setError("");
+      try {
+        const payload = {
+          theme_id: Number(scheduleForm.theme_id),
+          schedule_type: scheduleForm.schedule_type,
+          start_date: scheduleForm.start_date || null,
+          end_date: scheduleForm.end_date || null,
+          weekday_mask: splitCsv(scheduleForm.weekday_mask),
+          month_mask: splitCsv(scheduleForm.month_mask).map((value) => Number(value)).filter((value) => Number.isInteger(value)),
+          region: String(scheduleForm.region || "").trim() || null,
+          country: String(scheduleForm.country || "").trim() || null,
+          is_active: Boolean(scheduleForm.is_active),
+          priority: Number(scheduleForm.priority || 0),
+          notes: String(scheduleForm.notes || "").trim() || null,
+        };
+        const url = editingScheduleId ? `/api/themes/schedule/${editingScheduleId}` : "/api/themes/schedule";
+        const method = editingScheduleId ? "PUT" : "POST";
+        await requestJSON(url, { method, body: JSON.stringify(payload) });
+        setScheduleEditorOpen(false);
+        setStatusMessage(editingScheduleId ? "Schedule updated" : "Schedule created");
+        await loadThemeFactory();
+      } catch (requestError) {
+        setError(requestError.message || "Unable to save schedule");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    async function handleSaveOverride(event) {
+      event.preventDefault();
+      setWorkingAction("save-override");
+      setError("");
+      try {
+        const payload = {
+          theme_id: Number(overrideForm.theme_id),
+          override_scope: String(overrideForm.override_scope || "").trim(),
+          start_at: new Date(overrideForm.start_at).toISOString(),
+          end_at: new Date(overrideForm.end_at).toISOString(),
+          reason: String(overrideForm.reason || "").trim() || null,
+          force_top_priority: Boolean(overrideForm.force_top_priority),
+          created_by: String(overrideForm.created_by || "console_admin").trim(),
+        };
+        await requestJSON("/api/themes/overrides", { method: "POST", body: JSON.stringify(payload) });
+        setOverrideEditorOpen(false);
+        setStatusMessage("Override created");
+        await loadThemeFactory();
+      } catch (requestError) {
+        setError(requestError.message || "Unable to save override");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    async function handleUseTodayTheme() {
+      setWorkingAction("create-today-job");
+      setError("");
+      try {
+        const created = await requestJSON("/api/jobs/create-daily-theme-job", { method: "POST" });
+        setStatusMessage(`Created ${created.job_id} from today's theme`);
+        navigate(`/jobs/${created.job_id}`);
+      } catch (requestError) {
+        setError(requestError.message || "Unable to create today's themed job");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    return html`
+      <section>
+        <header className="page-head">
+          <div>
+            <p className="page-kicker">Admin</p>
+            <h1 className="page-title">Theme Factory</h1>
+            <p className="page-description">
+              Database-backed theme catalog, schedules, overrides, and daily resolution controls.
+            </p>
+          </div>
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="button primary"
+              onClick=${handleUseTodayTheme}
+              disabled=${workingAction === "create-today-job" || !resolvedTodayTheme}
+            >
+              ${workingAction === "create-today-job" ? "Creating..." : "Use Today's Theme"}
+            </button>
+            <button type="button" className="button" onClick=${loadThemeFactory} disabled=${loading}>Refresh</button>
+            <${Link} to="/" className="button-link">Workflow Console<//>
+          </div>
+        </header>
+
+        ${error ? html`<div className="status-panel error">${error}</div>` : null}
+        ${statusMessage ? html`<p className="status-line">${statusMessage}</p>` : null}
+        ${loading ? html`<div className="status-panel warning">Loading Theme Factory data...</div>` : null}
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Today's Theme</h2>
+              <p className="section-copy">Resolved using overrides, schedules, and evergreen fallback logic.</p>
+            </div>
+          </div>
+          ${resolvedTodayTheme
+            ? html`
+                <div className="key-value-grid">
+                  <article className="key-card">
+                    <p className="key-label">Theme</p>
+                    <p className="key-value">${resolvedTodayTheme.theme_name}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Source</p>
+                    <p className="key-value">${humanize(todayTheme?.source)}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Weekday</p>
+                    <p className="key-value">${humanize(todayTheme?.weekday)}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Audience</p>
+                    <p className="key-value">${resolvedTodayTheme.audience}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Tone</p>
+                    <p className="key-value">${resolvedTodayTheme.tone_style}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">Priority</p>
+                    <p className="key-value">${resolvedTodayTheme.priority}</p>
+                  </article>
+                </div>
+              `
+            : html`<p className="empty-state">No theme resolved yet.</p>`}
+        </section>
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Theme Catalog</h2>
+              <p className="section-copy">Source themes available for schedules, overrides, and direct daily resolution.</p>
+            </div>
+            <div className="inline-actions">
+              <button type="button" className="button primary" onClick=${() => openThemeEditor()}>Add Theme</button>
+            </div>
+          </div>
+          ${catalog.length === 0
+            ? html`<p className="empty-state">No theme catalog entries found.</p>`
+            : html`
+                <div className="table-wrap">
+                  <table className="console-table">
+                    <thead>
+                      <tr>
+                        <th>theme_key</th>
+                        <th>theme_name</th>
+                        <th>theme_type</th>
+                        <th>audience</th>
+                        <th>visual_style</th>
+                        <th>priority</th>
+                        <th>status</th>
+                        <th>actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${catalog.map(
+                        (theme) => html`
+                          <tr key=${theme.id}>
+                            <td><code>${theme.theme_key}</code></td>
+                            <td>${theme.theme_name}</td>
+                            <td>${humanize(theme.theme_type)}</td>
+                            <td>${theme.default_audience}</td>
+                            <td>${theme.default_visual_style}</td>
+                            <td>${theme.priority}</td>
+                            <td><${StatusBadge} value=${theme.is_active ? "active" : "inactive"} /></td>
+                            <td>
+                              <div className="inline-actions">
+                                <button type="button" className="button" onClick=${() => openThemeEditor(theme)}>Edit</button>
+                                <button
+                                  type="button"
+                                  className="button danger"
+                                  onClick=${() => handleDeleteTheme(theme)}
+                                  disabled=${workingAction === `delete-theme:${theme.id}`}
+                                >
+                                  ${workingAction === `delete-theme:${theme.id}` ? "Deleting..." : "Delete"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        `,
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              `}
+        </section>
+
+        <section className="two-column">
+          <section className="section-panel">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">This Week's Schedule</h2>
+                <p className="section-copy">Resolved day-by-day schedule for the current week.</p>
+              </div>
+              <button type="button" className="button primary" onClick=${() => openScheduleEditor()}>Add Schedule</button>
+            </div>
+            ${scheduleDashboard.week_schedule.length === 0
+              ? html`<p className="empty-state">No week schedule found.</p>`
+              : html`
+                  <div className="table-wrap">
+                    <table className="console-table">
+                      <thead>
+                        <tr>
+                          <th>date</th>
+                          <th>weekday</th>
+                          <th>theme</th>
+                          <th>source</th>
+                          <th>schedule_type</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${scheduleDashboard.week_schedule.map(
+                          (row) => html`
+                            <tr key=${`${row.plan_date}_${row.weekday}`}>
+                              <td>${formatDate(row.plan_date)}</td>
+                              <td>${humanize(row.weekday)}</td>
+                              <td>${row.theme?.theme_name || "-"}</td>
+                              <td>${humanize(row.source)}</td>
+                              <td>${humanize(row.schedule_type)}</td>
+                            </tr>
+                          `,
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+
+          <section className="section-panel">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">Active Overrides</h2>
+                <p className="section-copy">Urgent editorial or manual overrides currently taking precedence.</p>
+              </div>
+              <button type="button" className="button primary" onClick=${() => openOverrideEditor()}>Add Override</button>
+            </div>
+            ${scheduleDashboard.active_overrides.length === 0
+              ? html`<p className="empty-state">No active overrides right now.</p>`
+              : html`
+                  <div className="table-wrap">
+                    <table className="console-table">
+                      <thead>
+                        <tr>
+                          <th>theme</th>
+                          <th>scope</th>
+                          <th>window</th>
+                          <th>reason</th>
+                          <th>priority</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${scheduleDashboard.active_overrides.map(
+                          (override) => html`
+                            <tr key=${override.id}>
+                              <td>${override.theme_name || "-"}</td>
+                              <td>${humanize(override.override_scope)}</td>
+                              <td>${formatDate(override.start_at)} - ${formatDate(override.end_at)}</td>
+                              <td>${override.reason || "-"}</td>
+                              <td>${override.force_top_priority ? "top" : "normal"}</td>
+                            </tr>
+                          `,
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+        </section>
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">This Month's Schedule</h2>
+              <p className="section-copy">Schedule rules intersecting the current month.</p>
+            </div>
+          </div>
+          ${scheduleDashboard.month_schedule.length === 0
+            ? html`<p className="empty-state">No monthly schedule rules found.</p>`
+            : html`
+                <div className="table-wrap">
+                  <table className="console-table">
+                    <thead>
+                      <tr>
+                        <th>theme</th>
+                        <th>schedule_type</th>
+                        <th>start_date</th>
+                        <th>end_date</th>
+                        <th>weekday_mask</th>
+                        <th>month_mask</th>
+                        <th>priority</th>
+                        <th>actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${scheduleDashboard.month_schedule.map(
+                        (schedule) => html`
+                          <tr key=${schedule.id}>
+                            <td>${schedule.theme_name || "-"}</td>
+                            <td>${humanize(schedule.schedule_type)}</td>
+                            <td>${schedule.start_date ? formatDate(schedule.start_date) : "-"}</td>
+                            <td>${schedule.end_date ? formatDate(schedule.end_date) : "-"}</td>
+                            <td>${(schedule.weekday_mask || []).join(", ") || "-"}</td>
+                            <td>${(schedule.month_mask || []).join(", ") || "-"}</td>
+                            <td>${schedule.priority}</td>
+                            <td>
+                              <button type="button" className="button" onClick=${() => openScheduleEditor(schedule)}>
+                                Edit
+                              </button>
+                            </td>
+                          </tr>
+                        `,
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              `}
+        </section>
+
+        ${themeEditorOpen
+          ? html`
+              <div className="modal-backdrop" onClick=${() => setThemeEditorOpen(false)}>
+                <section className="modal modal-wide" onClick=${(event) => event.stopPropagation()}>
+                  <h2 className="section-title">${editingThemeId ? "Edit Theme" : "Add Theme"}</h2>
+                  <form onSubmit=${handleSaveTheme}>
+                    <div className="form-grid">
+                      <div className="form-field">
+                        <label htmlFor="themeKey">Theme Key</label>
+                        <input id="themeKey" value=${themeForm.theme_key} onInput=${(event) => setThemeForm((current) => ({ ...current, theme_key: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeNameFactory">Theme Name</label>
+                        <input id="themeNameFactory" value=${themeForm.theme_name} onInput=${(event) => setThemeForm((current) => ({ ...current, theme_name: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeType">Theme Type</label>
+                        <select id="themeType" value=${themeForm.theme_type} onChange=${(event) => setThemeForm((current) => ({ ...current, theme_type: event.target.value }))}>
+                          <option value="evergreen">evergreen</option>
+                          <option value="calendar">calendar</option>
+                          <option value="campaign">campaign</option>
+                          <option value="news">news</option>
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeContext">Cultural Context</label>
+                        <input id="themeContext" value=${themeForm.cultural_context} onInput=${(event) => setThemeForm((current) => ({ ...current, cultural_context: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeTone">Tone Style</label>
+                        <input id="themeTone" value=${themeForm.tone_style} onInput=${(event) => setThemeForm((current) => ({ ...current, tone_style: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeAudience">Audience</label>
+                        <input id="themeAudience" value=${themeForm.default_audience} onInput=${(event) => setThemeForm((current) => ({ ...current, default_audience: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeVisual">Visual Style</label>
+                        <input id="themeVisual" value=${themeForm.default_visual_style} onInput=${(event) => setThemeForm((current) => ({ ...current, default_visual_style: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themePriority">Priority</label>
+                        <input id="themePriority" type="number" value=${themeForm.priority} onInput=${(event) => setThemeForm((current) => ({ ...current, priority: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeFunny">Funny %</label>
+                        <input id="themeFunny" type="number" min="0" max="100" value=${themeForm.default_funny_pct} onInput=${(event) => setThemeForm((current) => ({ ...current, default_funny_pct: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="themeEmotion">Emotion %</label>
+                        <input id="themeEmotion" type="number" min="0" max="100" value=${themeForm.default_emotion_pct} onInput=${(event) => setThemeForm((current) => ({ ...current, default_emotion_pct: event.target.value }))} />
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="themeDescription">Description</label>
+                        <textarea id="themeDescription" rows="4" value=${themeForm.description} onInput=${(event) => setThemeForm((current) => ({ ...current, description: event.target.value }))}></textarea>
+                      </div>
+                      <label className="checkbox-field full">
+                        <input type="checkbox" checked=${themeForm.is_active} onChange=${(event) => setThemeForm((current) => ({ ...current, is_active: event.target.checked }))} />
+                        <span>Active theme</span>
+                      </label>
+                    </div>
+                    <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button type="submit" className="button primary" disabled=${workingAction === "save-theme"}>
+                        ${workingAction === "save-theme" ? "Saving..." : "Save Theme"}
+                      </button>
+                      <button type="button" className="button" onClick=${() => setThemeEditorOpen(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </section>
+              </div>
+            `
+          : null}
+
+        ${scheduleEditorOpen
+          ? html`
+              <div className="modal-backdrop" onClick=${() => setScheduleEditorOpen(false)}>
+                <section className="modal modal-wide" onClick=${(event) => event.stopPropagation()}>
+                  <h2 className="section-title">${editingScheduleId ? "Edit Schedule" : "Add Schedule"}</h2>
+                  <form onSubmit=${handleSaveSchedule}>
+                    <div className="form-grid">
+                      <div className="form-field">
+                        <label htmlFor="scheduleTheme">Theme</label>
+                        <select id="scheduleTheme" value=${scheduleForm.theme_id} onChange=${(event) => setScheduleForm((current) => ({ ...current, theme_id: event.target.value }))} required>
+                          ${catalog.map((theme) => html`<option key=${theme.id} value=${theme.id}>${theme.theme_name}</option>`)}
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="scheduleType">Schedule Type</label>
+                        <select id="scheduleType" value=${scheduleForm.schedule_type} onChange=${(event) => setScheduleForm((current) => ({ ...current, schedule_type: event.target.value }))}>
+                          <option value="single_day">single_day</option>
+                          <option value="date_range">date_range</option>
+                          <option value="weekly_recurring">weekly_recurring</option>
+                          <option value="monthly_recurring">monthly_recurring</option>
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="scheduleStart">Start Date</label>
+                        <input id="scheduleStart" type="date" value=${scheduleForm.start_date} onInput=${(event) => setScheduleForm((current) => ({ ...current, start_date: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="scheduleEnd">End Date</label>
+                        <input id="scheduleEnd" type="date" value=${scheduleForm.end_date} onInput=${(event) => setScheduleForm((current) => ({ ...current, end_date: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="weekdayMask">Weekday Mask</label>
+                        <input id="weekdayMask" value=${scheduleForm.weekday_mask} onInput=${(event) => setScheduleForm((current) => ({ ...current, weekday_mask: event.target.value }))} placeholder="monday, thursday" />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="monthMask">Month Mask</label>
+                        <input id="monthMask" value=${scheduleForm.month_mask} onInput=${(event) => setScheduleForm((current) => ({ ...current, month_mask: event.target.value }))} placeholder="2, 3, 8" />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="scheduleRegion">Region</label>
+                        <input id="scheduleRegion" value=${scheduleForm.region} onInput=${(event) => setScheduleForm((current) => ({ ...current, region: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="scheduleCountry">Country</label>
+                        <input id="scheduleCountry" value=${scheduleForm.country} onInput=${(event) => setScheduleForm((current) => ({ ...current, country: event.target.value }))} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="schedulePriority">Priority</label>
+                        <input id="schedulePriority" type="number" value=${scheduleForm.priority} onInput=${(event) => setScheduleForm((current) => ({ ...current, priority: event.target.value }))} />
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="scheduleNotes">Notes</label>
+                        <textarea id="scheduleNotes" rows="4" value=${scheduleForm.notes} onInput=${(event) => setScheduleForm((current) => ({ ...current, notes: event.target.value }))}></textarea>
+                      </div>
+                      <label className="checkbox-field full">
+                        <input type="checkbox" checked=${scheduleForm.is_active} onChange=${(event) => setScheduleForm((current) => ({ ...current, is_active: event.target.checked }))} />
+                        <span>Active schedule</span>
+                      </label>
+                    </div>
+                    <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button type="submit" className="button primary" disabled=${workingAction === "save-schedule"}>
+                        ${workingAction === "save-schedule" ? "Saving..." : "Save Schedule"}
+                      </button>
+                      <button type="button" className="button" onClick=${() => setScheduleEditorOpen(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </section>
+              </div>
+            `
+          : null}
+
+        ${overrideEditorOpen
+          ? html`
+              <div className="modal-backdrop" onClick=${() => setOverrideEditorOpen(false)}>
+                <section className="modal" onClick=${(event) => event.stopPropagation()}>
+                  <h2 className="section-title">Add Override</h2>
+                  <form onSubmit=${handleSaveOverride}>
+                    <div className="form-grid">
+                      <div className="form-field full">
+                        <label htmlFor="overrideTheme">Theme</label>
+                        <select id="overrideTheme" value=${overrideForm.theme_id} onChange=${(event) => setOverrideForm((current) => ({ ...current, theme_id: event.target.value }))} required>
+                          ${catalog.map((theme) => html`<option key=${theme.id} value=${theme.id}>${theme.theme_name}</option>`)}
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="overrideScope">Scope</label>
+                        <input id="overrideScope" value=${overrideForm.override_scope} onInput=${(event) => setOverrideForm((current) => ({ ...current, override_scope: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="overrideBy">Created By</label>
+                        <input id="overrideBy" value=${overrideForm.created_by} onInput=${(event) => setOverrideForm((current) => ({ ...current, created_by: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="overrideStart">Start At</label>
+                        <input id="overrideStart" type="datetime-local" value=${overrideForm.start_at} onInput=${(event) => setOverrideForm((current) => ({ ...current, start_at: event.target.value }))} required />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="overrideEnd">End At</label>
+                        <input id="overrideEnd" type="datetime-local" value=${overrideForm.end_at} onInput=${(event) => setOverrideForm((current) => ({ ...current, end_at: event.target.value }))} required />
+                      </div>
+                      <div className="form-field full">
+                        <label htmlFor="overrideReason">Reason</label>
+                        <textarea id="overrideReason" rows="4" value=${overrideForm.reason} onInput=${(event) => setOverrideForm((current) => ({ ...current, reason: event.target.value }))}></textarea>
+                      </div>
+                      <label className="checkbox-field full">
+                        <input type="checkbox" checked=${overrideForm.force_top_priority} onChange=${(event) => setOverrideForm((current) => ({ ...current, force_top_priority: event.target.checked }))} />
+                        <span>Force top priority</span>
+                      </label>
+                    </div>
+                    <div className="inline-actions" style=${{ marginTop: "12px" }}>
+                      <button type="submit" className="button primary" disabled=${workingAction === "save-override"}>
+                        ${workingAction === "save-override" ? "Saving..." : "Save Override"}
+                      </button>
+                      <button type="button" className="button" onClick=${() => setOverrideEditorOpen(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </section>
+              </div>
+            `
+          : null}
       </section>
     `;
   }
@@ -1114,6 +2060,12 @@ const html = htm.bind(React.createElement);
               Workflow Console
             <//>
             <${NavLink}
+              to="/themes"
+              className=${({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+            >
+              Theme Factory
+            <//>
+            <${NavLink}
               to="/compare"
               className=${({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
             >
@@ -1125,6 +2077,7 @@ const html = htm.bind(React.createElement);
         <main className="console-main">
           <${Routes}>
             <${Route} path="/" element=${html`<${WorkflowConsolePage} />`} />
+            <${Route} path="/themes" element=${html`<${ThemeFactoryPage} />`} />
             <${Route} path="/compare" element=${html`<${CompareLabPage} />`} />
             <${Route} path="/jobs/:jobId" element=${html`<${JobDetailPage} />`} />
             <${Route} path="*" element=${html`<${Navigate} to="/" replace=${true} />`} />
@@ -1163,6 +2116,7 @@ const html = htm.bind(React.createElement);
             <p className="brand-subtitle">Workflow-first operations panel</p>
             <nav className="sidebar-nav" aria-label="Primary">
               <a className="nav-link active" href="/">Workflow Console</a>
+              <a className="nav-link" href="/themes">Theme Factory</a>
               <a className="nav-link" href="/compare">Compare Lab</a>
             </nav>
           </aside>

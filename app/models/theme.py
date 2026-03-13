@@ -1,11 +1,11 @@
-"""Theme ORM models for weekly rotations and override campaigns."""
+"""Theme ORM models for both legacy rotation data and the Theme Factory engine."""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class WeeklyTheme(Base):
-    """A reusable weekly theme assigned by month rotation and weekday."""
+    """Legacy weekly theme rotation retained for backward compatibility."""
 
     __tablename__ = "weekly_themes"
     __table_args__ = (
@@ -65,8 +65,6 @@ class WeeklyTheme(Base):
     daily_plans: Mapped[list["DailyContentPlan"]] = relationship(back_populates="weekly_theme")
 
     def __repr__(self) -> str:
-        """Return a concise debug representation of the weekly theme."""
-
         return (
             "WeeklyTheme("
             f"id={self.id!r}, rotation_month={self.rotation_month!r}, "
@@ -74,8 +72,117 @@ class WeeklyTheme(Base):
         )
 
 
+class ThemeCatalog(Base):
+    """Theme Factory catalog entry used by schedules and overrides."""
+
+    __tablename__ = "theme_catalog"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    theme_key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    theme_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    theme_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    cultural_context: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tone_style: Mapped[str] = mapped_column(String(64), nullable=False)
+    default_funny_pct: Mapped[int] = mapped_column(Integer, nullable=False)
+    default_emotion_pct: Mapped[int] = mapped_column(Integer, nullable=False)
+    default_audience: Mapped[str] = mapped_column(String(120), nullable=False)
+    default_visual_style: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+        index=True,
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    schedules: Mapped[list["ThemeSchedule"]] = relationship(
+        back_populates="theme",
+        cascade="all, delete-orphan",
+    )
+    overrides: Mapped[list["ThemeOverride"]] = relationship(back_populates="theme")
+
+
+class ThemeSchedule(Base):
+    """One recurring or date-bound activation rule for a catalog theme."""
+
+    __tablename__ = "theme_schedule"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    theme_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.theme_catalog.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    weekday_mask: Mapped[list[str]] = mapped_column(
+        ARRAY(Text),
+        nullable=False,
+        default=list,
+        server_default=text("'{}'::text[]"),
+    )
+    month_mask: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer),
+        nullable=False,
+        default=list,
+        server_default=text("'{}'::integer[]"),
+    )
+    region: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+        index=True,
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+        index=True,
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    theme: Mapped[ThemeCatalog] = relationship(back_populates="schedules")
+
+
 class ThemeOverride(Base):
-    """A higher-priority theme configuration that overrides weekly rotation."""
+    """Legacy override table extended to support Theme Factory override metadata."""
 
     __tablename__ = "theme_overrides"
     __table_args__ = {"schema": settings.db_schema}
@@ -131,12 +238,36 @@ class ThemeOverride(Base):
         server_default=text("true"),
     )
 
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.theme_catalog.id"),
+        nullable=True,
+        index=True,
+    )
+    override_scope: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    force_top_priority: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
     daily_plans: Mapped[list["DailyContentPlan"]] = relationship(back_populates="override")
     event: Mapped["Event | None"] = relationship(back_populates="theme_overrides")
+    theme: Mapped[ThemeCatalog | None] = relationship(back_populates="overrides")
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.active)
 
     def __repr__(self) -> str:
-        """Return a concise debug representation of the override."""
-
         return (
             "ThemeOverride("
             f"id={self.id!r}, override_type={self.override_type!r}, "

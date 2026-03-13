@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
 from app.schemas.workflow import (
     ApprovalRequest,
     ContentApprovalRequest,
@@ -67,10 +69,11 @@ async def start_job(
 async def create_daily_theme_job(
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
     theme_service: ThemeService = Depends(get_theme_service),
+    db: AsyncSession = Depends(get_db),
 ) -> DailyThemeJobResponse:
-    """Create one new workflow job using today's YAML-scheduled theme configuration."""
+    """Create one new workflow job using today's resolved Theme Factory configuration."""
 
-    today_theme = theme_service.get_today_theme()
+    today_theme = await theme_service.get_today_theme(db)
     theme = today_theme.theme
     start_payload = StartJobRequest(
         theme_name=theme.theme_name,
@@ -79,7 +82,6 @@ async def create_daily_theme_job(
         tone_style=theme.tone_style,
         audience=theme.audience,
         cultural_context=theme.cultural_context,
-        avoid_cliches=theme.avoid_cliches,
         rendering=RenderConfig(theme_style=_map_visual_style_to_template(theme.visual_style)),
     )
     created = await service.start_job(start_payload)
@@ -87,7 +89,7 @@ async def create_daily_theme_job(
         job_id=created.job_id,
         status=created.status,
         theme_name=theme.theme_name,
-        weekday=theme.weekday,
+        weekday=today_theme.weekday,
         source=today_theme.source,
     )
 

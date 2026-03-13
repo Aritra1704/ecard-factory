@@ -130,7 +130,12 @@ class WorkflowJobRepository:
 
         try:
             async with async_session_factory() as session:
-                statement = select(CardJob).order_by(CardJob.created_at.desc(), CardJob.job_id.desc()).limit(safe_limit)
+                statement = (
+                    select(CardJob)
+                    .options(selectinload(CardJob.assets))
+                    .order_by(CardJob.created_at.desc(), CardJob.job_id.desc())
+                    .limit(safe_limit)
+                )
                 result = await session.execute(statement)
                 rows = list(result.scalars().all())
         except (SQLAlchemyError, OSError) as exc:
@@ -141,23 +146,27 @@ class WorkflowJobRepository:
             )
             return list(rows[:safe_limit]), "memory_fallback"
 
-        return [
-            {
-                "job_id": item.job_id,
-                "theme_name": item.theme_name,
-                "status": item.status,
-                "content_preview": item.content_preview,
-                "image_preview_url": item.image_preview_url,
-                "final_preview_url": item.final_preview_url,
-                "final_asset_urls": item.final_asset_urls,
-                "content_approval_status": item.content_approval_status,
-                "image_approval_status": item.image_approval_status,
-                "final_approval_status": item.final_approval_status,
-                "created_at": item.created_at,
-                "updated_at": item.updated_at,
-            }
-            for item in rows
-        ], "postgres"
+        response_rows: list[dict[str, Any]] = []
+        for item in rows:
+            image_preview_url, final_preview_url, final_asset_urls = self._resolve_job_asset_fields(item)
+            response_rows.append(
+                {
+                    "job_id": item.job_id,
+                    "theme_name": item.theme_name,
+                    "status": item.status,
+                    "content_preview": item.content_preview,
+                    "image_preview_url": image_preview_url,
+                    "final_preview_url": final_preview_url,
+                    "final_asset_urls": final_asset_urls,
+                    "content_approval_status": item.content_approval_status,
+                    "image_approval_status": item.image_approval_status,
+                    "final_approval_status": item.final_approval_status,
+                    "created_at": item.created_at,
+                    "updated_at": item.updated_at,
+                }
+            )
+
+        return response_rows, "postgres"
 
     async def update_job_status(
         self,
@@ -500,18 +509,13 @@ class WorkflowJobRepository:
     def _serialize_job(job: CardJob) -> dict[str, Any]:
         """Serialize full workflow job snapshot."""
 
-        candidates = sorted(job.candidates, key=lambda item: item.id)
-        approvals = sorted(job.approvals, key=lambda item: item.id)
-        assets = sorted(job.assets, key=lambda item: item.id)
-        judge_results = sorted(job.judge_results, key=lambda item: item.id)
-        audit_events = sorted(job.audit_events, key=lambda item: item.id)
+        candidates = sorted(job.candidates, key=lambda item: item.id or 0)
+        approvals = sorted(job.approvals, key=lambda item: item.id or 0)
+        assets = sorted(job.assets, key=lambda item: item.id or 0)
+        judge_results = sorted(job.judge_results, key=lambda item: item.id or 0)
+        audit_events = sorted(job.audit_events, key=lambda item: item.id or 0)
 
-        final_assets = job.final_asset_urls or {}
-        for asset in assets:
-            if asset.asset_type == "final_png":
-                final_assets.setdefault("png", asset.public_url or asset.asset_url)
-            if asset.asset_type == "final_pdf":
-                final_assets.setdefault("pdf", asset.public_url or asset.asset_url)
+        image_preview_url, final_preview_url, final_assets = WorkflowJobRepository._resolve_job_asset_fields(job)
 
         return {
             "job_id": job.job_id,
@@ -532,8 +536,8 @@ class WorkflowJobRepository:
             "image_approval_status": job.image_approval_status,
             "final_approval_status": job.final_approval_status,
             "image_prompt": job.image_prompt,
-            "image_preview_url": job.image_preview_url,
-            "final_preview_url": job.final_preview_url,
+            "image_preview_url": image_preview_url,
+            "final_preview_url": final_preview_url,
             "final_asset_urls": final_assets or None,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
@@ -594,6 +598,30 @@ class WorkflowJobRepository:
                 for item in audit_events
             ],
         }
+
+    @staticmethod
+    def _resolve_job_asset_fields(job: CardJob) -> tuple[str | None, str | None, dict[str, str] | None]:
+        """Derive preview/final URLs from asset rows when denormalized job columns are empty."""
+
+        assets = sorted(job.assets, key=lambda item: item.id or 0)
+        image_preview_url = job.image_preview_url
+        final_preview_url = job.final_preview_url
+        final_assets = dict(job.final_asset_urls or {})
+
+        for asset in assets:
+            asset_url = asset.public_url or asset.asset_url
+            if not asset_url:
+                continue
+            if asset.asset_type == "image_preview" and not image_preview_url:
+                image_preview_url = asset_url
+            elif asset.asset_type == "final_preview" and not final_preview_url:
+                final_preview_url = asset_url
+            elif asset.asset_type == "final_png":
+                final_assets.setdefault("png", asset_url)
+            elif asset.asset_type == "final_pdf":
+                final_assets.setdefault("pdf", asset_url)
+
+        return image_preview_url, final_preview_url, final_assets or None
 
 
 @lru_cache(maxsize=1)

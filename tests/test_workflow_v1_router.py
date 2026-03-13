@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 import importlib
 import os
 from pathlib import Path
@@ -354,22 +356,31 @@ def test_storage_summary_endpoint(configured_env: dict[str, str]) -> None:
 
 
 def test_theme_schedule_endpoints_and_daily_theme_job(configured_env: dict[str, str]) -> None:
-    """Theme APIs should expose schedule/today and create a job from today's theme."""
+    """Theme Factory APIs should expose catalog/schedule/today and create a job from today's theme."""
 
     main_module, _workflow_module = reload_workflow_modules()
 
     with TestClient(main_module.app) as client:
-        schedule_response = client.get("/api/themes")
+        catalog_response = client.get("/api/themes")
+        assert catalog_response.status_code == 200
+        catalog_payload = catalog_response.json()
+        assert isinstance(catalog_payload, list)
+        assert any(item["theme_key"] == "motivation-monday" for item in catalog_payload)
+
+        schedule_response = client.get("/api/themes/schedule")
         assert schedule_response.status_code == 200
         schedule_payload = schedule_response.json()
         assert schedule_payload["timezone"] == "Asia/Kolkata"
-        assert isinstance(schedule_payload["schedule"], list)
-        assert len(schedule_payload["schedule"]) == 7
+        assert isinstance(schedule_payload["week_schedule"], list)
+        assert len(schedule_payload["week_schedule"]) == 7
+        assert isinstance(schedule_payload["month_schedule"], list)
+        assert isinstance(schedule_payload["active_overrides"], list)
 
         today_response = client.get("/api/themes/today")
         assert today_response.status_code == 200
         today_payload = today_response.json()
-        assert today_payload["source"] == "theme_schedule"
+        assert today_payload["source"] in {"schedule", "evergreen", "override", "seed_fallback"}
+        assert today_payload["weekday"]
         assert isinstance(today_payload["theme"]["theme_name"], str)
 
         create_response = client.post("/api/jobs/create-daily-theme-job")
@@ -377,9 +388,123 @@ def test_theme_schedule_endpoints_and_daily_theme_job(configured_env: dict[str, 
         create_payload = create_response.json()
         assert create_payload["job_id"].startswith("job_")
         assert create_payload["theme_name"] == today_payload["theme"]["theme_name"]
-        assert create_payload["source"] == "theme_schedule"
+        assert create_payload["weekday"] == today_payload["weekday"]
+        assert create_payload["source"] == today_payload["source"]
 
         job_response = client.get(f"/api/jobs/{create_payload['job_id']}")
         assert job_response.status_code == 200
         job_payload = job_response.json()
         assert job_payload["theme_name"] == today_payload["theme"]["theme_name"]
+
+
+def test_theme_service_returns_seed_fallback_when_database_is_unavailable(configured_env: dict[str, str]) -> None:
+    """Theme service should degrade to built-in seed data instead of failing when DB is unavailable."""
+
+    reload_workflow_modules()
+    theme_service_module = importlib.import_module("app.services.theme_service")
+    ThemeService = theme_service_module.ThemeService
+
+    service = ThemeService()
+    catalog = asyncio.run(service.get_catalog(None))
+    schedule = asyncio.run(service.get_schedule_dashboard(None))
+    today = asyncio.run(service.get_today_theme(None))
+
+    assert len(catalog) >= 4
+    assert any(item.theme_key == "motivation-monday" for item in catalog)
+    assert schedule.timezone == "Asia/Kolkata"
+    assert len(schedule.week_schedule) == 7
+    assert today.source in {"schedule", "evergreen", "seed_fallback"}
+    assert today.theme.theme_name
+    assert isinstance(today.theme.tone_style, str)
+    assert today.theme.tone_style
+    assert today.theme.audience
+
+
+def test_repository_recovers_preview_urls_from_asset_rows_for_legacy_jobs(configured_env: dict[str, str]) -> None:
+    """Legacy jobs should still expose previews/final URLs when only asset rows are populated."""
+
+    reload_workflow_modules()
+    workflow_models = importlib.import_module("app.models.workflow")
+    repository_module = importlib.import_module("app.repositories.workflow_repository")
+
+    CardAsset = workflow_models.CardAsset
+    CardJob = workflow_models.CardJob
+    WorkflowJobRepository = repository_module.WorkflowJobRepository
+
+    now = datetime.now(timezone.utc)
+    job_id = "job_legacy_preview"
+    job = CardJob(
+        job_id=job_id,
+        trace_id="trace_legacy_preview",
+        status="completed",
+        theme_name="Legacy Theme",
+        tone_funny_pct=20,
+        tone_emotion_pct=80,
+        tone_style="conversational",
+        visual_style="minimal",
+        audience="internal reviewer",
+        cultural_context="global",
+        output_spec={"format": "paragraph"},
+        avoid_cliches=True,
+        content_preview="Legacy content preview",
+        winner_model="gpt-test",
+        content_approval_status="approved",
+        image_approval_status="approved",
+        final_approval_status="approved",
+        image_prompt="legacy prompt",
+        image_preview_url=None,
+        final_preview_url=None,
+        final_asset_urls=None,
+        created_at=now,
+        updated_at=now,
+    )
+    job.assets = [
+        CardAsset(
+            job_id=job_id,
+            asset_type="image_preview",
+            asset_url=f"http://localhost:8080/assets/image/{job_id}_image_preview.png",
+            storage_backend="filesystem",
+            storage_root="/tmp/ecardfactory-test-assets",
+            relative_path=f"image/{job_id}_image_preview.png",
+            public_url=f"http://localhost:8080/assets/image/{job_id}_image_preview.png",
+            absolute_path=f"/tmp/ecardfactory-test-assets/image/{job_id}_image_preview.png",
+            file_size_bytes=1234,
+            version="v1",
+            approved=False,
+            created_at=now,
+        ),
+        CardAsset(
+            job_id=job_id,
+            asset_type="final_preview",
+            asset_url=f"http://localhost:8080/assets/preview/{job_id}_content_preview.png",
+            storage_backend="filesystem",
+            storage_root="/tmp/ecardfactory-test-assets",
+            relative_path=f"preview/{job_id}_content_preview.png",
+            public_url=f"http://localhost:8080/assets/preview/{job_id}_content_preview.png",
+            absolute_path=f"/tmp/ecardfactory-test-assets/preview/{job_id}_content_preview.png",
+            file_size_bytes=2345,
+            version="v1",
+            approved=False,
+            created_at=now,
+        ),
+        CardAsset(
+            job_id=job_id,
+            asset_type="final_png",
+            asset_url=f"http://localhost:8080/assets/final/{job_id}_final.png",
+            storage_backend="filesystem",
+            storage_root="/tmp/ecardfactory-test-assets",
+            relative_path=f"final/{job_id}_final.png",
+            public_url=f"http://localhost:8080/assets/final/{job_id}_final.png",
+            absolute_path=f"/tmp/ecardfactory-test-assets/final/{job_id}_final.png",
+            file_size_bytes=3456,
+            version="v1",
+            approved=True,
+            created_at=now,
+        ),
+    ]
+
+    snapshot = WorkflowJobRepository._serialize_job(job)
+
+    assert snapshot["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
+    assert snapshot["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
+    assert snapshot["final_asset_urls"]["png"] == f"http://localhost:8080/assets/final/{job_id}_final.png"
