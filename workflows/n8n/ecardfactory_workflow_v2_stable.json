@@ -1,0 +1,324 @@
+{
+  "name": "eCardFactory Workflow v2",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "0a0a4d5e-9b70-4fce-bb22-f6a9ef6f10a1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3200,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/jobs/start",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"theme_name\": \"Motivation Monday\",\n  \"tone_funny_pct\": 15,\n  \"tone_emotion_pct\": 70,\n  \"tone_style\": \"uplifting\",\n  \"audience\": \"working professionals\",\n  \"cultural_context\": \"global\",\n  \"output_spec\": {\n    \"format\": \"minimal\",\n    \"length\": { \"target_words\": 14 },\n    \"structure\": { \"no_lists\": true, \"no_numbering\": true }\n  },\n  \"cards_per_theme\": 10,\n  \"notes\": \"n8n workflow v2 auto-run\",\n  \"avoid_cliches\": true,\n  \"rendering\": {\n    \"theme_style\": \"minimal\",\n    \"text_alignment\": \"center\",\n    \"export_size\": \"1080x1350\"\n  }\n}\n",
+        "options": {}
+      },
+      "id": "84b9ac2b-f681-4f45-a5ef-e36883ad7668",
+      "name": "Start Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2970,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "job_id",
+              "value": "={{ $json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "theme_name",
+              "value": "={{ $json.theme_name || 'Manual Run' }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "content_preview",
+              "value": "={{ $json.content_preview }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "winner_model",
+              "value": "={{ $json.winner_model }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6d4ce592-3783-4e87-937a-a0d4f9980c59",
+      "name": "Extract Start Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2740,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/approve-content",
+        "options": {}
+      },
+      "id": "a52848f8-5bc6-4ad6-9c11-c2bec70ac6a9",
+      "name": "Auto Approve Starting Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2510,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/generate-more-images",
+        "options": {}
+      },
+      "id": "07b5a37f-d5fe-4a1a-ac31-e318efb1fb5f",
+      "name": "Generate Image Options",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/generate-image",
+        "options": {}
+      },
+      "id": "7a655806-7f10-4775-b2c7-ddac8d5109ab",
+      "name": "Generate Default Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2050,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/approve-image",
+        "options": {}
+      },
+      "id": "90df2e67-0f8f-486c-a550-7bd49f6bc659",
+      "name": "Auto Approve Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1820,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/render-final",
+        "options": {}
+      },
+      "id": "57e8a653-ab40-43dc-9ebe-ee22ee8c770c",
+      "name": "Render Final Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1590,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://host.docker.internal:8080/api/jobs/{{$json.job_id}}/assets",
+        "options": {}
+      },
+      "id": "3a1304cb-b21a-4ae8-bfd4-a8f9dd723afb",
+      "name": "Fetch Final Assets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1360,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "job_id",
+              "value": "={{ $('Extract Start Fields').item.json.job_id }}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "status",
+              "value": "={{ $('Render Final Card').item.json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "cards_per_theme",
+              "value": "=10",
+              "type": "number"
+            },
+            {
+              "id": "b4",
+              "name": "note",
+              "value": "=Workflow v2 auto-ran text, image, and final render. Operators use Studio rerun actions for changes.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bcad5a77-d935-4044-8c4a-e4fae3748f64",
+      "name": "Prepare Studio Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1130,
+        260
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Start Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Job": {
+      "main": [
+        [
+          {
+            "node": "Extract Start Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Start Fields": {
+      "main": [
+        [
+          {
+            "node": "Auto Approve Starting Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Approve Starting Text": {
+      "main": [
+        [
+          {
+            "node": "Generate Image Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Image Options": {
+      "main": [
+        [
+          {
+            "node": "Generate Default Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Default Image": {
+      "main": [
+        [
+          {
+            "node": "Auto Approve Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Approve Image": {
+      "main": [
+        [
+          {
+            "node": "Render Final Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Final Card": {
+      "main": [
+        [
+          {
+            "node": "Fetch Final Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Final Assets": {
+      "main": [
+        [
+          {
+            "node": "Prepare Studio Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c5e0dc50-2bd2-4e0c-8fef-a0fa4f03a761",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "ecardfactory-workflow-v2-stable",
+  "tags": []
+}

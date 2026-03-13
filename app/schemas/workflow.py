@@ -85,8 +85,8 @@ class ThemeJobCreateRequest(BaseModel):
 
     cards_per_theme: int = Field(default=10, ge=1, le=50)
     notes: str | None = None
-    copy_style: Literal["short_crisp", "warm_note", "playful"] = "short_crisp"
-    target_words: int = Field(default=16, ge=4, le=60)
+    copy_style: Literal["witty", "playful", "heartfelt", "minimal", "short_crisp", "warm_note"] = "minimal"
+    target_words: int = Field(default=14, ge=4, le=60)
     tone_funny_pct: int | None = Field(default=None, ge=0, le=100)
 
 
@@ -207,6 +207,7 @@ class JobDebugResponse(BaseModel):
     theme_name: str
     audience: str
     cultural_context: str
+    output_spec: dict[str, Any] = Field(default_factory=dict)
     content_preview: str | None = None
     winner_model: str | None = None
     content_approval_status: str = "pending"
@@ -237,6 +238,7 @@ class JobListItemResponse(BaseModel):
     theme_name: str
     current_stage: str
     status: str
+    output_spec: dict[str, Any] = Field(default_factory=dict)
     content_preview: str | None = None
     image_preview_url: str | None = None
     final_preview_url: str | None = None
@@ -265,6 +267,44 @@ class JobAssetResponse(BaseModel):
     version: str | None = None
     approved: bool = False
     created_at: datetime | None = None
+
+
+class SelectTextRequest(BaseModel):
+    """Request payload for choosing one generated text option as the active card copy."""
+
+    candidate_id: int = Field(ge=1)
+
+
+class SelectImageRequest(BaseModel):
+    """Request payload for choosing one generated image option as the active visual direction."""
+
+    relative_path: str | None = None
+    public_url: str | None = None
+
+
+class FavoriteCardRequest(BaseModel):
+    """Request payload for toggling favorite state on the current card job."""
+
+    favorite: bool = True
+
+
+class StudioActionResponse(BaseModel):
+    """Lightweight response for Studio selection and favorite actions."""
+
+    job_id: str
+    status: str
+    content_preview: str | None = None
+    image_preview_url: str | None = None
+    final_preview_url: str | None = None
+    is_favorite: bool = False
+
+
+class GenerateMoreResponse(BaseModel):
+    """Response payload for generating additional options inside Studio."""
+
+    job_id: str
+    status: str
+    generated_count: int = 0
 
 
 class JobEventResponse(BaseModel):

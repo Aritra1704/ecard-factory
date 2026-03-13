@@ -163,6 +163,7 @@ class WorkflowJobRepository:
                     "job_id": item.job_id,
                     "theme_name": item.theme_name,
                     "status": item.status,
+                    "output_spec": item.output_spec or {},
                     "content_preview": item.content_preview,
                     "image_preview_url": image_preview_url,
                     "final_preview_url": final_preview_url,
@@ -298,8 +299,10 @@ class WorkflowJobRepository:
             job = await self._memory.get_job(job_id)
             if job is None:
                 return
+            existing_candidates = list(job.get("candidates") or [])
             normalized_candidates: list[dict[str, Any]] = []
-            for index, candidate in enumerate(candidates, start=1):
+            start_index = len(existing_candidates) + 1 if not replace_existing else 1
+            for index, candidate in enumerate(candidates, start=start_index):
                 normalized_candidates.append(
                     {
                         "id": int(candidate.get("id") or index),
@@ -316,7 +319,7 @@ class WorkflowJobRepository:
                         "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
                     }
                 )
-            job["candidates"] = normalized_candidates
+            job["candidates"] = normalized_candidates if replace_existing else existing_candidates + normalized_candidates
             if replace_existing:
                 job["shortlist"] = []
             await self._memory.merge_snapshot(job)
@@ -592,6 +595,52 @@ class WorkflowJobRepository:
                     file_size_bytes=file_size_bytes,
                     version=version,
                     approved=approved,
+                ),
+            )
+
+    async def update_asset_selection(
+        self,
+        job_id: str,
+        *,
+        asset_type: str,
+        selected_relative_path: str,
+    ) -> None:
+        """Mark one asset as selected/approved within a given asset group."""
+
+        normalized_path = str(selected_relative_path or "").strip()
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            next_assets = []
+            for asset in list(job.get("assets") or []):
+                updated = dict(asset)
+                if str(updated.get("asset_type") or "") == asset_type:
+                    updated["approved"] = str(updated.get("relative_path") or "").strip() == normalized_path
+                next_assets.append(updated)
+            job["assets"] = next_assets
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(CardAsset).where(
+                        CardAsset.job_id == job_id,
+                        CardAsset.asset_type == asset_type,
+                    )
+                )
+                for asset in result.scalars().all():
+                    asset.approved = str(asset.relative_path or "").strip() == normalized_path
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="update_asset_selection",
+                error=exc,
+                memory_action=lambda: self.update_asset_selection(
+                    job_id,
+                    asset_type=asset_type,
+                    selected_relative_path=normalized_path,
                 ),
             )
 

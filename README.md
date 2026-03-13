@@ -1,6 +1,6 @@
 # eCardFactory
 
-Internal operator console for theme-driven eCard workflows.
+Internal eCard Studio for theme-driven card generation.
 
 ## Local Ports
 
@@ -19,40 +19,68 @@ Local URLs:
 - ContentForge: `http://localhost:8001`
 - n8n: `http://localhost:5678`
 
-## Workflow Overview
+## Stage 2 UX Reset
 
-Stage 1 keeps the existing internal workflow shape and adds operator control:
+Stage 2 moves eCardFactory away from a workflow-debug console and toward a human-controllable eCard Studio.
 
-1. Create a job manually, from today's theme, or from any selected theme.
-2. Review content output.
-3. Approve, reject, or regenerate content.
-4. Generate or regenerate the image preview.
-5. Approve or reject the image stage.
-6. Render the final preview.
-7. Approve or reject the final stage.
+Core direction:
+
+- cards are the main artifact
+- Theme Factory stays in place
+- generation auto-runs by default
+- text, image, and final card reruns stay operator-controlled
+- ports, Docker usage, and service boundaries stay unchanged
 
 Primary routes:
 
-- `/` Workflow Console
+- `/` Home
 - `/themes` Theme Factory
-- `/compare` Compare Lab
+- `/studio` Studio
+- `/studio/{job_id}` Studio for a selected job
+- `/jobs` Jobs
 - `/jobs/{job_id}` Job Detail
+- `/compare` Compare Lab
 
-## Theme Buckets
+## Human-Controllable eCard Studio
 
-Theme Factory uses the existing namespaced tables:
+Studio is the primary operator page.
+
+It shows three tabs for a selected job:
+
+1. `Text Options`
+2. `Image Options`
+3. `Final Cards`
+
+Main Studio actions:
+
+- `Use This Text`
+- `Regenerate Text`
+- `Generate 10 More`
+- `Use This Image`
+- `Regenerate Image`
+- `Generate 3 More`
+- `Regenerate Card`
+- `Mark Favorite`
+- `Archive`
+- `Delete`
+
+Job Detail still exists, but it is now secondary and audit-heavy sections are pushed lower on the page.
+
+## Theme Factory
+
+Theme Factory remains backed by the existing namespaced tables:
 
 - `card_theme_catalog`
 - `card_theme_schedule`
 - `card_theme_overrides`
 
-Stage 1 theme buckets:
+Theme buckets:
 
 - `everyday`
 - `occasion`
 - `current_event`
 
-Fresh seed data includes exactly these theme keys:
+Seeded theme keys:
 
 - Everyday:
   - `motivation-monday`
@@ -75,107 +103,113 @@ Fresh seed data includes exactly these theme keys:
   - `gold-price-watch`
   - `india-trend-override`
 
-## Theme Resolution Priority
+## Theme Resolution Logic
 
 `GET /api/themes/today` resolves themes in this order:
 
-1. Active override
-2. Active date-range schedule
-3. Active weekly recurring schedule
-4. Evergreen fallback
+1. active override
+2. active date-range schedule
+3. active weekly recurring schedule
+4. evergreen fallback
 
 Default seeded schedules:
 
-- Weekly recurring:
-  - Monday -> `motivation-monday`
-  - Tuesday -> `gratitude-tuesday`
-  - Wednesday -> `love-wednesday`
-  - Thursday -> `friendship-thursday`
-  - Friday -> `humor-friday`
-  - Saturday -> `family-saturday`
-  - Sunday -> `reflection-sunday`
-- Date range:
-  - `ramadan-month`: `2026-02-18` to `2026-03-19`
-  - `holi-week`: `2026-03-09` to `2026-03-15`
-  - `valentines-week`: `2026-02-08` to `2026-02-14`
-  - `diwali-week`: `2026-11-08` to `2026-11-14`
+- Monday -> `motivation-monday`
+- Tuesday -> `gratitude-tuesday`
+- Wednesday -> `love-wednesday`
+- Thursday -> `friendship-thursday`
+- Friday -> `humor-friday`
+- Saturday -> `family-saturday`
+- Sunday -> `reflection-sunday`
+- `ramadan-month`: `2026-02-18` to `2026-03-19`
+- `holi-week`: `2026-03-09` to `2026-03-15`
+- `valentines-week`: `2026-02-08` to `2026-02-14`
+- `diwali-week`: `2026-11-08` to `2026-11-14`
 
 No overrides are seeded active by default.
 
-## Cards Per Theme
+## Generate Today’s Cards
 
-Stage 1 adds `cards_per_theme` to workflow jobs.
+Home and Theme Factory both support `Generate Today’s Cards`.
 
-- default: `10`
-- allowed range: `1` to `50`
-- configurable from:
-  - Create New Card Job
-  - Use Today's Theme
-  - Generate From Theme
-
-Current scope for `cards_per_theme`:
-
-- the value is accepted, stored, and passed through job creation
-- Stage 1 does not change the generation engine based on this value yet
-
-## Manual Theme Run
-
-Operator actions added in Stage 1:
-
-- `Use Today's Theme`
-- `Generate From Theme`
-
-Theme-backed job APIs:
+This uses:
 
 - `POST /api/jobs/create-daily-theme-job`
+
+UI defaults:
+
+- `cards_per_theme = 10`
+- short, card-friendly copy
+- target length around `8` to `18` words
+- style defaults derived from theme tone, then normalized into Studio styles
+
+## Generate From Theme
+
+Manual theme run is first-class in Stage 2.
+
+Use `Generate From Theme` from Home.
+
+Supported operator inputs:
+
+- theme selection
+- style: `witty`, `playful`, `heartfelt`, `minimal`
+- `cards_per_theme`
+- optional notes
+
+Backend route:
+
 - `POST /api/jobs/start-from-theme`
 
-Example manual theme run:
+Example:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/jobs/start-from-theme \
   -H 'Content-Type: application/json' \
   -d '{
     "theme_key": "holi-week",
+    "copy_style": "playful",
+    "target_words": 14,
     "cards_per_theme": 10,
-    "notes": "manual run from theme factory"
+    "notes": "manual studio run"
   }'
 ```
 
-Create a job from today's resolved theme:
+## Cards Per Theme
 
-```bash
-curl -s -X POST http://localhost:8080/api/jobs/create-daily-theme-job \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "cards_per_theme": 10,
-    "notes": "operator-triggered daily run"
-  }'
-```
+`cards_per_theme` is part of the current Studio-facing job start flow.
 
-Verify today's theme:
+- default: `10`
+- range: `1` to `50`
+- configurable from:
+  - Create New Card Job
+  - Generate Today’s Cards
+  - Generate From Theme
+  - Use Today’s Theme
 
-```bash
-curl -s http://localhost:8080/api/themes/today
-```
+Current scope:
 
-## Stage Control
+- the value is accepted, stored, and passed through
+- advanced shortlist scaling by `cards_per_theme` is not part of Stage 2
 
-Stage 1 adds these exact operator endpoints:
+## Rerun Text / Image / Card
 
-- `POST /api/jobs/{job_id}/approve-content`
-- `POST /api/jobs/{job_id}/reject-content`
+Human-readable rerun actions map to existing backend behavior:
+
+- `Regenerate Text` -> content generation rerun
+- `Regenerate Image` -> image generation rerun
+- `Regenerate Card` -> final render rerun
+
+Relevant endpoints:
+
 - `POST /api/jobs/{job_id}/regenerate-content`
-- `POST /api/jobs/{job_id}/generate-image`
 - `POST /api/jobs/{job_id}/regenerate-image`
-- `POST /api/jobs/{job_id}/approve-image`
-- `POST /api/jobs/{job_id}/reject-image`
 - `POST /api/jobs/{job_id}/render-final`
-- `POST /api/jobs/{job_id}/approve-final`
-- `POST /api/jobs/{job_id}/reject-final`
+- `POST /api/jobs/{job_id}/rerun/content`
+- `POST /api/jobs/{job_id}/rerun/image`
+- `POST /api/jobs/{job_id}/rerun/final-render`
 - `POST /api/jobs/{job_id}/rerun-stage`
 
-`rerun-stage` request body:
+`rerun-stage` body:
 
 ```json
 {
@@ -183,18 +217,33 @@ Stage 1 adds these exact operator endpoints:
 }
 ```
 
-Allowed `stage` values:
+Allowed stage values:
 
 - `content_generation`
 - `image_generation`
 - `final_render`
 
-Jobs also track:
+## Workflow v1 vs Workflow v2
 
-- `retry_count`
-- `last_stage_started_at`
-- `last_stage_finished_at`
-- `last_error_message`
+Workflow v1:
+
+- approval-gate-first
+- built around content/image/final approval hand-offs
+- kept for compatibility
+
+Workflow v2:
+
+- Studio-first
+- auto-runs text, image, and final card generation by default
+- generates image options for later operator selection
+- treats reruns as operator-triggered follow-up actions from Studio or the backend
+
+Files:
+
+- v1: [workflows/n8n/ecardfactory_workflow_v1_stable.json](/Users/aritrarpal/Documents/workspace_biz/ecard-factory/workflows/n8n/ecardfactory_workflow_v1_stable.json)
+- v1 notes: [workflows/n8n/ecardfactory_workflow_v1_notes.md](/Users/aritrarpal/Documents/workspace_biz/ecard-factory/workflows/n8n/ecardfactory_workflow_v1_notes.md)
+- v2: [workflows/n8n/ecardfactory_workflow_v2_stable.json](/Users/aritrarpal/Documents/workspace_biz/ecard-factory/workflows/n8n/ecardfactory_workflow_v2_stable.json)
+- v2 notes: [workflows/n8n/ecardfactory_workflow_v2_notes.md](/Users/aritrarpal/Documents/workspace_biz/ecard-factory/workflows/n8n/ecardfactory_workflow_v2_notes.md)
 
 ## Storage and Asset Location
 
@@ -213,53 +262,38 @@ Example:
 - Absolute path: `/Volumes/Ari_SSD_01/ecardfactory-assets/final/job_ab12cd34_final.png`
 - Public URL: `http://localhost:8080/assets/final/job_ab12cd34_final.png`
 
-## Current Scope
+## Ports and Local Run Flow Unchanged
 
-Stage 1 scope is intentionally limited.
-
-Not part of this stage:
-
-- multi-model 10-per-model shortlist engine work
-- multi-image candidate selection
-- publishing/distribution workflow expansion
-- Compare Lab redesign
-- ContentForge redesign
-- n8n workflow redesign
-
-## Local Commands
-
-Install frontend dependencies once:
+Run sequence stays the same:
 
 ```bash
 npm install
-```
-
-Apply migrations:
-
-```bash
 ./venv/bin/alembic upgrade head
-```
-
-Reset and reseed Theme Factory data:
-
-```bash
 ./venv/bin/python scripts/seed_themes.py
-```
-
-Run eCardFactory:
-
-```bash
-./scripts/run-ecard.sh
-```
-
-Run ContentForge:
-
-```bash
 ./scripts/run-contentforge.sh
-```
-
-Run n8n:
-
-```bash
+./scripts/run-ecard.sh
 ./scripts/run-n8n.sh
 ```
+
+Useful verification commands:
+
+```bash
+curl -s http://localhost:8080/api/themes/today
+curl -s http://localhost:8080/api/jobs?limit=5
+curl -s -X POST http://localhost:8080/api/jobs/create-daily-theme-job \
+  -H 'Content-Type: application/json' \
+  -d '{"cards_per_theme": 10, "copy_style": "minimal", "target_words": 14}'
+```
+
+## Current Scope
+
+Explicitly not part of Stage 2:
+
+- top-50 shortlist engine work
+- multi-model 10-per-model expansion work
+- multi-image comparison subsystem
+- publishing/distribution redesign
+- Compare Lab redesign
+- ContentForge redesign
+- port changes
+- Docker topology changes

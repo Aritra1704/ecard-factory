@@ -12,7 +12,9 @@ from app.schemas.workflow import (
     ContentApprovalRequest,
     ContentApprovalResponse,
     DailyThemeJobResponse,
+    FavoriteCardRequest,
     FinalApprovalResponse,
+    GenerateMoreResponse,
     ImageApprovalRequest,
     ImageApprovalResponse,
     JobArchiveResponse,
@@ -26,9 +28,12 @@ from app.schemas.workflow import (
     RenderShortlistRequest,
     RenderShortlistResponse,
     RenderConfig,
+    SelectImageRequest,
+    SelectTextRequest,
     StageActionResponse,
     StageRerunRequest,
     ShortlistEntryResponse,
+    StudioActionResponse,
     StageRerunResponse,
     StartFromThemeRequest,
     StartJobRequest,
@@ -264,6 +269,59 @@ async def render_job_shortlist(
     return await service.render_shortlist(job_id, payload)
 
 
+@router.post("/{job_id}/select-text", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def select_text_option(
+    job_id: str,
+    payload: SelectTextRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Choose one generated text option as the active card copy."""
+
+    return await service.select_text_option(job_id, payload)
+
+
+@router.post("/{job_id}/generate-more-text", response_model=GenerateMoreResponse, status_code=status.HTTP_200_OK)
+async def generate_more_text(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> GenerateMoreResponse:
+    """Append more short card-copy options for Studio."""
+
+    return await service.generate_more_text_options(job_id, count=10)
+
+
+@router.post("/{job_id}/generate-more-images", response_model=GenerateMoreResponse, status_code=status.HTTP_200_OK)
+async def generate_more_images(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> GenerateMoreResponse:
+    """Append more Studio image options for the currently selected text."""
+
+    return await service.generate_more_image_options(job_id, count=3, refresh_batch=False)
+
+
+@router.post("/{job_id}/select-image", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def select_image_option(
+    job_id: str,
+    payload: SelectImageRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Choose one generated image option as the active card visual."""
+
+    return await service.select_image_option(job_id, payload)
+
+
+@router.post("/{job_id}/favorite", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def favorite_job(
+    job_id: str,
+    payload: FavoriteCardRequest | None = Body(default=None),
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Mark or unmark the current card job as a favorite."""
+
+    return await service.mark_favorite(job_id, payload or FavoriteCardRequest())
+
+
 @router.post("/{job_id}/rerun/content", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
 async def rerun_content_stage(
     job_id: str,
@@ -433,4 +491,3 @@ async def delete_job(
     """Delete one workflow job and attempt to remove associated asset files."""
 
     return await service.delete_job(job_id)
-    payload = payload or ThemeJobCreateRequest()

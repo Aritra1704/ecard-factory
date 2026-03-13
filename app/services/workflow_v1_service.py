@@ -18,8 +18,10 @@ from app.schemas.workflow import (
     CandidateDebugResponse,
     ContentApprovalRequest,
     ContentApprovalResponse,
+    FavoriteCardRequest,
     FinalApprovalResponse,
     FinalAssetUrls,
+    GenerateMoreResponse,
     ImageApprovalRequest,
     ImageApprovalResponse,
     JobArchiveResponse,
@@ -31,8 +33,11 @@ from app.schemas.workflow import (
     RenderShortlistRequest,
     RenderShortlistResponse,
     RenderedShortlistAssetResponse,
+    SelectImageRequest,
+    SelectTextRequest,
     ShortlistEntryResponse,
     StageActionResponse,
+    StudioActionResponse,
     StageRerunRequest,
     StageRerunResponse,
     StartJobRequest,
@@ -64,52 +69,8 @@ class StubContentForgeClient:
     async def generate_and_judge(self, payload: StartJobRequest) -> dict[str, Any]:
         """Generate a pooled candidate set, judge it, and return a top-10 shortlist."""
 
-        theme = payload.theme_name.strip()
-        tone = payload.tone_style.strip() or "conversational"
-        funny_pct = int(payload.tone_funny_pct)
-        emotion_pct = int(payload.tone_emotion_pct)
-        copy_style = self._resolve_copy_style(payload)
-        target_words = self._resolve_target_words(payload)
-
-        candidates: list[dict[str, Any]] = []
-        for model_index, (model, backend, style_hint) in enumerate(self._MODEL_PROFILES):
-            for variant in range(10):
-                raw_score = round(0.72 + (model_index * 0.04) + ((9 - variant) * 0.009), 4)
-                brevity_bonus = 0.02 if target_words <= 18 else 0.012 if target_words <= 24 else 0.0
-                judge_bonus = round(
-                    ((variant % 5) * 0.008)
-                    + (emotion_pct / 1000)
-                    + (funny_pct / 3000)
-                    + brevity_bonus,
-                    4,
-                )
-                judged_score = round(raw_score + 0.08 + judge_bonus, 4)
-                content_text = self._compose_candidate_text(
-                    theme=theme,
-                    audience=payload.audience,
-                    tone=tone,
-                    funny_pct=funny_pct,
-                    emotion_pct=emotion_pct,
-                    copy_style=copy_style,
-                    target_words=target_words,
-                    style_hint=style_hint,
-                    variant=variant,
-                    model_index=model_index,
-                )
-                candidates.append(
-                    {
-                        "model": model,
-                        "backend": backend,
-                        "content_text": content_text,
-                        "text": content_text,
-                        "raw_score": raw_score,
-                        "judge_score": judged_score,
-                        "judged_score": judged_score,
-                        "is_winner": False,
-                        "is_shortlisted": False,
-                        "is_selected": False,
-                    }
-                )
+        theme = payload.theme_name.strip() or "Untitled Theme"
+        candidates = self._build_candidate_rows(payload, total_count=30, start_index=0)
 
         ranked_candidates = sorted(
             candidates,
@@ -144,16 +105,91 @@ class StubContentForgeClient:
             "judge_summary": judge_summary,
         }
 
+    def generate_more_candidates(
+        self,
+        payload: StartJobRequest,
+        *,
+        count: int,
+        start_index: int,
+    ) -> list[dict[str, Any]]:
+        """Return additional text candidates without replacing the existing pool."""
+
+        safe_count = max(1, min(count, 30))
+        return self._build_candidate_rows(payload, total_count=safe_count, start_index=max(start_index, 0))
+
+    def _build_candidate_rows(
+        self,
+        payload: StartJobRequest,
+        *,
+        total_count: int,
+        start_index: int,
+    ) -> list[dict[str, Any]]:
+        """Generate one batch of short-form card copy candidates."""
+
+        theme = payload.theme_name.strip()
+        tone = payload.tone_style.strip() or "conversational"
+        funny_pct = int(payload.tone_funny_pct)
+        emotion_pct = int(payload.tone_emotion_pct)
+        copy_style = self._resolve_copy_style(payload)
+        target_words = self._resolve_target_words(payload)
+        safe_total = max(1, total_count)
+
+        candidates: list[dict[str, Any]] = []
+        for offset in range(safe_total):
+            sequence = start_index + offset
+            model_index = sequence % len(self._MODEL_PROFILES)
+            variant = sequence // len(self._MODEL_PROFILES)
+            model, backend, style_hint = self._MODEL_PROFILES[model_index]
+            raw_score = round(0.71 + (model_index * 0.035) + max(0, (12 - (variant % 12))) * 0.007, 4)
+            brevity_bonus = 0.02 if target_words <= 18 else 0.012 if target_words <= 24 else 0.0
+            judge_bonus = round(
+                ((sequence % 5) * 0.008)
+                + (emotion_pct / 1000)
+                + (funny_pct / 3000)
+                + brevity_bonus,
+                4,
+            )
+            judged_score = round(raw_score + 0.08 + judge_bonus, 4)
+            content_text = self._compose_candidate_text(
+                theme=theme,
+                audience=payload.audience,
+                tone=tone,
+                funny_pct=funny_pct,
+                emotion_pct=emotion_pct,
+                copy_style=copy_style,
+                target_words=target_words,
+                style_hint=style_hint,
+                variant=variant,
+                model_index=model_index,
+            )
+            candidates.append(
+                {
+                    "model": model,
+                    "backend": backend,
+                    "content_text": content_text,
+                    "text": content_text,
+                    "raw_score": raw_score,
+                    "judge_score": judged_score,
+                    "judged_score": judged_score,
+                    "is_winner": False,
+                    "is_shortlisted": False,
+                    "is_selected": False,
+                }
+            )
+        return candidates
+
     @staticmethod
     def _resolve_copy_style(payload: StartJobRequest) -> str:
         """Return one supported content style for short-form card copy."""
 
-        value = str(payload.output_spec.format or "short_crisp").strip().lower()
-        if value in {"short_crisp", "warm_note", "playful"}:
+        value = str(payload.output_spec.format or "minimal").strip().lower()
+        if value in {"witty", "playful", "heartfelt", "minimal"}:
             return value
-        if value in {"paragraph", "letter"}:
-            return "warm_note"
-        return "short_crisp"
+        if value == "short_crisp":
+            return "minimal"
+        if value in {"warm_note", "letter", "paragraph"}:
+            return "heartfelt"
+        return "minimal"
 
     @staticmethod
     def _resolve_target_words(payload: StartJobRequest) -> int:
@@ -332,14 +368,14 @@ class StubContentForgeClient:
     def _pick_style_line(copy_style: str, style_hint: str, sequence: int) -> str:
         """Pick one style line that keeps the card short and readable."""
 
-        balanced = [
+        minimal = [
             "Keep it clear and easy to feel.",
             "Let it land simply and well.",
             "Make the warmth feel immediate.",
             "Keep the line clean and memorable.",
             "Let the note stay light on its feet.",
         ]
-        warm_note = [
+        heartfelt = [
             "Sending warmth without overexplaining it.",
             "Keeping the note soft, close, and sincere.",
             "Let this read like a real human voice.",
@@ -353,12 +389,21 @@ class StubContentForgeClient:
             "Give the day something to grin about.",
             "Let the note stay quick and bright.",
         ]
+        witty = [
+            "Keep it sharp without losing the heart.",
+            "A clean line and a sly smile work well here.",
+            "Let the wit stay light, not loud.",
+            "Quick words, bright finish.",
+            "Make the cleverness feel effortless.",
+        ]
         if copy_style == "playful":
             lines = playful
-        elif copy_style == "warm_note":
-            lines = warm_note
+        elif copy_style == "heartfelt":
+            lines = heartfelt
+        elif copy_style == "witty":
+            lines = witty
         else:
-            lines = balanced
+            lines = minimal
         if "uplifting" in style_hint and copy_style != "playful":
             lines = lines + ["Keep the energy optimistic and steady."]
         return lines[sequence % len(lines)]
@@ -427,11 +472,12 @@ class StubContentForgeClient:
         """Return a short closer that feels like a card signoff."""
 
         closers = {
-            "short_crisp": ["You've got this.", "Keep going.", "Still rooting for you.", "Stay bright.", "Onward."],
-            "warm_note": ["With warmth.", "Sending good energy.", "Keeping you in mind.", "Right here with you.", "With love."],
+            "minimal": ["You've got this.", "Keep going.", "Still rooting for you.", "Stay bright.", "Onward."],
+            "heartfelt": ["With warmth.", "Sending good energy.", "Keeping you in mind.", "Right here with you.", "With love."],
             "playful": ["Carry the smile with you.", "Go make the day jealous.", "Keep the sparkle loud.", "Now go steal the scene.", "Stay brilliant."],
+            "witty": ["Stay clever.", "Keep the grin close.", "Go win the day.", "Still sharp, still warm.", "Carry the spark."],
         }
-        lines = closers.get(copy_style, closers["short_crisp"])
+        lines = closers.get(copy_style, closers["minimal"])
         return lines[sequence % len(lines)]
 
     @staticmethod
@@ -1770,6 +1816,218 @@ class WorkflowV1Service:
             rendered_assets=rendered_assets,
         )
 
+    async def select_text_option(self, job_id: str, payload: SelectTextRequest) -> StudioActionResponse:
+        """Choose one candidate as the active card copy and clear downstream visuals."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        candidates = list(job.get("candidates") or [])
+        selected = next((item for item in candidates if int(item.get("id") or 0) == payload.candidate_id), None)
+        if selected is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Text option not found.")
+
+        await self._repository.update_candidate_selection(job_id, [payload.candidate_id])
+        selection_time = datetime.now(timezone.utc)
+        updated_output_spec = self._with_studio_state(
+            job,
+            selected_text_candidate_id=payload.candidate_id,
+            selected_image_relative_path=None,
+            selected_image_url=None,
+            selected_image_version=None,
+            selected_image_style=None,
+            text_selected_at=selection_time.isoformat(),
+            image_option_batch=0,
+        )
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_approved",
+                "content_preview": str(selected.get("content_text") or selected.get("text") or ""),
+                "winner_model": str(selected.get("model") or "") or None,
+                "content_approval_status": "approved",
+                "image_approval_status": "pending",
+                "final_approval_status": "pending",
+                "image_prompt": None,
+                "image_preview_url": None,
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "output_spec": updated_output_spec,
+                "last_stage_started_at": selection_time,
+                "last_stage_finished_at": selection_time,
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_text_selected", {"candidate_id": payload.candidate_id, "model": str(selected.get("model") or "")}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
+    async def generate_more_text_options(self, job_id: str, *, count: int = 10) -> GenerateMoreResponse:
+        """Append more short card-copy options without replacing the current selection."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        payload = self._build_start_payload_from_job(job)
+        existing_count = len(list(job.get("candidates") or []))
+        generated = self._contentforge.generate_more_candidates(
+            payload,
+            count=count,
+            start_index=existing_count,
+        )
+        if not generated:
+            return GenerateMoreResponse(job_id=job_id, status=str(job.get("status") or "unknown"), generated_count=0)
+
+        await self._repository.save_content_candidates(job_id, generated, replace_existing=False)
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_more_text_generated", {"generated_count": len(generated)}),
+                ],
+            ),
+        )
+        refreshed = await self._load_job(job_id)
+        return GenerateMoreResponse(
+            job_id=job_id,
+            status=str(refreshed.get("status") or job.get("status") or "unknown") if refreshed else str(job.get("status") or "unknown"),
+            generated_count=len(generated),
+        )
+
+    async def generate_more_image_options(self, job_id: str, *, count: int = 3, refresh_batch: bool = False) -> GenerateMoreResponse:
+        """Generate more card-style visual options for the currently selected text."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        selected_text = self._resolve_winning_content(job)
+        if not selected_text.strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No selected text available to generate image options")
+
+        studio_state = self._studio_state(job)
+        batch = int(studio_state.get("image_option_batch") or 0)
+        batch = batch + 1 if refresh_batch or batch <= 0 else batch
+        generated_assets = await self._generate_image_option_assets(job_id=job_id, job=job, count=count, batch=batch)
+        updated_output_spec = self._with_studio_state(
+            job,
+            image_option_batch=batch,
+            text_selected_at=studio_state.get("text_selected_at") or datetime.now(timezone.utc).isoformat(),
+        )
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "output_spec": updated_output_spec,
+                "status": str(job.get("status") or "content_approved"),
+                "last_stage_started_at": datetime.now(timezone.utc),
+                "last_stage_finished_at": datetime.now(timezone.utc),
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_more_images_generated", {"generated_count": len(generated_assets), "batch": batch}),
+                ],
+            ),
+        )
+        return GenerateMoreResponse(job_id=job_id, status=str(updated.get("status") or "unknown"), generated_count=len(generated_assets))
+
+    async def select_image_option(self, job_id: str, payload: SelectImageRequest) -> StudioActionResponse:
+        """Choose one visual option as the active card direction."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        assets = list(job.get("assets") or [])
+        selected_asset = self._find_image_asset(assets, payload)
+        if selected_asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image option not found.")
+
+        relative_path = str(selected_asset.get("relative_path") or "")
+        selected_url = str(selected_asset.get("public_url") or selected_asset.get("asset_url") or "") or None
+        selected_style = self._extract_theme_style_from_asset(selected_asset)
+        current_output_spec = self._resolve_output_spec(job)
+        rendering = dict(current_output_spec.get("rendering") or {})
+        if selected_style:
+            rendering["theme_style"] = selected_style
+        updated_output_spec = self._with_studio_state(
+            job,
+            selected_image_relative_path=relative_path,
+            selected_image_url=selected_url,
+            selected_image_version=str(selected_asset.get("version") or "") or None,
+            selected_image_style=selected_style,
+        )
+        updated_output_spec["rendering"] = rendering
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "image_approved",
+                "image_preview_url": selected_url,
+                "image_approval_status": "approved",
+                "final_approval_status": "pending",
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "output_spec": updated_output_spec,
+                "last_stage_started_at": datetime.now(timezone.utc),
+                "last_stage_finished_at": datetime.now(timezone.utc),
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.update_asset_selection(
+            job_id,
+            asset_type=str(selected_asset.get("asset_type") or "image_option"),
+            selected_relative_path=relative_path,
+        )
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_image_selected", {"relative_path": relative_path, "theme_style": selected_style}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
+    async def mark_favorite(self, job_id: str, payload: FavoriteCardRequest) -> StudioActionResponse:
+        """Mark or unmark the current card job as a favorite."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        updated_output_spec = self._with_studio_state(job, is_favorite=bool(payload.favorite))
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "output_spec": updated_output_spec,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_favorite_updated", {"is_favorite": bool(payload.favorite)}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
     async def get_job_debug(self, job_id: str) -> JobDebugResponse:
         """Return a full job snapshot including approvals, candidates, and audit events."""
 
@@ -1808,6 +2066,7 @@ class WorkflowV1Service:
                     theme_name=str(row.get("theme_name") or "Untitled"),
                     current_stage=self._resolve_current_stage(status_value),
                     status=status_value,
+                    output_spec=row.get("output_spec") if isinstance(row.get("output_spec"), dict) else {},
                     content_preview=str(row.get("content_preview") or "") or None,
                     image_preview_url=str(row.get("image_preview_url") or "") or None,
                     final_preview_url=str(row.get("final_preview_url") or "") or None,
@@ -2119,6 +2378,49 @@ class WorkflowV1Service:
         )
 
     @staticmethod
+    def _build_studio_action_response(updated: dict[str, Any]) -> StudioActionResponse:
+        """Build a compact Studio response after a selection or favorite action."""
+
+        studio_state = WorkflowV1Service._studio_state(updated)
+        return StudioActionResponse(
+            job_id=str(updated.get("job_id") or ""),
+            status=str(updated.get("status") or "unknown"),
+            content_preview=str(updated.get("content_preview") or "") or None,
+            image_preview_url=str(updated.get("image_preview_url") or "") or None,
+            final_preview_url=str(updated.get("final_preview_url") or "") or None,
+            is_favorite=bool(studio_state.get("is_favorite")),
+        )
+
+    @staticmethod
+    def _resolve_output_spec(job: dict[str, Any]) -> dict[str, Any]:
+        """Return one mutable copy of output_spec from a job snapshot."""
+
+        output_spec = job.get("output_spec")
+        return dict(output_spec) if isinstance(output_spec, dict) else {}
+
+    @staticmethod
+    def _studio_state(job: dict[str, Any]) -> dict[str, Any]:
+        """Return Studio metadata stored inside output_spec.studio."""
+
+        output_spec = WorkflowV1Service._resolve_output_spec(job)
+        studio = output_spec.get("studio")
+        return dict(studio) if isinstance(studio, dict) else {}
+
+    @staticmethod
+    def _with_studio_state(job: dict[str, Any], **updates: Any) -> dict[str, Any]:
+        """Return output_spec with nested Studio metadata merged in."""
+
+        output_spec = WorkflowV1Service._resolve_output_spec(job)
+        studio = WorkflowV1Service._studio_state(job)
+        for key, value in updates.items():
+            if value is None:
+                studio.pop(key, None)
+            else:
+                studio[key] = value
+        output_spec["studio"] = studio
+        return output_spec
+
+    @staticmethod
     def _build_shortlist_rows(
         *,
         persisted_candidates: list[dict[str, Any]],
@@ -2126,20 +2428,21 @@ class WorkflowV1Service:
     ) -> list[dict[str, Any]]:
         """Map shortlist seed rows to persisted candidate ids."""
 
-        candidates_by_signature: dict[tuple[str, str], dict[str, Any]] = {}
+        candidates_by_signature: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for candidate in persisted_candidates:
             signature = (
                 str(candidate.get("model") or ""),
                 str(candidate.get("content_text") or candidate.get("text") or ""),
             )
-            candidates_by_signature[signature] = candidate
+            candidates_by_signature.setdefault(signature, []).append(candidate)
 
         shortlist_rows: list[dict[str, Any]] = []
         for row in shortlist_seed:
             signature = (str(row.get("model") or ""), str(row.get("content_text") or ""))
-            candidate = candidates_by_signature.get(signature)
-            if candidate is None:
+            matches = candidates_by_signature.get(signature) or []
+            if not matches:
                 continue
+            candidate = matches.pop(0)
             shortlist_rows.append(
                 {
                     "candidate_id": int(candidate.get("id") or 0),
@@ -2305,6 +2608,123 @@ class WorkflowV1Service:
             f"Audience: {job['audience']}. Cultural context: {job['cultural_context']}. "
             f"Approved message text: {winning_content}"
         )
+
+    async def _generate_image_option_assets(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        count: int,
+        batch: int,
+    ) -> list[dict[str, Any]]:
+        """Render selectable visual directions for Studio image options."""
+
+        variants = self._build_image_option_variants(job, count=count, batch=batch)
+        rendered_assets: list[dict[str, Any]] = []
+        for index, variant in enumerate(variants, start=1):
+            relative_path = self._build_image_option_relative_path(job_id, batch=batch, sequence=index, theme_style=variant["theme_style"])
+            payload = FinalCardRenderInput(
+                title=str(job.get("theme_name") or "") or None,
+                message=self._resolve_winning_content(job),
+                signoff=None,
+                theme_style=variant["theme_style"],
+                background_image_url=None,
+                text_alignment=variant["text_alignment"],
+                export_size=self._resolve_export_size(job),
+            )
+            image_bytes = self._card_renderer.render_final_png(payload)
+            self._asset_storage.save_bytes(relative_path, image_bytes)
+            public_url = self._asset_storage.get_public_url(relative_path)
+            asset_record = {
+                "asset_type": "image_option",
+                "asset_url": public_url,
+                "storage_backend": self._asset_storage.backend,
+                "storage_root": self._asset_storage.get_absolute_path(""),
+                "relative_path": relative_path,
+                "public_url": public_url,
+                "absolute_path": self._asset_storage.get_absolute_path(relative_path),
+                "file_size_bytes": self._read_file_size_bytes(relative_path),
+                "version": f"studio-batch-{batch}:{variant['theme_style']}:{variant['text_alignment']}",
+                "approved": False,
+            }
+            rendered_assets.append(asset_record)
+        return await self._persist_image_option_assets(job_id=job_id, assets=rendered_assets)
+
+    async def _persist_image_option_assets(self, job_id: str, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Persist already-rendered Studio image option assets."""
+
+        for asset in assets:
+            await self._repository.save_asset(
+                job_id,
+                asset_type=str(asset["asset_type"]),
+                asset_url=str(asset["asset_url"]),
+                storage_backend=str(asset["storage_backend"]),
+                storage_root=str(asset["storage_root"]),
+                relative_path=str(asset["relative_path"]),
+                public_url=str(asset["public_url"]),
+                absolute_path=str(asset["absolute_path"]),
+                file_size_bytes=asset.get("file_size_bytes"),
+                version=str(asset["version"]),
+                approved=bool(asset.get("approved")),
+            )
+        return assets
+
+    def _build_image_option_variants(self, job: dict[str, Any], *, count: int, batch: int) -> list[dict[str, str]]:
+        """Return a small set of visual direction variants for Studio."""
+
+        base_style = self._resolve_theme_style(job)
+        ordered_styles = [base_style, "elegant", "playful", "festive", "minimal"]
+        unique_styles: list[str] = []
+        for style in ordered_styles:
+            if style not in unique_styles:
+                unique_styles.append(style)
+        alignments = ["center", "left", "right"]
+        variants: list[dict[str, str]] = []
+        for index in range(max(1, count)):
+            variants.append(
+                {
+                    "theme_style": unique_styles[index % len(unique_styles)],
+                    "text_alignment": alignments[(batch + index) % len(alignments)],
+                }
+            )
+        return variants
+
+    @staticmethod
+    def _find_image_asset(assets: list[dict[str, Any]], payload: SelectImageRequest) -> dict[str, Any] | None:
+        """Resolve one image-option asset from relative path or public URL."""
+
+        requested_relative_path = str(payload.relative_path or "").strip()
+        requested_url = str(payload.public_url or "").strip()
+        for asset in assets:
+            asset_type = str(asset.get("asset_type") or "").strip()
+            if asset_type not in {"image_option", "image_preview"}:
+                continue
+            if requested_relative_path and str(asset.get("relative_path") or "").strip() == requested_relative_path:
+                return asset
+            asset_url = str(asset.get("public_url") or asset.get("asset_url") or "").strip()
+            if requested_url and asset_url == requested_url:
+                return asset
+        return None
+
+    @staticmethod
+    def _extract_theme_style_from_asset(asset: dict[str, Any]) -> str | None:
+        """Extract theme style token from a persisted Studio image option asset."""
+
+        version = str(asset.get("version") or "").strip()
+        if ":" not in version:
+            return None
+        parts = version.split(":")
+        if len(parts) < 2:
+            return None
+        style = parts[1].strip().lower()
+        return style if style in {"minimal", "festive", "elegant", "playful"} else None
+
+    @staticmethod
+    def _build_image_option_relative_path(job_id: str, *, batch: int, sequence: int, theme_style: str) -> str:
+        """Return relative storage path for one Studio image option."""
+
+        safe_style = "".join(char for char in theme_style.lower() if char.isalnum() or char == "_") or "minimal"
+        return f"image/{job_id}_option_b{batch}_{sequence}_{safe_style}.png"
 
     @staticmethod
     def _build_image_preview_relative_path(job_id: str) -> str:
