@@ -190,6 +190,20 @@ class ApprovalDebugResponse(BaseModel):
     decided_at: datetime
 
 
+class ImageCandidateDebugResponse(BaseModel):
+    """Persisted image candidate metadata returned by debug endpoint."""
+
+    id: int | None = None
+    stage: str
+    provider: str
+    prompt: str
+    candidate_index: int
+    public_url: str
+    relative_path: str
+    is_selected: bool = False
+    created_at: datetime | None = None
+
+
 class AuditEventDebugResponse(BaseModel):
     """Audit event returned by the debug endpoint."""
 
@@ -226,6 +240,7 @@ class JobDebugResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     candidates: list[CandidateDebugResponse] = Field(default_factory=list)
+    image_candidates: list[ImageCandidateDebugResponse] = Field(default_factory=list)
     shortlist: list[ShortlistEntryResponse] = Field(default_factory=list)
     approvals: list[ApprovalDebugResponse] = Field(default_factory=list)
     audit_log: list[AuditEventDebugResponse] = Field(default_factory=list)

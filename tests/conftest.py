@@ -24,6 +24,8 @@ TEST_ENV_VARS = {
     "DB_SCHEMA": "ecard_factory",
     "AUTO_INIT_DB_ON_STARTUP": "false",
     "WORKFLOW_MEMORY_FALLBACK_ENABLED": "true",
+    "IMAGE_PROVIDER": "local_sdxl",
+    "IMAGE_CANDIDATES_PER_RUN": "3",
     "ASSET_STORAGE_BACKEND": "filesystem",
     "ASSET_STORAGE_ROOT": TEST_ASSET_ROOT,
     "ASSET_PUBLIC_BASE_URL": "http://localhost:8080/assets",

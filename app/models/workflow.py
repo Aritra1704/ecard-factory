@@ -113,6 +113,10 @@ class CardJob(Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
+    image_candidates: Mapped[list["CardImageCandidate"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
     audit_events: Mapped[list["CardAuditLog"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
@@ -265,6 +269,39 @@ class CardAsset(Base):
     )
 
     job: Mapped[CardJob] = relationship(back_populates="assets")
+
+
+class CardImageCandidate(Base):
+    """Stored image candidate metadata for one workflow job."""
+
+    __tablename__ = "card_image_candidates"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    public_url: Mapped[str] = mapped_column(Text, nullable=False)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    is_selected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    job: Mapped[CardJob] = relationship(back_populates="image_candidates")
 
 
 class CardJudgeResult(Base):

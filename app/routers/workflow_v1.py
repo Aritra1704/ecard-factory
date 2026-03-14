@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.schemas.workflow import (
     ApprovalRequest,
@@ -297,7 +298,11 @@ async def generate_more_images(
 ) -> GenerateMoreResponse:
     """Append more Studio image options for the currently selected text."""
 
-    return await service.generate_more_image_options(job_id, count=3, refresh_batch=False)
+    return await service.generate_more_image_options(
+        job_id,
+        count=settings.image_candidates_per_run,
+        refresh_batch=False,
+    )
 
 
 @router.post("/{job_id}/select-image", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)

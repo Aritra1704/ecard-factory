@@ -51,6 +51,15 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="WORKFLOW_MEMORY_FALLBACK_ENABLED",
     )
+    image_provider: Literal["local_sdxl", "local_flux", "dalle"] = Field(
+        default="local_sdxl",
+        validation_alias="IMAGE_PROVIDER",
+    )
+    image_candidates_per_run: int = Field(
+        default=3,
+        ge=1,
+        validation_alias="IMAGE_CANDIDATES_PER_RUN",
+    )
     asset_storage_backend: Literal["filesystem"] = Field(..., validation_alias="ASSET_STORAGE_BACKEND")
     asset_storage_root: str = Field(..., validation_alias="ASSET_STORAGE_ROOT")
     asset_public_base_url: str = Field(..., validation_alias="ASSET_PUBLIC_BASE_URL")

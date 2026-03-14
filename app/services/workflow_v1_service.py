@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 
+from app.config import settings
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
     ApprovalRequest,
@@ -43,6 +44,7 @@ from app.schemas.workflow import (
     StartJobRequest,
     StartJobResponse,
 )
+from app.services.image_provider import ImageCandidateResult, ImageGenerationRequest, ImageProvider, get_image_provider
 from app.services.workflow_card_renderer import (
     FinalCardRenderInput,
     PreviewCardRenderInput,
@@ -499,11 +501,13 @@ class WorkflowV1Service:
         *,
         repository: WorkflowJobRepository | None = None,
         asset_storage: AssetStorage | None = None,
+        image_provider: ImageProvider | None = None,
     ) -> None:
         self._contentforge = StubContentForgeClient()
         self._repository = repository or get_workflow_job_repository()
         self._asset_storage = asset_storage or get_asset_storage()
         self._card_renderer = WorkflowCardRenderer()
+        self._image_provider = image_provider or get_image_provider()
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
@@ -730,30 +734,27 @@ class WorkflowV1Service:
 
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image_generation", increment_retry=False)
         try:
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
             image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Image Generation",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            selected_style = str(primary_candidate["theme_style"])
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=selected_style,
+                image_option_batch=batch,
+            )
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -765,32 +766,28 @@ class WorkflowV1Service:
                     "image_preview_url": image_preview_url,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=image_preview_url,
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=image_preview_url,
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
             await self._repository.append_audit_events(
                 job_id,
                 self._build_audit_events(
                     job_id=job_id,
                     events=[
                         ("api_generate_image_called", {"endpoint": f"/api/jobs/{job_id}/generate-image"}),
-                        ("image_generated", {"image_preview_url": image_preview_url, "mode": "operator"}),
+                        (
+                            "image_generated",
+                            {
+                                "image_preview_url": image_preview_url,
+                                "provider": self._image_provider.name,
+                                "generated_count": len(generated["assets"]),
+                                "mode": "operator",
+                            },
+                        ),
                         ("image_approval_requested", {"image_preview_url": image_preview_url}),
                     ],
                 ),
@@ -1044,35 +1041,32 @@ class WorkflowV1Service:
 
         if decision == "approved":
             image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Content Approved - Image Review",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=str(primary_candidate["theme_style"]),
+                image_option_batch=batch,
+            )
             updates = {
                 "status": "image_pending_approval",
                 "content_approval_status": "approved",
                 "image_approval_status": "pending",
                 "image_prompt": image_prompt,
                 "image_preview_url": image_preview_url,
+                "output_spec": updated_output_spec,
                 "last_stage_started_at": transition_time,
                 "last_stage_finished_at": transition_time,
                 "last_error_message": None,
@@ -1080,8 +1074,15 @@ class WorkflowV1Service:
             events = [
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
                 ("content_approved", {"decision": decision, "notes": notes}),
-                ("image_prompt_created", {"stub": True, "approved_content": approved_content}),
-                ("image_generated", {"stub": False, "image_preview_url": image_preview_url}),
+                ("image_prompt_created", {"provider": self._image_provider.name}),
+                (
+                    "image_generated",
+                    {
+                        "image_preview_url": image_preview_url,
+                        "provider": self._image_provider.name,
+                        "generated_count": len(generated["assets"]),
+                    },
+                ),
                 ("image_approval_requested", {"image_preview_url": image_preview_url}),
             ]
         elif decision == "rejected":
@@ -1120,21 +1121,6 @@ class WorkflowV1Service:
         assert updated is not None
         await self._repository.append_audit_events(job_id, audit_events)
 
-        if decision == "approved":
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=str(updated.get("image_preview_url") or ""),
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=str(updated.get("image_preview_url") or ""),
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
         logger.info(
             "workflow transition job_id=%s stage=content %s -> %s",
             job_id,
@@ -1569,30 +1555,26 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No approved content available to rerun image stage")
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image")
         try:
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
             image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Image Stage Rerun",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Selected content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=str(primary_candidate["theme_style"]),
+                image_option_batch=batch,
+            )
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1604,32 +1586,27 @@ class WorkflowV1Service:
                     "image_preview_url": image_preview_url,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=image_preview_url,
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=image_preview_url,
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
             await self._repository.append_audit_events(
                 job_id,
                 self._build_audit_events(
                     job_id=job_id,
                     events=[
                         ("rerun_requested", {"stage": "image"}),
-                        ("image_rerun_completed", {"image_preview_url": image_preview_url}),
+                        (
+                            "image_rerun_completed",
+                            {
+                                "image_preview_url": image_preview_url,
+                                "provider": self._image_provider.name,
+                                "generated_count": len(generated["assets"]),
+                            },
+                        ),
                     ],
                 ),
             )
@@ -1914,8 +1891,8 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No selected text available to generate image options")
 
         studio_state = self._studio_state(job)
-        batch = int(studio_state.get("image_option_batch") or 0)
-        batch = batch + 1 if refresh_batch or batch <= 0 else batch
+        current_batch = int(studio_state.get("image_option_batch") or 0)
+        batch = 1 if refresh_batch and current_batch <= 0 else current_batch + 1
         generated_assets = await self._generate_image_option_assets(job_id=job_id, job=job, count=count, batch=batch)
         updated_output_spec = self._with_studio_state(
             job,
@@ -1989,6 +1966,10 @@ class WorkflowV1Service:
         await self._repository.update_asset_selection(
             job_id,
             asset_type=str(selected_asset.get("asset_type") or "image_option"),
+            selected_relative_path=relative_path,
+        )
+        await self._repository.update_image_candidate_selection(
+            job_id,
             selected_relative_path=relative_path,
         )
         await self._repository.append_audit_events(
@@ -2619,36 +2600,15 @@ class WorkflowV1Service:
     ) -> list[dict[str, Any]]:
         """Render selectable visual directions for Studio image options."""
 
-        variants = self._build_image_option_variants(job, count=count, batch=batch)
-        rendered_assets: list[dict[str, Any]] = []
-        for index, variant in enumerate(variants, start=1):
-            relative_path = self._build_image_option_relative_path(job_id, batch=batch, sequence=index, theme_style=variant["theme_style"])
-            payload = FinalCardRenderInput(
-                title=str(job.get("theme_name") or "") or None,
-                message=self._resolve_winning_content(job),
-                signoff=None,
-                theme_style=variant["theme_style"],
-                background_image_url=None,
-                text_alignment=variant["text_alignment"],
-                export_size=self._resolve_export_size(job),
-            )
-            image_bytes = self._card_renderer.render_final_png(payload)
-            self._asset_storage.save_bytes(relative_path, image_bytes)
-            public_url = self._asset_storage.get_public_url(relative_path)
-            asset_record = {
-                "asset_type": "image_option",
-                "asset_url": public_url,
-                "storage_backend": self._asset_storage.backend,
-                "storage_root": self._asset_storage.get_absolute_path(""),
-                "relative_path": relative_path,
-                "public_url": public_url,
-                "absolute_path": self._asset_storage.get_absolute_path(relative_path),
-                "file_size_bytes": self._read_file_size_bytes(relative_path),
-                "version": f"studio-batch-{batch}:{variant['theme_style']}:{variant['text_alignment']}",
-                "approved": False,
-            }
-            rendered_assets.append(asset_record)
-        return await self._persist_image_option_assets(job_id=job_id, assets=rendered_assets)
+        generated = await self._generate_image_candidates_for_job(
+            job_id=job_id,
+            job=job,
+            count=count,
+            batch=batch,
+            include_preview_candidate=False,
+            stage="image_generation",
+        )
+        return list(generated["assets"])
 
     async def _persist_image_option_assets(self, job_id: str, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Persist already-rendered Studio image option assets."""
@@ -2669,25 +2629,119 @@ class WorkflowV1Service:
             )
         return assets
 
-    def _build_image_option_variants(self, job: dict[str, Any], *, count: int, batch: int) -> list[dict[str, str]]:
-        """Return a small set of visual direction variants for Studio."""
+    async def _generate_image_candidates_for_job(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        count: int,
+        batch: int,
+        include_preview_candidate: bool,
+        stage: str,
+    ) -> dict[str, Any]:
+        """Generate provider-backed image candidates and persist both files and metadata."""
 
-        base_style = self._resolve_theme_style(job)
-        ordered_styles = [base_style, "elegant", "playful", "festive", "minimal"]
-        unique_styles: list[str] = []
-        for style in ordered_styles:
-            if style not in unique_styles:
-                unique_styles.append(style)
-        alignments = ["center", "left", "right"]
-        variants: list[dict[str, str]] = []
-        for index in range(max(1, count)):
-            variants.append(
+        request = ImageGenerationRequest(
+            job_id=job_id,
+            theme_name=str(job.get("theme_name") or ""),
+            approved_text=self._resolve_winning_content(job),
+            prompt=self.build_image_prompt(job),
+            audience=str(job.get("audience") or ""),
+            cultural_context=str(job.get("cultural_context") or ""),
+            theme_style=self._resolve_theme_style(job),
+            export_size=self._resolve_export_size(job),
+            count=max(1, count),
+            batch=batch,
+            background_image_url=self._resolve_background_image_url(job),
+        )
+        provider_candidates = await self._image_provider.generate_candidates(request)
+        if not provider_candidates:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Image provider '{self._image_provider.name}' returned no candidates",
+            )
+        persisted_assets: list[dict[str, Any]] = []
+        persisted_candidate_rows: list[dict[str, Any]] = []
+
+        for candidate in provider_candidates:
+            relative_path, asset_type = self._resolve_image_candidate_path(
+                job_id=job_id,
+                candidate=candidate,
+                batch=batch,
+                include_preview_candidate=include_preview_candidate,
+            )
+            self._asset_storage.save_bytes(relative_path, candidate.image_bytes)
+            public_url = self._asset_storage.get_public_url(relative_path)
+            version = f"{candidate.provider}:{candidate.theme_style}:{candidate.text_alignment}"
+            asset_record = {
+                "asset_type": asset_type,
+                "asset_url": public_url,
+                "storage_backend": self._asset_storage.backend,
+                "storage_root": self._asset_storage.get_absolute_path(""),
+                "relative_path": relative_path,
+                "public_url": public_url,
+                "absolute_path": self._asset_storage.get_absolute_path(relative_path),
+                "file_size_bytes": self._read_file_size_bytes(relative_path),
+                "version": version,
+                "approved": include_preview_candidate and asset_type == "image_preview",
+                "provider": candidate.provider,
+                "theme_style": candidate.theme_style,
+                "text_alignment": candidate.text_alignment,
+            }
+            persisted_assets.append(asset_record)
+            persisted_candidate_rows.append(
                 {
-                    "theme_style": unique_styles[index % len(unique_styles)],
-                    "text_alignment": alignments[(batch + index) % len(alignments)],
+                    "stage": stage,
+                    "provider": candidate.provider,
+                    "prompt": candidate.prompt,
+                    "candidate_index": candidate.candidate_index,
+                    "public_url": public_url,
+                    "relative_path": relative_path,
+                    "is_selected": include_preview_candidate and asset_type == "image_preview",
+                    "created_at": datetime.now(timezone.utc),
                 }
             )
-        return variants
+
+        await self._persist_image_option_assets(job_id=job_id, assets=persisted_assets)
+        await self._repository.save_image_candidates(
+            job_id,
+            persisted_candidate_rows,
+            replace_existing=False,
+            stage=stage,
+        )
+        primary_candidate = persisted_assets[0] if persisted_assets else None
+        if primary_candidate is not None:
+            await self._repository.update_image_candidate_selection(
+                job_id,
+                selected_relative_path=str(primary_candidate["relative_path"]),
+            )
+        return {
+            "assets": persisted_assets,
+            "primary_candidate": primary_candidate,
+            "prompt": request.prompt,
+        }
+
+    def _resolve_image_candidate_path(
+        self,
+        *,
+        job_id: str,
+        candidate: ImageCandidateResult,
+        batch: int,
+        include_preview_candidate: bool,
+    ) -> tuple[str, str]:
+        """Return the storage path and asset type for one generated image candidate."""
+
+        if include_preview_candidate and int(candidate.candidate_index) == 1:
+            return self._build_image_preview_relative_path(job_id), "image_preview"
+        return (
+            self._build_image_option_relative_path(
+                job_id,
+                batch=batch,
+                sequence=int(candidate.candidate_index),
+                theme_style=candidate.theme_style,
+            ),
+            "image_option",
+        )
 
     @staticmethod
     def _find_image_asset(assets: list[dict[str, Any]], payload: SelectImageRequest) -> dict[str, Any] | None:
@@ -2927,4 +2981,5 @@ def get_workflow_v1_service() -> WorkflowV1Service:
     return WorkflowV1Service(
         repository=get_workflow_job_repository(),
         asset_storage=get_asset_storage(),
+        image_provider=get_image_provider(),
     )

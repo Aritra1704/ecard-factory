@@ -19,6 +19,7 @@ from app.models.workflow import (
     CardAsset,
     CardAuditLog,
     CardContentCandidate,
+    CardImageCandidate,
     CardJob,
     CardJudgeResult,
     CardShortlist,
@@ -110,6 +111,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
                         selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
@@ -263,6 +265,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
                         selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
@@ -644,6 +647,123 @@ class WorkflowJobRepository:
                 ),
             )
 
+    async def save_image_candidates(
+        self,
+        job_id: str,
+        candidates: list[dict[str, Any]],
+        *,
+        replace_existing: bool = False,
+        stage: str | None = None,
+    ) -> None:
+        """Persist workflow image candidate metadata."""
+
+        normalized_stage = str(stage or "").strip().lower() or None
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            existing_candidates = list(job.get("image_candidates") or [])
+            if replace_existing and normalized_stage:
+                existing_candidates = [
+                    item
+                    for item in existing_candidates
+                    if str(item.get("stage") or "").strip().lower() != normalized_stage
+                ]
+            elif replace_existing:
+                existing_candidates = []
+            start_index = len(existing_candidates) + 1
+            next_candidates = []
+            for index, candidate in enumerate(candidates, start=start_index):
+                next_candidates.append(
+                    {
+                        "id": int(candidate.get("id") or index),
+                        "stage": str(candidate.get("stage") or stage or "image_generation"),
+                        "provider": str(candidate.get("provider") or settings.image_provider),
+                        "prompt": str(candidate.get("prompt") or ""),
+                        "candidate_index": int(candidate.get("candidate_index") or index),
+                        "public_url": str(candidate.get("public_url") or ""),
+                        "relative_path": str(candidate.get("relative_path") or ""),
+                        "is_selected": bool(candidate.get("is_selected")),
+                        "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
+                    }
+                )
+            job["image_candidates"] = existing_candidates + next_candidates
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                if replace_existing:
+                    statement = select(CardImageCandidate).where(CardImageCandidate.job_id == job_id)
+                    if normalized_stage:
+                        statement = statement.where(CardImageCandidate.stage == normalized_stage)
+                    result = await session.execute(statement)
+                    for record in result.scalars().all():
+                        await session.delete(record)
+                    await session.flush()
+
+                for candidate in candidates:
+                    session.add(
+                        CardImageCandidate(
+                            job_id=job_id,
+                            stage=str(candidate.get("stage") or stage or "image_generation"),
+                            provider=str(candidate.get("provider") or settings.image_provider),
+                            prompt=str(candidate.get("prompt") or ""),
+                            candidate_index=int(candidate.get("candidate_index") or 1),
+                            public_url=str(candidate.get("public_url") or ""),
+                            relative_path=str(candidate.get("relative_path") or ""),
+                            is_selected=bool(candidate.get("is_selected")),
+                            created_at=candidate.get("created_at") or datetime.now(timezone.utc),
+                        )
+                    )
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="save_image_candidates",
+                error=exc,
+                memory_action=lambda: self.save_image_candidates(
+                    job_id,
+                    candidates,
+                    replace_existing=replace_existing,
+                    stage=stage,
+                ),
+            )
+
+    async def update_image_candidate_selection(self, job_id: str, *, selected_relative_path: str) -> None:
+        """Persist which image candidate is currently selected."""
+
+        normalized_path = str(selected_relative_path or "").strip()
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            next_candidates = []
+            for candidate in list(job.get("image_candidates") or []):
+                updated = dict(candidate)
+                updated["is_selected"] = str(updated.get("relative_path") or "").strip() == normalized_path
+                next_candidates.append(updated)
+            job["image_candidates"] = next_candidates
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(CardImageCandidate).where(CardImageCandidate.job_id == job_id)
+                )
+                for candidate in result.scalars().all():
+                    candidate.is_selected = str(candidate.relative_path or "").strip() == normalized_path
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="update_image_candidate_selection",
+                error=exc,
+                memory_action=lambda: self.update_image_candidate_selection(
+                    job_id,
+                    selected_relative_path=normalized_path,
+                ),
+            )
+
     async def append_audit_event(
         self,
         job_id: str,
@@ -742,6 +862,7 @@ class WorkflowJobRepository:
         shortlists = sorted(job.shortlists, key=lambda item: (item.rank, item.id or 0))
         approvals = sorted(job.approvals, key=lambda item: item.id or 0)
         assets = sorted(job.assets, key=lambda item: item.id or 0)
+        image_candidates = sorted(job.image_candidates, key=lambda item: item.id or 0)
         judge_results = sorted(job.judge_results, key=lambda item: item.id or 0)
         audit_events = sorted(job.audit_events, key=lambda item: item.id or 0)
         shortlist_rank_by_candidate = {
@@ -799,6 +920,20 @@ class WorkflowJobRepository:
                     "created_at": item.created_at,
                 }
                 for item in candidates
+            ],
+            "image_candidates": [
+                {
+                    "id": item.id,
+                    "stage": item.stage,
+                    "provider": item.provider,
+                    "prompt": item.prompt,
+                    "candidate_index": item.candidate_index,
+                    "public_url": item.public_url,
+                    "relative_path": item.relative_path,
+                    "is_selected": item.is_selected,
+                    "created_at": item.created_at,
+                }
+                for item in image_candidates
             ],
             "shortlist": [
                 {
