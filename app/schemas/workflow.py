@@ -27,6 +27,7 @@ class OutputSpec(BaseModel):
     format: str = "paragraph"
     length: OutputLength = Field(default_factory=OutputLength)
     structure: OutputStructure = Field(default_factory=OutputStructure)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RenderConfig(BaseModel):
@@ -195,11 +196,19 @@ class ImageCandidateDebugResponse(BaseModel):
 
     id: int | None = None
     stage: str
+    imageforge_request_id: str | None = None
+    candidate_id: str | None = None
+    provider_run_id: str | None = None
     provider: str
+    model: str | None = None
     prompt: str
+    prompt_used: str | None = None
+    negative_prompt_used: str | None = None
     candidate_index: int
     public_url: str
     relative_path: str
+    width: int | None = None
+    height: int | None = None
     is_selected: bool = False
     created_at: datetime | None = None
 
@@ -229,6 +238,16 @@ class JobDebugResponse(BaseModel):
     final_approval_status: str = "pending"
     image_prompt: str | None = None
     image_preview_url: str | None = None
+    imageforge_request_id: str | None = None
+    imageforge_trace_id: str | None = None
+    image_generation_status: str | None = None
+    image_generation_stage: str | None = None
+    selected_image_candidate_id: str | None = None
+    selected_image_public_url: str | None = None
+    selected_image_relative_path: str | None = None
+    selected_image_provider: str | None = None
+    selected_image_model: str | None = None
+    image_generated_at: datetime | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
     cards_per_theme: int = 10
@@ -320,6 +339,46 @@ class GenerateMoreResponse(BaseModel):
     job_id: str
     status: str
     generated_count: int = 0
+
+
+class RegenerateImageAssetsRequest(BaseModel):
+    """Optional payload for requesting a fresh ImageForge candidate batch."""
+
+    candidate_count: int | None = Field(default=None, ge=1)
+
+
+class ImageAssetCandidateResponse(BaseModel):
+    """UI-ready image candidate metadata owned by eCardFactory."""
+
+    candidate_id: str
+    provider: str
+    model: str | None = None
+    candidate_index: int
+    public_url: str
+    relative_path: str
+    width: int | None = None
+    height: int | None = None
+    is_selected: bool = False
+    created_at: datetime | None = None
+
+
+class JobImageAssetsResponse(BaseModel):
+    """Normalized image asset payload returned to Studio."""
+
+    job_id: str
+    imageforge_enabled: bool = True
+    imageforge_request_id: str | None = None
+    imageforge_trace_id: str | None = None
+    image_generation_status: str | None = None
+    image_generation_stage: str | None = None
+    selected_text: str | None = None
+    selected_image_candidate_id: str | None = None
+    selected_image_public_url: str | None = None
+    selected_image_relative_path: str | None = None
+    selected_image_provider: str | None = None
+    selected_image_model: str | None = None
+    image_generated_at: datetime | None = None
+    candidates: list[ImageAssetCandidateResponse] = Field(default_factory=list)
 
 
 class JobEventResponse(BaseModel):

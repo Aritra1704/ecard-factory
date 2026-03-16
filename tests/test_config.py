@@ -38,6 +38,12 @@ def test_settings_loads_from_environment(configured_env: dict[str, str]) -> None
     assert settings.app_port == 8000
     assert settings.log_level == configured_env["LOG_LEVEL"]
     assert settings.db_schema == configured_env["DB_SCHEMA"]
+    assert settings.imageforge_enabled is True
+    assert settings.imageforge_base_url == configured_env["IMAGEFORGE_BASE_URL"]
+    assert settings.imageforge_timeout_seconds == 300
+    assert settings.imageforge_default_provider == configured_env["IMAGEFORGE_DEFAULT_PROVIDER"]
+    assert settings.imageforge_default_model == configured_env["IMAGEFORGE_DEFAULT_MODEL"]
+    assert settings.imageforge_default_candidate_count == 3
 
 
 def test_active_db_url_uses_database_url_outside_production(

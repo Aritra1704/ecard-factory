@@ -23,3 +23,8 @@ contentforge
 
 n8n
 ./scripts/run-n8n.sh
+
+comfyui
+cd /Volumes/Ari_SSD_01/AI_MODELS/comfyui
+source .venv/bin/activate
+python main.py --force-fp16

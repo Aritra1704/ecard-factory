@@ -550,6 +550,16 @@ class WorkflowV1Service:
             "final_approval_status": "pending",
             "image_prompt": None,
             "image_preview_url": None,
+            "imageforge_request_id": None,
+            "imageforge_trace_id": None,
+            "image_generation_status": None,
+            "image_generation_stage": None,
+            "selected_image_candidate_id": None,
+            "selected_image_public_url": None,
+            "selected_image_relative_path": None,
+            "selected_image_provider": None,
+            "selected_image_model": None,
+            "image_generated_at": None,
             "final_preview_url": None,
             "final_asset_urls": None,
             "cards_per_theme": int(payload.cards_per_theme),
@@ -1496,6 +1506,17 @@ class WorkflowV1Service:
                 shortlist_seed=list(generation.get("shortlist") or []),
             )
             await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=None,
+                selected_image_url=None,
+                selected_image_version=None,
+                selected_image_style=None,
+                image_option_batch=0,
+            )
+            rerendering = dict(updated_output_spec.get("rendering") or {})
+            rerendering.pop("background_image_url", None)
+            updated_output_spec["rendering"] = rerendering
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1508,14 +1529,31 @@ class WorkflowV1Service:
                     "final_approval_status": "pending",
                     "image_prompt": None,
                     "image_preview_url": None,
+                    "imageforge_request_id": None,
+                    "imageforge_trace_id": None,
+                    "image_generation_status": None,
+                    "image_generation_stage": None,
+                    "selected_image_candidate_id": None,
+                    "selected_image_public_url": None,
+                    "selected_image_relative_path": None,
+                    "selected_image_provider": None,
+                    "selected_image_model": None,
+                    "image_generated_at": None,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
+            await self._repository.save_image_candidates(
+                job_id,
+                [],
+                replace_existing=True,
+                stage="image_generation",
+            )
             await self._repository.save_judge_results(
                 job_id,
                 {
@@ -1816,6 +1854,9 @@ class WorkflowV1Service:
             text_selected_at=selection_time.isoformat(),
             image_option_batch=0,
         )
+        rendering = dict(updated_output_spec.get("rendering") or {})
+        rendering.pop("background_image_url", None)
+        updated_output_spec["rendering"] = rendering
         updated = await self._repository.update_job_status(
             job_id=job_id,
             updates={
@@ -1827,6 +1868,16 @@ class WorkflowV1Service:
                 "final_approval_status": "pending",
                 "image_prompt": None,
                 "image_preview_url": None,
+                "imageforge_request_id": None,
+                "imageforge_trace_id": None,
+                "image_generation_status": None,
+                "image_generation_stage": None,
+                "selected_image_candidate_id": None,
+                "selected_image_public_url": None,
+                "selected_image_relative_path": None,
+                "selected_image_provider": None,
+                "selected_image_model": None,
+                "image_generated_at": None,
                 "final_preview_url": None,
                 "final_asset_urls": None,
                 "output_spec": updated_output_spec,
@@ -1836,6 +1887,12 @@ class WorkflowV1Service:
             },
         )
         assert updated is not None
+        await self._repository.save_image_candidates(
+            job_id,
+            [],
+            replace_existing=True,
+            stage="image_generation",
+        )
         await self._repository.append_audit_events(
             job_id,
             self._build_audit_events(
@@ -2923,7 +2980,16 @@ class WorkflowV1Service:
 
         options = self._resolve_rendering_options(job)
         background_url = str(options.get("background_image_url") or "").strip()
-        return background_url or None
+        if background_url:
+            return background_url
+
+        selected_url = str(job.get("selected_image_public_url") or "").strip()
+        if selected_url:
+            return selected_url
+
+        studio_state = self._studio_state(job)
+        studio_selected_url = str(studio_state.get("selected_image_url") or "").strip()
+        return studio_selected_url or None
 
     def _resolve_final_title(self, job: dict[str, Any]) -> str | None:
         """Resolve optional user-facing title for final card mode."""

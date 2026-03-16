@@ -63,6 +63,16 @@ class CardJob(Base):
     )
     image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    imageforge_request_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    imageforge_trace_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image_generation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    image_generation_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selected_image_candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    selected_image_public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_image_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_image_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selected_image_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     final_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_asset_urls: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
     cards_per_theme: Mapped[int] = mapped_column(
@@ -284,11 +294,19 @@ class CardImageCandidate(Base):
         index=True,
     )
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    imageforge_request_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    provider_run_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negative_prompt_used: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_index: Mapped[int] = mapped_column(Integer, nullable=False)
     public_url: Mapped[str] = mapped_column(Text, nullable=False)
     relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_selected: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

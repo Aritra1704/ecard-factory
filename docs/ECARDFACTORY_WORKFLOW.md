@@ -31,11 +31,12 @@ Owns:
 - card job lifecycle
 - theme resolution / prompt preparation
 - calling ContentForge
+- calling ImageForge for image assets
 - storing generated candidates
 - storing judged winner
 - approval state tracking
 - image prompt creation
-- image generation orchestration
+- image generation orchestration and local ImageForge metadata persistence
 - preview/final card assembly
 - export and publishing state
 - full audit logging
@@ -47,6 +48,17 @@ Owns:
 - content quality judging
 - winner selection
 - returning structured results to eCardFactory
+
+### ImageForge
+Owns:
+- reusable image asset generation
+- provider execution against local image backends such as ComfyUI
+- returning candidate `public_url` and relative-path metadata
+
+Does NOT own:
+- theme business rules
+- final greeting-card text composition
+- final eCard layout/rendering
 
 ### Human Approver
 Owns:
@@ -126,24 +138,25 @@ Owner: n8n → eCardFactory
   - `content_rejected`
   - or `content_timeout`
 
-### Step 9 — Build Image Prompt
+### Step 9 — Build ImageForge Asset Request
 Owner: eCardFactory
 
-- Creates visual prompt using approved content + theme
-- Logs `image_prompt_created`
+- Creates an ImageForge asset request using approved content + eCardFactory theme data
+- Supplies caller-owned `creative_direction`, `scene_spec`, and `render_spec`
+- Logs `imageforge_request_created`
 
-### Step 10 — Generate Image
-Owner: eCardFactory
+### Step 10 — Generate Image Assets
+Owner: eCardFactory -> ImageForge
 
-- Calls image generation service/provider
-- Saves image asset reference
-- Logs `image_generated`
+- Calls ImageForge through the dedicated client module
+- Saves ImageForge request metadata and candidate metadata locally in eCardFactory
+- Logs `imageforge_response_received`
 
 ### Step 11 — Request Image Approval
 Owner: n8n using eCardFactory payload
 
 - n8n gets image approval payload from eCardFactory
-- Sends preview for approval
+- Sends selected image asset preview for approval
 
 ### Step 12 — Wait for Image Approval
 Owner: n8n
@@ -165,6 +178,12 @@ Owner: eCardFactory
 - Combines approved text + approved image + layout template
 - Creates preview card / final card asset
 - Logs `preview_assembled` or `final_card_assembled`
+
+Important:
+
+- ImageForge generates image assets only
+- eCardFactory overlays readable text during final composition
+- full-card generation with embedded text is intentionally not delegated to ImageForge
 
 ### Step 15 — Request Final Approval
 Owner: n8n using eCardFactory payload

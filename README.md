@@ -17,7 +17,49 @@ Local URLs:
 
 - eCardFactory: `http://localhost:8080`
 - ContentForge: `http://localhost:8001`
+- ImageForge: `http://127.0.0.1:8090`
 - n8n: `http://localhost:5678`
+
+## ImageForge Integration
+
+eCardFactory now integrates with ImageForge as a dedicated image-asset backend.
+
+Boundary rules:
+
+- eCardFactory owns theme, audience, tone, cultural context, and selected card text
+- eCardFactory builds the ImageForge request payload from its own job/theme state
+- ImageForge returns reusable image asset candidates only
+- final card composition remains inside eCardFactory
+- readable greeting-card text is not generated inside ImageForge images
+
+Required environment variables:
+
+- `IMAGEFORGE_ENABLED=true`
+- `IMAGEFORGE_BASE_URL=http://127.0.0.1:8090`
+- `IMAGEFORGE_TIMEOUT_SECONDS=300`
+- `IMAGEFORGE_DEFAULT_PROVIDER=comfyui`
+- `IMAGEFORGE_DEFAULT_MODEL=sd_xl_base_1.0`
+- `IMAGEFORGE_DEFAULT_CANDIDATE_COUNT=3`
+
+Local development flow:
+
+1. Start ContentForge if text generation is needed.
+2. Start ImageForge locally on `http://127.0.0.1:8090`.
+3. Start eCardFactory.
+4. Open Studio, select or approve text, then use `Generate Assets` or `Regenerate Assets`.
+5. Pick one ImageForge candidate with `Use This Image`.
+6. Render the final card in eCardFactory.
+
+Backend flow:
+
+- `ContentForge -> eCardFactory -> ImageForge -> eCardFactory UI -> final card composition`
+
+Image asset endpoints:
+
+- `POST /api/jobs/{job_id}/image-assets/generate`
+- `POST /api/jobs/{job_id}/image-assets/regenerate`
+- `POST /api/jobs/{job_id}/image-assets/{candidate_id}/select`
+- `GET /api/jobs/{job_id}/image-assets`
 
 ## Stage 2 UX Reset
 
@@ -57,8 +99,8 @@ Main Studio actions:
 - `Regenerate Text`
 - `Generate 10 More`
 - `Use This Image`
-- `Regenerate Image`
-- `Generate 3 More`
+- `Generate Assets`
+- `Regenerate Assets`
 - `Regenerate Card`
 - `Mark Favorite`
 - `Archive`

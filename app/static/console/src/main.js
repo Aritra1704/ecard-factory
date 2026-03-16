@@ -72,6 +72,74 @@ const html = htm.bind(React.createElement);
     return html`<span className=${`badge ${statusTone(value)}`}>${humanize(value)}</span>`;
   }
 
+  function SidebarIcon({ name }) {
+    const sharedProps = {
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.8",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true",
+    };
+
+    if (name === "home") {
+      return html`
+        <svg ...${sharedProps}>
+          <path d="M3 10.5 12 4l9 6.5" />
+          <path d="M5.5 9.5V20h13V9.5" />
+          <path d="M9.5 20v-5.5h5V20" />
+        </svg>
+      `;
+    }
+
+    if (name === "themes") {
+      return html`
+        <svg ...${sharedProps}>
+          <path d="M12 3.5v3" />
+          <path d="m5.9 5.9 2.1 2.1" />
+          <path d="M3.5 12h3" />
+          <path d="m5.9 18.1 2.1-2.1" />
+          <path d="M12 20.5v-3" />
+          <path d="m18.1 18.1-2.1-2.1" />
+          <path d="M20.5 12h-3" />
+          <path d="m18.1 5.9-2.1 2.1" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+      `;
+    }
+
+    if (name === "studio") {
+      return html`
+        <svg ...${sharedProps}>
+          <rect x="4" y="5" width="16" height="14" rx="3" />
+          <path d="M8 15.5 11 12l2.5 2.5L16 11l2 2.5" />
+          <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      `;
+    }
+
+    if (name === "compare") {
+      return html`
+        <svg ...${sharedProps}>
+          <rect x="4" y="5" width="6.5" height="14" rx="2" />
+          <rect x="13.5" y="5" width="6.5" height="14" rx="2" />
+          <path d="M7.25 9h0" />
+          <path d="M16.75 15h0" />
+        </svg>
+      `;
+    }
+
+    return html`
+      <svg ...${sharedProps}>
+        <rect x="4" y="5" width="16" height="14" rx="3" />
+        <path d="M8 9h8" />
+        <path d="M8 12h8" />
+        <path d="M8 15h5" />
+      </svg>
+    `;
+  }
+
   function formatDate(value) {
     if (!value) {
       return "-";
@@ -303,23 +371,21 @@ const html = htm.bind(React.createElement);
     return Array.isArray(payload) ? payload : [];
   }
 
+  async function fetchJobImageAssets(jobId) {
+    const payload = await requestJSON(`/api/jobs/${jobId}/image-assets`);
+    return payload && typeof payload === "object" ? payload : { candidates: [] };
+  }
+
   async function autoBuildStudioJob(jobId) {
     await requestJSON(`/api/jobs/${jobId}/approve-content`, { method: "POST" });
-    await requestJSON(`/api/jobs/${jobId}/generate-more-images`, { method: "POST" });
-    const assets = await fetchJobAssets(jobId);
-    const firstImageOption = assets.find((asset) => String(asset.asset_type || "") === "image_option" && asset.relative_path);
-    if (firstImageOption) {
-      await requestJSON(`/api/jobs/${jobId}/select-image`, {
-        method: "POST",
-        body: JSON.stringify({ relative_path: firstImageOption.relative_path }),
-      });
-      await requestJSON(`/api/jobs/${jobId}/render-final`, { method: "POST" });
-      return { imageOptionUsed: true };
+    const imageAssets = await requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" });
+    const firstImageOption = Array.isArray(imageAssets?.candidates) ? imageAssets.candidates[0] : null;
+    if (!firstImageOption?.candidate_id) {
+      throw new Error("ImageForge returned no image candidates");
     }
-    await requestJSON(`/api/jobs/${jobId}/generate-image`, { method: "POST" });
-    await requestJSON(`/api/jobs/${jobId}/approve-image`, { method: "POST" });
+    await requestJSON(`/api/jobs/${jobId}/image-assets/${firstImageOption.candidate_id}/select`, { method: "POST" });
     await requestJSON(`/api/jobs/${jobId}/render-final`, { method: "POST" });
-    return { imageOptionUsed: false };
+    return { imageOptionUsed: true };
   }
 
   function splitCsv(value) {
@@ -569,6 +635,25 @@ const html = htm.bind(React.createElement);
       .filter((asset) => asset.url);
   }
 
+  function collectImageAssetCandidates(imageAssets) {
+    const candidates = Array.isArray(imageAssets?.candidates) ? imageAssets.candidates : [];
+    return candidates
+      .map((candidate, index) => ({
+        key: candidate.candidate_id || candidate.public_url || `image_candidate_${index}`,
+        candidate_id: String(candidate.candidate_id || ""),
+        provider: String(candidate.provider || "unknown"),
+        model: String(candidate.model || "").trim(),
+        candidate_index: Number(candidate.candidate_index || index + 1),
+        url: candidate.public_url || "",
+        relative_path: candidate.relative_path || "",
+        width: candidate.width ?? null,
+        height: candidate.height ?? null,
+        is_selected: Boolean(candidate.is_selected),
+        created_at: candidate.created_at || null,
+      }))
+      .filter((candidate) => candidate.url);
+  }
+
   function collectFinalCardOptions(job, assets = []) {
     const finalAssetRows = Array.isArray(assets)
       ? assets.filter((asset) => {
@@ -611,6 +696,25 @@ const html = htm.bind(React.createElement);
       return approved;
     }
     return imageOptions.find((asset) => asset.asset_type === "image_preview") || imageOptions[0] || null;
+  }
+
+  function getSelectedImageAsset(imageAssets) {
+    const candidates = collectImageAssetCandidates(imageAssets);
+    const selectedId = String(imageAssets?.selected_image_candidate_id || "");
+    if (selectedId) {
+      const explicit = candidates.find((candidate) => candidate.candidate_id === selectedId);
+      if (explicit) {
+        return explicit;
+      }
+    }
+    return candidates.find((candidate) => candidate.is_selected) || candidates[0] || null;
+  }
+
+  function formatDimensions(width, height) {
+    if (!width || !height) {
+      return null;
+    }
+    return `${width} x ${height}`;
   }
 
   function statusCategory(job) {
@@ -961,7 +1065,7 @@ const html = htm.bind(React.createElement);
             <p className="page-kicker">Home</p>
             <h1 className="page-title">eCard Studio Home</h1>
             <p className="page-description">
-              Card-first controls for today&apos;s theme, manual theme runs, and recent eCard output.
+              Card-first controls for today's theme, manual theme runs, and recent eCard output.
             </p>
           </div>
           <div className="inline-actions">
@@ -971,7 +1075,7 @@ const html = htm.bind(React.createElement);
               onClick=${() => openThemeRunModal("today")}
               disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
             >
-              Generate Today&apos;s Cards
+              Generate Today's Cards
             </button>
             <button type="button" className="button" onClick=${() => openThemeRunModal("manual")}>Generate From Theme</button>
             <button type="button" className="button" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
@@ -1011,7 +1115,7 @@ const html = htm.bind(React.createElement);
 
         <section className="cards-grid">
           <article className="summary-card">
-            <p className="summary-label">Today&apos;s Theme</p>
+            <p className="summary-label">Today's Theme</p>
             <p className="summary-value summary-value-small">${resolvedTodayTheme ? resolvedTodayTheme.theme_name : "Unavailable"}</p>
           </article>
           <article className="summary-card">
@@ -1031,7 +1135,7 @@ const html = htm.bind(React.createElement);
         <section className="section-panel home-hero">
           <div className="section-head">
             <div>
-              <h2 className="section-title">Today&apos;s Theme</h2>
+              <h2 className="section-title">Today's Theme</h2>
               <p className="section-copy">
                 ${resolvedTodayTheme
                   ? `${resolvedTodayTheme.theme_name} | ${copyStyleLabel("minimal")} card flow with ${humanize(todayTheme?.weekday)} scheduling`
@@ -1045,7 +1149,7 @@ const html = htm.bind(React.createElement);
                 onClick=${() => openThemeRunModal("today")}
                 disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
               >
-                ${creatingThemeJob && themeRunMode === "today" ? "Generating..." : "Generate Today&apos;s Cards"}
+                ${creatingThemeJob && themeRunMode === "today" ? "Generating..." : "Generate Today's Cards"}
               </button>
               <button type="button" className="button" onClick=${() => openThemeRunModal("manual")}>Generate From Theme</button>
               <button type="button" className="button" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
@@ -1094,7 +1198,7 @@ const html = htm.bind(React.createElement);
           ${jobsLoading
             ? html`<p className="empty-state">Loading recent eCards...</p>`
             : recentCards.length === 0
-              ? html`<p className="empty-state">No rendered cards yet. Generate today&apos;s cards or run a theme manually.</p>`
+              ? html`<p className="empty-state">No rendered cards yet. Generate today's cards or run a theme manually.</p>`
               : html`
                   <div className="ecard-grid">
                     ${recentCards.map(
@@ -3117,6 +3221,7 @@ const html = htm.bind(React.createElement);
     const [job, setJob] = useState(null);
     const [assets, setAssets] = useState([]);
     const [candidates, setCandidates] = useState([]);
+    const [imageAssets, setImageAssets] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
@@ -3138,17 +3243,20 @@ const html = htm.bind(React.createElement);
           setJob(null);
           setAssets([]);
           setCandidates([]);
+          setImageAssets(null);
           return;
         }
 
-        const [jobPayload, assetPayload, candidatePayload] = await Promise.all([
+        const [jobPayload, assetPayload, candidatePayload, imageAssetPayload] = await Promise.all([
           requestJSON(`/api/jobs/${jobId}`),
           requestJSON(`/api/jobs/${jobId}/assets`),
           requestJSON(`/api/jobs/${jobId}/candidates`),
+          fetchJobImageAssets(jobId),
         ]);
         setJob(jobPayload || null);
         setAssets(Array.isArray(assetPayload) ? assetPayload : []);
         setCandidates(Array.isArray(candidatePayload) ? candidatePayload : []);
+        setImageAssets(imageAssetPayload || null);
       } catch (requestError) {
         setError(requestError.message || "Unable to load Studio");
       } finally {
@@ -3179,10 +3287,10 @@ const html = htm.bind(React.createElement);
       () => getSelectedTextCandidate(job || {}, candidates),
       [job, candidates],
     );
-    const imageOptions = useMemo(() => collectImageOptionAssets(assets), [assets]);
+    const imageOptions = useMemo(() => collectImageAssetCandidates(imageAssets), [imageAssets]);
     const selectedImageOption = useMemo(
-      () => getSelectedImageOption(job || {}, assets),
-      [job, assets],
+      () => getSelectedImageAsset(imageAssets),
+      [imageAssets],
     );
     const finalCards = useMemo(() => collectFinalCardOptions(job || {}, assets), [job, assets]);
     const finalPreviewSelection = usePreviewSelection(finalCards);
@@ -3327,35 +3435,43 @@ const html = htm.bind(React.createElement);
           <div className="section-head">
             <div>
               <h2 className="section-title">Image Options</h2>
-              <p className="section-copy">Select a visual direction, or generate more without disturbing the chosen text.</p>
+              <p className="section-copy">Generate ImageForge candidates, compare them, and choose one asset for final eCard composition.</p>
             </div>
             <div className="inline-actions">
               <button
                 type="button"
                 className="button"
                 onClick=${() => runStudioAction(
-                  "regenerate-image",
-                  () => requestJSON(`/api/jobs/${jobId}/regenerate-image`, { method: "POST" }),
-                  `Regenerated image preview for ${jobId}`,
+                  "generate-image-assets",
+                  () => requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" }),
+                  `Generated image assets for ${jobId}`,
                 )}
-                disabled=${workingAction === "regenerate-image" || !job.content_preview}
+                disabled=${workingAction === "generate-image-assets" || !job.content_preview}
               >
-                ${workingAction === "regenerate-image" ? "Working..." : "Regenerate Image"}
+                ${workingAction === "generate-image-assets" ? "Working..." : "Generate Assets"}
               </button>
               <button
                 type="button"
                 className="button primary"
                 onClick=${() => runStudioAction(
-                  "more-images",
-                  () => requestJSON(`/api/jobs/${jobId}/generate-more-images`, { method: "POST" }),
-                  `Generated 3 more image options for ${jobId}`,
+                  "regenerate-image-assets",
+                  () => requestJSON(`/api/jobs/${jobId}/image-assets/regenerate`, { method: "POST" }),
+                  `Regenerated image assets for ${jobId}`,
                 )}
-                disabled=${workingAction === "more-images" || !job.content_preview}
+                disabled=${workingAction === "regenerate-image-assets" || !job.content_preview}
               >
-                ${workingAction === "more-images" ? "Working..." : "Generate 3 More"}
+                ${workingAction === "regenerate-image-assets" ? "Working..." : "Regenerate Assets"}
               </button>
             </div>
           </div>
+          ${imageAssets
+            ? html`
+                <div className="status-panel neutral studio-selected-copy">
+                  Image status: ${humanize(imageAssets.image_generation_status || "not_requested")}
+                  ${imageAssets.image_generation_stage ? ` | Stage: ${humanize(imageAssets.image_generation_stage)}` : ""}
+                </div>
+              `
+            : null}
           ${selectedTextCandidate
             ? html`
                 <div className="status-panel neutral studio-selected-copy">
@@ -3364,37 +3480,41 @@ const html = htm.bind(React.createElement);
               `
             : null}
           ${imageOptions.length === 0
-            ? html`<p className="empty-state">No image candidates yet. Generate 3 More to create visual directions.</p>`
+            ? html`<p className="empty-state">No image candidates yet. Use Generate Assets to create ImageForge options.</p>`
             : html`
                 <div className="studio-image-grid">
                   ${imageOptions.map((asset) => {
-                    const isSelected = selectedImageOption && selectedImageOption.relative_path === asset.relative_path;
+                    const isSelected = selectedImageOption && selectedImageOption.candidate_id === asset.candidate_id;
                     return html`
                       <article key=${asset.key} className=${`studio-image-card ${isSelected ? "selected" : ""}`}>
                         <a href=${asset.url} target="_blank" rel="noreferrer">
-                          <img src=${asset.url} alt=${asset.theme_style} loading="lazy" />
+                          <img src=${asset.url} alt=${asset.provider} loading="lazy" />
                         </a>
                         <div className="studio-image-body">
                           <div className="studio-meta-row">
-                            <span className="mini-pill">${humanize(asset.theme_style)}</span>
-                            <span className="mini-pill">${humanize(asset.text_alignment)}</span>
+                            <span className="mini-pill">${humanize(asset.provider)}</span>
+                            <span className="mini-pill">${asset.model || "Default Model"}</span>
+                          </div>
+                          <div className="studio-meta-row">
+                            ${formatDimensions(asset.width, asset.height)
+                              ? html`<span className="mini-pill">${formatDimensions(asset.width, asset.height)}</span>`
+                              : null}
+                            <span className="mini-pill">${formatDate(asset.created_at)}</span>
+                            <span className="mini-pill">${isSelected ? "Selected" : `Candidate ${asset.candidate_index}`}</span>
                           </div>
                           <div className="inline-actions">
                             <button
                               type="button"
                               className=${isSelected ? "button" : "button primary"}
                               onClick=${() => runStudioAction(
-                                `select-image:${asset.relative_path}`,
-                                () => requestJSON(`/api/jobs/${jobId}/select-image`, {
-                                  method: "POST",
-                                  body: JSON.stringify({ relative_path: asset.relative_path, public_url: asset.url }),
-                                }),
-                                `Selected image option for ${jobId}`,
+                                `select-image-asset:${asset.candidate_id}`,
+                                () => requestJSON(`/api/jobs/${jobId}/image-assets/${asset.candidate_id}/select`, { method: "POST" }),
+                                `Selected image asset for ${jobId}`,
                                 () => setActiveTab("final"),
                               )}
-                              disabled=${workingAction === `select-image:${asset.relative_path}` || isSelected}
+                              disabled=${workingAction === `select-image-asset:${asset.candidate_id}` || isSelected}
                             >
-                              ${workingAction === `select-image:${asset.relative_path}` ? "Working..." : isSelected ? "Using This Image" : "Use This Image"}
+                              ${workingAction === `select-image-asset:${asset.candidate_id}` ? "Working..." : isSelected ? "Using This Image" : "Use This Image"}
                             </button>
                           </div>
                         </div>
@@ -3727,11 +3847,11 @@ const html = htm.bind(React.createElement);
 
   function ConsoleSidebar() {
     const navItems = [
-      { to: "/", label: "Home", icon: "H", end: true },
-      { to: "/themes", label: "Theme Factory", icon: "T" },
-      { to: "/studio", label: "Studio", icon: "S" },
-      { to: "/compare", label: "Compare Lab", icon: "C" },
-      { to: "/jobs", label: "Jobs", icon: "J" },
+      { to: "/", label: "Home", icon: "home", end: true },
+      { to: "/themes", label: "Theme Factory", icon: "themes" },
+      { to: "/studio", label: "Studio", icon: "studio" },
+      { to: "/compare", label: "Compare Lab", icon: "compare" },
+      { to: "/jobs", label: "Jobs", icon: "jobs" },
     ];
 
     return html`
@@ -3750,7 +3870,7 @@ const html = htm.bind(React.createElement);
               data-tooltip=${item.label}
               className=${({ isActive }) => (isActive ? "nav-link icon-link active" : "nav-link icon-link")}
             >
-              <span className="nav-icon">${item.icon}</span>
+              <span className="nav-icon"><${SidebarIcon} name=${item.icon} /></span>
               <span className="sr-only">${item.label}</span>
             <//>
           `)}

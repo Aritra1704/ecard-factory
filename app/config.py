@@ -60,6 +60,29 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias="IMAGE_CANDIDATES_PER_RUN",
     )
+    imageforge_enabled: bool = Field(default=True, validation_alias="IMAGEFORGE_ENABLED")
+    imageforge_base_url: str = Field(
+        default="http://127.0.0.1:8090",
+        validation_alias="IMAGEFORGE_BASE_URL",
+    )
+    imageforge_timeout_seconds: float = Field(
+        default=300.0,
+        ge=1.0,
+        validation_alias="IMAGEFORGE_TIMEOUT_SECONDS",
+    )
+    imageforge_default_provider: str = Field(
+        default="comfyui",
+        validation_alias="IMAGEFORGE_DEFAULT_PROVIDER",
+    )
+    imageforge_default_model: str = Field(
+        default="sd_xl_base_1.0",
+        validation_alias="IMAGEFORGE_DEFAULT_MODEL",
+    )
+    imageforge_default_candidate_count: int = Field(
+        default=3,
+        ge=1,
+        validation_alias="IMAGEFORGE_DEFAULT_CANDIDATE_COUNT",
+    )
     asset_storage_backend: Literal["filesystem"] = Field(..., validation_alias="ASSET_STORAGE_BACKEND")
     asset_storage_root: str = Field(..., validation_alias="ASSET_STORAGE_ROOT")
     asset_public_base_url: str = Field(..., validation_alias="ASSET_PUBLIC_BASE_URL")
@@ -80,6 +103,14 @@ class Settings(BaseSettings):
         normalized = value.strip().rstrip("/")
         if not normalized:
             raise ValueError("ASSET_PUBLIC_BASE_URL cannot be empty")
+        return normalized
+
+    @field_validator("imageforge_base_url")
+    @classmethod
+    def _validate_imageforge_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            raise ValueError("IMAGEFORGE_BASE_URL cannot be empty")
         return normalized
 
     @property
