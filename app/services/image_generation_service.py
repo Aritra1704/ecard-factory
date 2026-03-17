@@ -315,7 +315,7 @@ class ImageGenerationService:
         return job
 
     def _validate_job_ready_for_generation(self, job: dict[str, Any]) -> None:
-        if not str(job.get("content_preview") or "").strip():
+        if not self._job_has_selected_text(job):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Selected text is required before generating image assets",
@@ -489,6 +489,20 @@ class ImageGenerationService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="ImageForge integration is disabled",
             )
+
+    @staticmethod
+    def _job_has_selected_text(job: dict[str, Any]) -> bool:
+        output_spec = job.get("output_spec") if isinstance(job.get("output_spec"), dict) else {}
+        studio = output_spec.get("studio") if isinstance(output_spec.get("studio"), dict) else {}
+        selected_candidate_id = int(studio.get("selected_text_candidate_id") or 0)
+        if selected_candidate_id > 0:
+            return True
+        if str(job.get("content_approval_status") or "").strip().lower() == "approved":
+            return True
+        candidates = job.get("candidates")
+        if isinstance(candidates, list):
+            return any(bool(item.get("is_selected")) for item in candidates)
+        return False
 
 
 @lru_cache(maxsize=1)

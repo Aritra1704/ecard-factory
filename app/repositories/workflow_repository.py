@@ -153,7 +153,11 @@ class WorkflowJobRepository:
             async with async_session_factory() as session:
                 statement = (
                     select(CardJob)
-                    .options(selectinload(CardJob.assets))
+                    .options(
+                        selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
+                        selectinload(CardJob.shortlists),
+                    )
                     .order_by(CardJob.created_at.desc(), CardJob.job_id.desc())
                     .limit(safe_limit)
                 )
@@ -178,8 +182,15 @@ class WorkflowJobRepository:
                     "output_spec": item.output_spec or {},
                     "content_preview": item.content_preview,
                     "image_preview_url": image_preview_url,
+                    "imageforge_request_id": item.imageforge_request_id,
+                    "image_generation_status": item.image_generation_status,
+                    "image_generation_stage": item.image_generation_stage,
+                    "selected_image_candidate_id": item.selected_image_candidate_id,
+                    "selected_image_public_url": item.selected_image_public_url,
                     "final_preview_url": final_preview_url,
                     "final_asset_urls": final_asset_urls,
+                    "shortlist_count": len(item.shortlists),
+                    "image_candidate_count": len(item.image_candidates),
                     "cards_per_theme": item.cards_per_theme,
                     "content_approval_status": item.content_approval_status,
                     "image_approval_status": item.image_approval_status,

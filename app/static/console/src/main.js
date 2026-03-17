@@ -54,10 +54,26 @@ const html = htm.bind(React.createElement);
     return "Everyday";
   }
 
+  function getStageValue(job) {
+    const explicitStage = String(job?.current_stage || "").trim();
+    if (explicitStage) {
+      return explicitStage;
+    }
+    return String(job?.status || "unknown");
+  }
+
   function statusTone(statusValue) {
     const status = String(statusValue || "").toLowerCase();
-    if (status === "completed" || status === "approved") {
+    if (status === "completed" || status === "approved" || status === "final_card_ready") {
       return "success";
+    }
+    if (
+      status === "content_candidates_ready"
+      || status === "text_selected"
+      || status === "image_candidates_ready"
+      || status === "image_selected"
+    ) {
+      return "warning";
     }
     if (status.includes("reject") || status.includes("timeout") || status.includes("failed")) {
       return "danger";
@@ -655,6 +671,11 @@ const html = htm.bind(React.createElement);
   }
 
   function collectFinalCardOptions(job, assets = []) {
+    const hasCurrentPreview = Boolean(job?.final_preview_url)
+      || Boolean(job?.final_asset_urls && typeof job.final_asset_urls === "object" && job.final_asset_urls.png);
+    if (!hasCurrentPreview) {
+      return [];
+    }
     const finalAssetRows = Array.isArray(assets)
       ? assets.filter((asset) => {
           const assetType = String(asset?.asset_type || "").toLowerCase();
@@ -678,7 +699,7 @@ const html = htm.bind(React.createElement);
         return explicit;
       }
     }
-    return candidates.find((candidate) => candidate.is_selected) || candidates[0] || null;
+    return candidates.find((candidate) => candidate.is_selected) || null;
   }
 
   function getSelectedImageOption(job, assets) {
@@ -707,7 +728,7 @@ const html = htm.bind(React.createElement);
         return explicit;
       }
     }
-    return candidates.find((candidate) => candidate.is_selected) || candidates[0] || null;
+    return candidates.find((candidate) => candidate.is_selected) || null;
   }
 
   function formatDimensions(width, height) {
@@ -718,17 +739,17 @@ const html = htm.bind(React.createElement);
   }
 
   function statusCategory(job) {
-    const status = String(job?.status || "").toLowerCase();
-    if (status === "completed") {
-      return "completed";
-    }
-    if (status.includes("reject") || status.includes("timeout") || status.includes("failed")) {
+    const stage = String(getStageValue(job) || "").toLowerCase();
+    if (stage === "failed") {
       return "failed";
     }
-    if (status === "archived") {
+    if (stage === "final_card_ready") {
+      return "final_card_ready";
+    }
+    if (String(job?.status || "").toLowerCase() === "archived") {
       return "archived";
     }
-    return "in_progress";
+    return stage || "in_progress";
   }
 
   function WorkflowConsolePage() {
@@ -1638,31 +1659,20 @@ const html = htm.bind(React.createElement);
       if (!job) {
         return [];
       }
-      const status = String(job.status || "").toLowerCase();
-      const contentGenerationStatus =
-        job.content_preview ? "completed" : status.startsWith("content") ? "in_progress" : "pending";
-      const imageGenerationStatus =
-        job.image_preview_url || status.startsWith("final") || status === "completed"
-          ? "completed"
-          : status.startsWith("image")
-            ? "in_progress"
-            : "pending";
-      const finalRenderStatus =
-        job.final_asset_urls && (job.final_asset_urls.png || job.final_asset_urls.pdf)
-          ? "completed"
-          : status.startsWith("final")
-            ? "in_progress"
-            : status === "completed"
-              ? "completed"
-              : "pending";
+      const studioState = getStudioState(job);
+      const hasTextCandidates = Array.isArray(job.shortlist) ? job.shortlist.length > 0 : Boolean(job.shortlist_count);
+      const hasTextSelection = Boolean(studioState.selected_text_candidate_id);
+      const hasImageCandidates = Array.isArray(job.image_candidates) ? job.image_candidates.length > 0 : Boolean(job.image_candidate_count);
+      const hasImageSelection = Boolean(job.selected_image_candidate_id || job.selected_image_public_url);
+      const hasFinalPreview = Boolean(job.final_preview_url || (job.final_asset_urls && job.final_asset_urls.png));
 
       return [
-        { label: "content_generation_status", value: contentGenerationStatus },
-        { label: "content_approval_status", value: job.content_approval_status || "pending" },
-        { label: "image_generation_status", value: imageGenerationStatus },
-        { label: "image_approval_status", value: job.image_approval_status || "pending" },
-        { label: "final_render_status", value: finalRenderStatus },
-        { label: "final_approval_status", value: job.final_approval_status || "pending" },
+        { label: "current_stage", value: getStageValue(job) },
+        { label: "text_candidates", value: hasTextCandidates ? "content_candidates_ready" : "pending" },
+        { label: "text_selection", value: hasTextSelection ? "text_selected" : "pending" },
+        { label: "image_candidates", value: hasImageCandidates ? "image_candidates_ready" : "pending" },
+        { label: "image_selection", value: hasImageSelection ? "image_selected" : "pending" },
+        { label: "final_card", value: hasFinalPreview ? "final_card_ready" : "pending" },
       ];
     }, [job]);
 
@@ -3221,12 +3231,12 @@ const html = htm.bind(React.createElement);
     const [job, setJob] = useState(null);
     const [assets, setAssets] = useState([]);
     const [candidates, setCandidates] = useState([]);
+    const [shortlist, setShortlist] = useState([]);
     const [imageAssets, setImageAssets] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [statusMessage, setStatusMessage] = useState("");
     const [workingAction, setWorkingAction] = useState("");
-    const [activeTab, setActiveTab] = useState("text");
 
     const loadStudio = useCallback(async (options = {}) => {
       const quiet = Boolean(options.quiet);
@@ -3243,19 +3253,22 @@ const html = htm.bind(React.createElement);
           setJob(null);
           setAssets([]);
           setCandidates([]);
+          setShortlist([]);
           setImageAssets(null);
           return;
         }
 
-        const [jobPayload, assetPayload, candidatePayload, imageAssetPayload] = await Promise.all([
+        const [jobPayload, assetPayload, candidatePayload, shortlistPayload, imageAssetPayload] = await Promise.all([
           requestJSON(`/api/jobs/${jobId}`),
           requestJSON(`/api/jobs/${jobId}/assets`),
           requestJSON(`/api/jobs/${jobId}/candidates`),
+          requestJSON(`/api/jobs/${jobId}/shortlist`),
           fetchJobImageAssets(jobId),
         ]);
         setJob(jobPayload || null);
         setAssets(Array.isArray(assetPayload) ? assetPayload : []);
         setCandidates(Array.isArray(candidatePayload) ? candidatePayload : []);
+        setShortlist(Array.isArray(shortlistPayload) ? shortlistPayload : []);
         setImageAssets(imageAssetPayload || null);
       } catch (requestError) {
         setError(requestError.message || "Unable to load Studio");
@@ -3283,9 +3296,14 @@ const html = htm.bind(React.createElement);
     }, [jobId, loadStudio]);
 
     const studioState = useMemo(() => getStudioState(job || {}), [job]);
+    const currentStage = useMemo(() => getStageValue(job || {}), [job]);
     const selectedTextCandidate = useMemo(
       () => getSelectedTextCandidate(job || {}, candidates),
       [job, candidates],
+    );
+    const shortlistOptions = useMemo(
+      () => Array.isArray(shortlist) ? shortlist : [],
+      [shortlist],
     );
     const imageOptions = useMemo(() => collectImageAssetCandidates(imageAssets), [imageAssets]);
     const selectedImageOption = useMemo(
@@ -3294,6 +3312,8 @@ const html = htm.bind(React.createElement);
     );
     const finalCards = useMemo(() => collectFinalCardOptions(job || {}, assets), [job, assets]);
     const finalPreviewSelection = usePreviewSelection(finalCards);
+    const canGenerateImages = Boolean(selectedTextCandidate);
+    const canRenderFinal = Boolean(selectedTextCandidate && selectedImageOption);
 
     async function runStudioAction(actionKey, requestFactory, successMessage, afterAction) {
       setWorkingAction(actionKey);
@@ -3342,7 +3362,7 @@ const html = htm.bind(React.createElement);
       navigate(`/studio/${nextJobId}`);
     }
 
-    function renderTextTab() {
+    function renderTextSection() {
       if (!job) {
         return null;
       }
@@ -3351,7 +3371,7 @@ const html = htm.bind(React.createElement);
           <div className="section-head">
             <div>
               <h2 className="section-title">Text Options</h2>
-              <p className="section-copy">Choose the line that feels most like a card. If nothing lands, rerun only text.</p>
+              <p className="section-copy">Choose from the filtered shortlist only. Studio removes incomplete and duplicate text before it gets here.</p>
             </div>
             <div className="inline-actions">
               <button
@@ -3380,41 +3400,46 @@ const html = htm.bind(React.createElement);
               </button>
             </div>
           </div>
-          ${candidates.length === 0
-            ? html`<p className="empty-state">No text options stored for this job yet.</p>`
+          <div className=${selectedTextCandidate ? "status-panel success" : "status-panel neutral"}>
+            ${selectedTextCandidate
+              ? `Selected text candidate ${selectedTextCandidate.id}: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "No text selected yet. Pick one of the shortlisted options below."}
+          </div>
+          ${shortlistOptions.length === 0
+            ? html`<p className="empty-state">No usable text shortlist is available for this job yet.</p>`
             : html`
                 <div className="studio-option-grid">
-                  ${candidates.map((candidate) => {
-                    const isSelected = Number(selectedTextCandidate?.id || 0) === Number(candidate.id || 0);
+                  ${shortlistOptions.map((candidate) => {
+                    const isSelected = Number(selectedTextCandidate?.id || 0) === Number(candidate.candidate_id || 0);
                     return html`
-                      <article key=${candidate.id || `${candidate.model}_${candidate.text}`} className=${`studio-option-card ${isSelected ? "selected" : ""}`}>
+                      <article key=${candidate.shortlist_id || candidate.candidate_id || `${candidate.model}_${candidate.text}`} className=${`studio-option-card ${isSelected ? "selected" : ""}`}>
                         <div className="studio-option-head">
-                          <${StatusBadge} value=${isSelected ? "selected" : "option"} />
+                          <${StatusBadge} value=${isSelected ? "text_selected" : "content_candidates_ready"} />
                           <span className="score-chip">
-                            score ${Number(candidate.judged_score ?? candidate.judge_score ?? 0).toFixed(3)}
+                            rank ${candidate.rank} | score ${Number(candidate.score ?? 0).toFixed(3)}
                           </span>
                         </div>
-                        <p className="studio-option-text">${candidate.text || candidate.content_text}</p>
+                        <p className="studio-option-text">${candidate.text}</p>
                         <div className="studio-meta-row">
-                          <span className="mini-pill">${copyStyleLabel(job?.output_spec?.format)}</span>
+                          <span className="mini-pill">candidate ${candidate.candidate_id}</span>
                           <span className="mini-pill">${candidate.model}</span>
+                          <span className="mini-pill">${candidate.backend}</span>
                         </div>
                         <div className="inline-actions">
                           <button
                             type="button"
                             className=${isSelected ? "button" : "button primary"}
                             onClick=${() => runStudioAction(
-                              `select-text:${candidate.id}`,
+                              `select-text:${candidate.candidate_id}`,
                               () => requestJSON(`/api/jobs/${jobId}/select-text`, {
                                 method: "POST",
-                                body: JSON.stringify({ candidate_id: candidate.id }),
+                                body: JSON.stringify({ candidate_id: candidate.candidate_id }),
                               }),
-                              `Selected text option ${candidate.id} for ${jobId}`,
-                              () => setActiveTab("image"),
+                              `Selected text option ${candidate.candidate_id} for ${jobId}`,
                             )}
-                            disabled=${workingAction === `select-text:${candidate.id}` || isSelected}
+                            disabled=${workingAction === `select-text:${candidate.candidate_id}` || isSelected}
                           >
-                            ${workingAction === `select-text:${candidate.id}` ? "Working..." : isSelected ? "Using This Text" : "Use This Text"}
+                            ${workingAction === `select-text:${candidate.candidate_id}` ? "Working..." : isSelected ? "Using This Text" : "Use This Text"}
                           </button>
                         </div>
                       </article>
@@ -3426,10 +3451,15 @@ const html = htm.bind(React.createElement);
       `;
     }
 
-    function renderImageTab() {
+    function renderImageSection() {
       if (!job) {
         return null;
       }
+      const selectedImageDetails = [
+        imageAssets?.selected_image_candidate_id ? `candidate ${imageAssets.selected_image_candidate_id}` : null,
+        imageAssets?.selected_image_provider || null,
+        imageAssets?.selected_image_model || null,
+      ].filter(Boolean).join(" | ");
       return html`
         <section className="section-panel">
           <div className="section-head">
@@ -3438,49 +3468,57 @@ const html = htm.bind(React.createElement);
               <p className="section-copy">Generate ImageForge candidates, compare them, and choose one asset for final eCard composition.</p>
             </div>
             <div className="inline-actions">
-              <button
-                type="button"
-                className="button"
-                onClick=${() => runStudioAction(
-                  "generate-image-assets",
-                  () => requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" }),
-                  `Generated image assets for ${jobId}`,
-                )}
-                disabled=${workingAction === "generate-image-assets" || !job.content_preview}
-              >
-                ${workingAction === "generate-image-assets" ? "Working..." : "Generate Assets"}
-              </button>
-              <button
-                type="button"
-                className="button primary"
-                onClick=${() => runStudioAction(
-                  "regenerate-image-assets",
-                  () => requestJSON(`/api/jobs/${jobId}/image-assets/regenerate`, { method: "POST" }),
-                  `Regenerated image assets for ${jobId}`,
-                )}
-                disabled=${workingAction === "regenerate-image-assets" || !job.content_preview}
-              >
-                ${workingAction === "regenerate-image-assets" ? "Working..." : "Regenerate Assets"}
-              </button>
+              ${imageOptions.length === 0
+                ? html`
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick=${() => runStudioAction(
+                        "generate-image-assets",
+                        () => requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" }),
+                        `Generated image assets for ${jobId}`,
+                      )}
+                      disabled=${workingAction === "generate-image-assets" || !canGenerateImages}
+                    >
+                      ${workingAction === "generate-image-assets" ? "Working..." : "Generate Image Assets"}
+                    </button>
+                  `
+                : html`
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick=${() => runStudioAction(
+                        "regenerate-image-assets",
+                        () => requestJSON(`/api/jobs/${jobId}/image-assets/regenerate`, { method: "POST" }),
+                        `Regenerated image assets for ${jobId}`,
+                      )}
+                      disabled=${workingAction === "regenerate-image-assets" || !canGenerateImages}
+                    >
+                      ${workingAction === "regenerate-image-assets" ? "Working..." : "Regenerate Image"}
+                    </button>
+                  `}
             </div>
+          </div>
+          <div className=${selectedTextCandidate ? "status-panel neutral studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedTextCandidate
+              ? `Selected text: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "Select text first. Image generation should only run after text_selected is true."}
           </div>
           ${imageAssets
             ? html`
                 <div className="status-panel neutral studio-selected-copy">
-                  Image status: ${humanize(imageAssets.image_generation_status || "not_requested")}
-                  ${imageAssets.image_generation_stage ? ` | Stage: ${humanize(imageAssets.image_generation_stage)}` : ""}
+                  Image request: ${humanize(imageAssets.image_generation_status || "not_requested")}
+                  ${imageAssets.image_generation_stage ? ` | provider stage: ${humanize(imageAssets.image_generation_stage)}` : ""}
                 </div>
               `
             : null}
-          ${selectedTextCandidate
-            ? html`
-                <div className="status-panel neutral studio-selected-copy">
-                  Selected text: ${selectedTextCandidate.text || selectedTextCandidate.content_text}
-                </div>
-              `
-            : null}
+          <div className=${selectedImageOption ? "status-panel success studio-selected-copy" : "status-panel neutral studio-selected-copy"}>
+            ${selectedImageOption
+              ? `Selected image: ${selectedImageDetails || "saved locally"}`
+              : "No image selected yet."}
+          </div>
           ${imageOptions.length === 0
-            ? html`<p className="empty-state">No image candidates yet. Use Generate Assets to create ImageForge options.</p>`
+            ? html`<p className="empty-state">${canGenerateImages ? "No image candidates yet. Use Generate Image Assets to create ImageForge options." : "No image candidates yet because there is no selected text."}</p>`
             : html`
                 <div className="studio-image-grid">
                   ${imageOptions.map((asset) => {
@@ -3502,6 +3540,9 @@ const html = htm.bind(React.createElement);
                             <span className="mini-pill">${formatDate(asset.created_at)}</span>
                             <span className="mini-pill">${isSelected ? "Selected" : `Candidate ${asset.candidate_index}`}</span>
                           </div>
+                          <div className="studio-meta-row">
+                            <span className="mini-pill">${asset.relative_path || "No relative path"}</span>
+                          </div>
                           <div className="inline-actions">
                             <button
                               type="button"
@@ -3510,7 +3551,6 @@ const html = htm.bind(React.createElement);
                                 `select-image-asset:${asset.candidate_id}`,
                                 () => requestJSON(`/api/jobs/${jobId}/image-assets/${asset.candidate_id}/select`, { method: "POST" }),
                                 `Selected image asset for ${jobId}`,
-                                () => setActiveTab("final"),
                               )}
                               disabled=${workingAction === `select-image-asset:${asset.candidate_id}` || isSelected}
                             >
@@ -3527,19 +3567,19 @@ const html = htm.bind(React.createElement);
       `;
     }
 
-    function renderFinalTab() {
+    function renderFinalSection() {
       if (!job) {
         return null;
       }
       const isFavorite = Boolean(studioState.is_favorite);
-      const rerunLabel = finalCards.length > 0 ? "Regenerate Card" : "Render Card";
+      const rerunLabel = finalCards.length > 0 ? "Regenerate Final Card" : "Render Final Card";
       const rerunEndpoint = finalCards.length > 0 ? `/api/jobs/${jobId}/rerun/final-render` : `/api/jobs/${jobId}/render-final`;
       return html`
         <section className="section-panel">
           <div className="section-head">
             <div>
-              <h2 className="section-title">Final Cards</h2>
-              <p className="section-copy">Rendered card outputs. Keep the one you like, mark it favorite, or rerun only the card render.</p>
+              <h2 className="section-title">Final Card</h2>
+              <p className="section-copy">Render the actual card preview from the selected text and selected image. Final composition stays inside eCardFactory.</p>
             </div>
             <div className="inline-actions">
               <button
@@ -3565,14 +3605,30 @@ const html = htm.bind(React.createElement);
                   () => requestJSON(rerunEndpoint, { method: "POST" }),
                   `${rerunLabel} completed for ${jobId}`,
                 )}
-                disabled=${workingAction === "rerun-card" || !job.image_preview_url}
+                disabled=${workingAction === "rerun-card" || !canRenderFinal}
               >
                 ${workingAction === "rerun-card" ? "Working..." : rerunLabel}
               </button>
             </div>
           </div>
+          <div className=${selectedTextCandidate ? "status-panel success studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedTextCandidate
+              ? `Text selected: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "No selected text yet."}
+          </div>
+          <div className=${selectedImageOption ? "status-panel success studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedImageOption
+              ? `Image selected: ${imageAssets?.selected_image_candidate_id || selectedImageOption.candidate_id} | ${imageAssets?.selected_image_provider || selectedImageOption.provider} | ${imageAssets?.selected_image_model || selectedImageOption.model || "Default Model"}`
+              : "No selected image yet."}
+          </div>
           ${finalCards.length === 0
-            ? html`<p className="empty-state">No final cards rendered yet. Pick an image option and render the card.</p>`
+            ? html`
+                <p className="empty-state">
+                  ${canRenderFinal
+                    ? "No final card preview rendered yet. Render the current text + image selection."
+                    : "Select both text and image before rendering the final card preview."}
+                </p>
+              `
             : html`
                 <div className="studio-final-grid">
                   ${finalCards.map((card) => html`
@@ -3683,7 +3739,7 @@ const html = htm.bind(React.createElement);
                             <tr>
                               <th>job_id</th>
                               <th>theme</th>
-                              <th>status</th>
+                              <th>stage</th>
                               <th>updated</th>
                               <th>open</th>
                             </tr>
@@ -3693,7 +3749,7 @@ const html = htm.bind(React.createElement);
                               <tr key=${item.job_id}>
                                 <td>${item.job_id}</td>
                                 <td>${item.theme_name}</td>
-                                <td><${StatusBadge} value=${item.status} /></td>
+                                <td><${StatusBadge} value=${getStageValue(item)} /></td>
                                 <td>${formatDate(item.updated_at)}</td>
                                 <td><${Link} className="job-link" to=${`/studio/${item.job_id}`}>Open Studio<//></td>
                               </tr>
@@ -3710,23 +3766,38 @@ const html = htm.bind(React.createElement);
                   <div className="section-head">
                     <div>
                       <h2 className="section-title">${job.theme_name}</h2>
-                      <p className="section-copy">${job.job_id} | ${job.cards_per_theme || 10} cards | ${copyStyleLabel(job?.output_spec?.format)}</p>
+                      <p className="section-copy">${job.job_id} | ${job.cards_per_theme || 10} cards | ${copyStyleLabel(job?.output_spec?.format)} | backend status: ${humanize(job.status)}</p>
                     </div>
-                    <${StatusBadge} value=${job.status} />
+                    <${StatusBadge} value=${currentStage} />
                   </div>
                   <div className="studio-current-grid">
                     <article className="key-card">
+                      <p className="key-label">Current Stage</p>
+                      <p className="studio-current-copy">${humanize(currentStage)}</p>
+                      <p className="section-copy">${selectedTextCandidate ? "Text is selected and locked for downstream steps." : "No text has been selected yet."}</p>
+                    </article>
+                    <article className="key-card">
                       <p className="key-label">Selected Text</p>
-                      <p className="studio-current-copy">${selectedTextCandidate?.text || selectedTextCandidate?.content_text || job.content_preview || "No text selected yet."}</p>
+                      <p className="studio-current-copy">${selectedTextCandidate?.text || selectedTextCandidate?.content_text || "No text selected yet."}</p>
+                      ${selectedTextCandidate
+                        ? html`<p className="section-copy">candidate ${selectedTextCandidate.id} | ${selectedTextCandidate.model}</p>`
+                        : null}
                     </article>
                     <article className="key-card">
                       <p className="key-label">Selected Image</p>
                       ${selectedImageOption
-                        ? html`<img className="studio-current-image" src=${selectedImageOption.url} alt="Selected image" loading="lazy" />`
+                        ? html`
+                            <img className="studio-current-image" src=${selectedImageOption.url} alt="Selected image" loading="lazy" />
+                            <p className="section-copy">
+                              ${imageAssets?.selected_image_candidate_id || selectedImageOption.candidate_id}
+                              ${imageAssets?.selected_image_provider ? ` | ${imageAssets.selected_image_provider}` : ""}
+                              ${imageAssets?.selected_image_model ? ` | ${imageAssets.selected_image_model}` : ""}
+                            </p>
+                          `
                         : html`<p className="empty-state compact">No image selected yet.</p>`}
                     </article>
                     <article className="key-card">
-                      <p className="key-label">Final Card</p>
+                      <p className="key-label">Final Card Preview</p>
                       ${finalPreviewSelection.currentCandidate
                         ? html`<img className="studio-current-image" src=${finalPreviewSelection.currentCandidate.url} alt="Final card" loading="lazy" onError=${finalPreviewSelection.handleError} />`
                         : html`<p className="empty-state compact">No final card rendered yet.</p>`}
@@ -3734,26 +3805,9 @@ const html = htm.bind(React.createElement);
                   </div>
                 </section>
 
-                <div className="studio-tabbar" role="tablist" aria-label="Studio tabs">
-                  ${[
-                    ["text", "Text Options"],
-                    ["image", "Image Options"],
-                    ["final", "Final Cards"],
-                  ].map(([tabKey, label]) => html`
-                    <button
-                      key=${tabKey}
-                      type="button"
-                      className=${activeTab === tabKey ? "studio-tab active" : "studio-tab"}
-                      onClick=${() => setActiveTab(tabKey)}
-                    >
-                      ${label}
-                    </button>
-                  `)}
-                </div>
-
-                ${activeTab === "text" ? renderTextTab() : null}
-                ${activeTab === "image" ? renderImageTab() : null}
-                ${activeTab === "final" ? renderFinalTab() : null}
+                ${renderTextSection()}
+                ${renderImageSection()}
+                ${renderFinalSection()}
               `
             : html`<p className="empty-state">Job not found.</p>`}
       </section>

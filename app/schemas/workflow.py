@@ -227,6 +227,7 @@ class JobDebugResponse(BaseModel):
     job_id: str
     trace_id: str
     status: str
+    current_stage: str
     theme_name: str
     audience: str
     cultural_context: str
@@ -327,6 +328,7 @@ class StudioActionResponse(BaseModel):
 
     job_id: str
     status: str
+    current_stage: str
     content_preview: str | None = None
     image_preview_url: str | None = None
     final_preview_url: str | None = None
@@ -422,6 +424,7 @@ class StageActionResponse(BaseModel):
 
     job_id: str
     status: str
+    current_stage: str
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
     final_approval_status: str = "pending"
