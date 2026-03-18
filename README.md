@@ -20,6 +20,28 @@ Local URLs:
 - ImageForge: `http://127.0.0.1:8090`
 - n8n: `http://localhost:5678`
 
+## UI Split
+
+The active React console source now lives in `content_engine_ui`.
+
+Current split behavior:
+
+- `content_engine_ui` starts as a standalone UI app
+- `ecard-factory` still serves the legacy static fallback from `app/static/console`
+- fallback bundle updates are bridged from the new app with `npm run build:console`
+
+Standalone UI commands:
+
+- `npm --prefix ../content_engine_ui run dev`
+- `npm --prefix ../content_engine_ui run build`
+
+Standalone UI config:
+
+- `CONTENT_ENGINE_UI_API_BASE_URL`
+- `CONTENT_ENGINE_UI_ASSET_BASE_URL`
+
+Both default to `http://localhost:8080` for local development.
+
 ## ImageForge Integration
 
 eCardFactory now integrates with ImageForge as a dedicated image-asset backend.

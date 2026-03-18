@@ -1,12 +1,12 @@
 {
-  "name": "ecardfactory-console",
+  "name": "ecardfactory-console-fallback",
   "private": true,
   "version": "1.0.0",
-  "description": "Local build pipeline for eCardFactory internal React console",
+  "description": "Legacy fallback build bridge for the extracted content_engine_ui app",
   "scripts": {
-    "build:console": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=app/static/console/app.js",
-    "build:console:dev": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --sourcemap --outfile=app/static/console/app.js",
-    "watch:console": "esbuild app/static/console/src/main.js --bundle --format=iife --platform=browser --target=es2020 --sourcemap --outfile=app/static/console/app.js --watch"
+    "build:console": "npm --prefix ../content_engine_ui run build:legacy-fallback",
+    "build:console:dev": "npm --prefix ../content_engine_ui run build:legacy-fallback -- --sourcemap",
+    "watch:console": "npm --prefix ../content_engine_ui run build:legacy-fallback -- --sourcemap --watch"
   },
   "devDependencies": {
     "esbuild": "^0.25.1",

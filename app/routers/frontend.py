@@ -45,6 +45,28 @@ async def theme_factory_home() -> FileResponse:
     return _serve_console_index()
 
 
+@router.get("/studio", include_in_schema=False)
+async def workflow_studio_home() -> FileResponse:
+    """Serve the React Studio route shell."""
+
+    return _serve_console_index()
+
+
+@router.get("/studio/{job_id}", include_in_schema=False)
+async def workflow_studio_job(job_id: str) -> FileResponse:
+    """Serve Studio for a specific job shell route."""
+
+    _ = job_id
+    return _serve_console_index()
+
+
+@router.get("/jobs", include_in_schema=False)
+async def workflow_jobs_home() -> FileResponse:
+    """Serve the React jobs list shell route."""
+
+    return _serve_console_index()
+
+
 @router.get("/jobs/{job_id}", include_in_schema=False)
 async def workflow_job_detail(job_id: str) -> FileResponse:
     """Serve job detail shell route."""

@@ -127,7 +127,7 @@ The UI moves to a separate root directory.
 
 Approved target name:
 
-`apps/content_engine_ui/`
+`content_engine_ui/`
 
 Responsibilities:
 
@@ -215,7 +215,7 @@ Current UI sources:
 
 Target direction:
 
-- move React UI to `apps/content_engine_ui`
+- move React UI to `content_engine_ui`
 - keep `ecard-factory` backend-only
 - serve UI separately in development
 - optionally ship a built frontend artifact later

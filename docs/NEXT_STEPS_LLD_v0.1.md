@@ -309,7 +309,7 @@ Move all active React UI code out of `ecard-factory`.
 
 ## Target UI app directory
 
-`apps/content_engine_ui/`
+`content_engine_ui/`
 
 ## Initial migration strategy
 

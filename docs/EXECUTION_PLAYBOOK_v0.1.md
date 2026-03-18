@@ -28,7 +28,7 @@ Primary objective:
 
 Secondary objective:
 
-- split UI into `apps/content_engine_ui`
+- split UI into `content_engine_ui`
 
 Tertiary objective:
 
