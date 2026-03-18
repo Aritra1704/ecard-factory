@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.integrations.contentforge import ContentForgeWorkflowClient
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
     ApprovalRequest,
@@ -109,13 +110,23 @@ class StubContentForgeClient:
         )
 
         return {
+            "source": "contentforge_stub",
+            "used_stub": True,
             "candidates": candidates,
             "shortlist": shortlist,
             "winner": winner,
             "judge_summary": judge_summary,
+            "judge_provider": "contentforge_stub",
+            "judge_model": "stub-judge",
+            "leaderboard_json": {
+                "models": [item["model"] for item in candidates],
+                "shortlist": shortlist,
+            },
+            "pairwise_json": {},
+            "reason_summary": judge_summary,
         }
 
-    def generate_more_candidates(
+    async def generate_more_candidates(
         self,
         payload: StartJobRequest,
         *,
@@ -511,7 +522,14 @@ class WorkflowV1Service:
         asset_storage: AssetStorage | None = None,
         image_provider: ImageProvider | None = None,
     ) -> None:
-        self._contentforge = StubContentForgeClient()
+        stub_contentforge = StubContentForgeClient()
+        self._contentforge = ContentForgeWorkflowClient(
+            enabled=bool(settings.contentforge_enabled),
+            base_url=str(settings.contentforge_base_url),
+            timeout_seconds=float(settings.contentforge_timeout_seconds),
+            model_names=[item.strip() for item in str(settings.contentforge_models).split(",") if item.strip()],
+            fallback_client=stub_contentforge,
+        )
         self._repository = repository or get_workflow_job_repository()
         self._asset_storage = asset_storage or get_asset_storage()
         self._card_renderer = WorkflowCardRenderer()
@@ -587,8 +605,8 @@ class WorkflowV1Service:
                 "content_text": str(candidate["content_text"]),
                 "text": str(candidate["content_text"]),
                 "raw_score": float(candidate["raw_score"]),
-                "judge_score": float(candidate["judge_score"]),
-                "judged_score": float(candidate["judge_score"]),
+                "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
                 "is_winner": bool(candidate["is_winner"]),
                 "is_shortlisted": bool(candidate.get("is_shortlisted")),
                 "is_selected": bool(candidate.get("is_selected")),
@@ -601,8 +619,14 @@ class WorkflowV1Service:
             events=[
                 ("api_start_called", {"endpoint": "/api/jobs/start"}),
                 ("job_created", {"status": "content_pending_approval"}),
-                ("contentforge_request_sent", {"stub": True}),
-                ("contentforge_response_received", {"candidate_count": len(candidate_records)}),
+                ("contentforge_request_sent", {"stub": bool(generation.get("used_stub", True))}),
+                (
+                    "contentforge_response_received",
+                    {
+                        "candidate_count": len(candidate_records),
+                        "source": str(generation.get("source") or "contentforge_stub"),
+                    },
+                ),
                 ("shortlist_created", {"shortlist_count": len(shortlist_seed)}),
                 ("winner_selected", {"winner_model": winner_model}),
                 ("content_approval_requested", {"approval_message": approval_message}),
@@ -620,15 +644,16 @@ class WorkflowV1Service:
         await self._repository.save_judge_results(
             job_id,
             {
-                "judge_provider": "contentforge_stub",
-                "judge_model": "stub-judge",
+                "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
+                "judge_model": str(generation.get("judge_model") or "stub-judge"),
                 "winner_model": winner_model,
-                "leaderboard_json": {
+                "leaderboard_json": generation.get("leaderboard_json")
+                or {
                     "models": [item["model"] for item in candidate_records],
                     "shortlist": shortlist_seed,
                 },
-                "pairwise_json": {},
-                "reason_summary": generation["judge_summary"],
+                "pairwise_json": generation.get("pairwise_json") or {},
+                "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
             },
         )
         await self._repository.append_audit_events(job_id, audit_events)
@@ -1474,8 +1499,8 @@ class WorkflowV1Service:
                     "content_text": str(candidate["content_text"]),
                     "text": str(candidate["content_text"]),
                     "raw_score": float(candidate["raw_score"]),
-                    "judge_score": float(candidate["judge_score"]),
-                    "judged_score": float(candidate["judge_score"]),
+                    "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                    "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
                     "is_winner": bool(candidate["is_winner"]),
                     "is_shortlisted": bool(candidate.get("is_shortlisted")),
                     "is_selected": bool(candidate.get("is_selected")),
@@ -1544,15 +1569,16 @@ class WorkflowV1Service:
             await self._repository.save_judge_results(
                 job_id,
                 {
-                    "judge_provider": "contentforge_stub",
-                    "judge_model": "stub-judge",
+                    "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
+                    "judge_model": str(generation.get("judge_model") or "stub-judge"),
                     "winner_model": winner_model,
-                    "leaderboard_json": {
+                    "leaderboard_json": generation.get("leaderboard_json")
+                    or {
                         "models": [item["model"] for item in candidate_records],
                         "shortlist": generation.get("shortlist") or [],
                     },
-                    "pairwise_json": {},
-                    "reason_summary": generation["judge_summary"],
+                    "pairwise_json": generation.get("pairwise_json") or {},
+                    "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
                 },
             )
             await self._repository.append_audit_events(
@@ -1881,7 +1907,7 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
         payload = self._build_start_payload_from_job(job)
         existing_count = len(list(job.get("candidates") or []))
-        generated = self._contentforge.generate_more_candidates(
+        generated = await self._contentforge.generate_more_candidates(
             payload,
             count=count,
             start_index=existing_count,

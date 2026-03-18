@@ -114,16 +114,26 @@ def build_shortlist_seed(
     )
     rows: list[dict[str, Any]] = []
     for rank, candidate in enumerate(shortlisted, start=1):
+        quality_score = float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0)
+        if quality_score <= 0:
+            quality_score = score_content_candidate(candidate, target_words=target_words)
         rows.append(
             {
                 "rank": rank,
-                "score": float(candidate.get("judged_score") or candidate.get("judge_score") or candidate.get("raw_score") or 0.0),
+                "score": quality_score,
                 "model": str(candidate.get("model") or ""),
                 "backend": str(candidate.get("backend") or ""),
                 "content_text": str(candidate.get("content_text") or candidate.get("text") or ""),
             }
         )
     return rows
+
+
+def score_content_candidate(candidate: dict[str, Any], *, target_words: int) -> float:
+    """Return the adjusted shortlist-quality score for one candidate row."""
+
+    analyzed = _analyze_candidate(candidate, target_words=target_words)
+    return float(analyzed["quality_score"])
 
 
 def _analyze_candidate(candidate: dict[str, Any], *, target_words: int) -> dict[str, Any]:
@@ -201,10 +211,20 @@ def _is_near_duplicate(left: str, right: str) -> bool:
     if not left or not right:
         return False
     ratio = SequenceMatcher(a=left, b=right).ratio()
-    if ratio >= 0.9:
+    if ratio >= 0.88:
         return True
 
     left_tokens = set(left.split())
     right_tokens = set(right.split())
     overlap = len(left_tokens & right_tokens) / max(len(left_tokens | right_tokens), 1)
-    return overlap >= 0.82
+    if overlap >= 0.74:
+        return True
+
+    left_words = left.split()
+    right_words = right.split()
+    leading_overlap = 0
+    for left_word, right_word in zip(left_words, right_words):
+        if left_word != right_word:
+            break
+        leading_overlap += 1
+    return leading_overlap >= 5

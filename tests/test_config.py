@@ -41,6 +41,10 @@ def test_settings_loads_from_environment(configured_env: dict[str, str]) -> None
     assert settings.imageforge_enabled is True
     assert settings.imageforge_base_url == configured_env["IMAGEFORGE_BASE_URL"]
     assert settings.imageforge_timeout_seconds == 300
+    assert settings.contentforge_enabled is False
+    assert settings.contentforge_base_url == configured_env["CONTENTFORGE_BASE_URL"]
+    assert settings.contentforge_timeout_seconds == 180
+    assert settings.contentforge_models == configured_env["CONTENTFORGE_MODELS"]
     assert settings.imageforge_default_provider == configured_env["IMAGEFORGE_DEFAULT_PROVIDER"]
     assert settings.imageforge_default_model == configured_env["IMAGEFORGE_DEFAULT_MODEL"]
     assert settings.imageforge_default_candidate_count == 3

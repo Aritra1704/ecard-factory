@@ -65,6 +65,20 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8090",
         validation_alias="IMAGEFORGE_BASE_URL",
     )
+    contentforge_enabled: bool = Field(default=True, validation_alias="CONTENTFORGE_ENABLED")
+    contentforge_base_url: str = Field(
+        default="http://127.0.0.1:8001",
+        validation_alias="CONTENTFORGE_BASE_URL",
+    )
+    contentforge_timeout_seconds: float = Field(
+        default=180.0,
+        ge=1.0,
+        validation_alias="CONTENTFORGE_TIMEOUT_SECONDS",
+    )
+    contentforge_models: str = Field(
+        default="qwen2.5:7b-instruct,llama3.1:8b,mistral:7b",
+        validation_alias="CONTENTFORGE_MODELS",
+    )
     imageforge_timeout_seconds: float = Field(
         default=300.0,
         ge=1.0,
@@ -111,6 +125,14 @@ class Settings(BaseSettings):
         normalized = value.strip().rstrip("/")
         if not normalized:
             raise ValueError("IMAGEFORGE_BASE_URL cannot be empty")
+        return normalized
+
+    @field_validator("contentforge_base_url")
+    @classmethod
+    def _validate_contentforge_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            raise ValueError("CONTENTFORGE_BASE_URL cannot be empty")
         return normalized
 
     @property
