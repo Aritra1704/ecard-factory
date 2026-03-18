@@ -54,10 +54,26 @@ const html = htm.bind(React.createElement);
     return "Everyday";
   }
 
+  function getStageValue(job) {
+    const explicitStage = String(job?.current_stage || "").trim();
+    if (explicitStage) {
+      return explicitStage;
+    }
+    return String(job?.status || "unknown");
+  }
+
   function statusTone(statusValue) {
     const status = String(statusValue || "").toLowerCase();
-    if (status === "completed" || status === "approved") {
+    if (status === "completed" || status === "approved" || status === "final_card_ready") {
       return "success";
+    }
+    if (
+      status === "content_candidates_ready"
+      || status === "text_selected"
+      || status === "image_candidates_ready"
+      || status === "image_selected"
+    ) {
+      return "warning";
     }
     if (status.includes("reject") || status.includes("timeout") || status.includes("failed")) {
       return "danger";
@@ -70,6 +86,74 @@ const html = htm.bind(React.createElement);
 
   function StatusBadge({ value }) {
     return html`<span className=${`badge ${statusTone(value)}`}>${humanize(value)}</span>`;
+  }
+
+  function SidebarIcon({ name }) {
+    const sharedProps = {
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.8",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true",
+    };
+
+    if (name === "home") {
+      return html`
+        <svg ...${sharedProps}>
+          <path d="M3 10.5 12 4l9 6.5" />
+          <path d="M5.5 9.5V20h13V9.5" />
+          <path d="M9.5 20v-5.5h5V20" />
+        </svg>
+      `;
+    }
+
+    if (name === "themes") {
+      return html`
+        <svg ...${sharedProps}>
+          <path d="M12 3.5v3" />
+          <path d="m5.9 5.9 2.1 2.1" />
+          <path d="M3.5 12h3" />
+          <path d="m5.9 18.1 2.1-2.1" />
+          <path d="M12 20.5v-3" />
+          <path d="m18.1 18.1-2.1-2.1" />
+          <path d="M20.5 12h-3" />
+          <path d="m18.1 5.9-2.1 2.1" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+      `;
+    }
+
+    if (name === "studio") {
+      return html`
+        <svg ...${sharedProps}>
+          <rect x="4" y="5" width="16" height="14" rx="3" />
+          <path d="M8 15.5 11 12l2.5 2.5L16 11l2 2.5" />
+          <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      `;
+    }
+
+    if (name === "compare") {
+      return html`
+        <svg ...${sharedProps}>
+          <rect x="4" y="5" width="6.5" height="14" rx="2" />
+          <rect x="13.5" y="5" width="6.5" height="14" rx="2" />
+          <path d="M7.25 9h0" />
+          <path d="M16.75 15h0" />
+        </svg>
+      `;
+    }
+
+    return html`
+      <svg ...${sharedProps}>
+        <rect x="4" y="5" width="16" height="14" rx="3" />
+        <path d="M8 9h8" />
+        <path d="M8 12h8" />
+        <path d="M8 15h5" />
+      </svg>
+    `;
   }
 
   function formatDate(value) {
@@ -184,6 +268,35 @@ const html = htm.bind(React.createElement);
     };
   }
 
+  function resolveStudioCopyStyle(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "witty" || normalized === "playful" || normalized === "heartfelt" || normalized === "minimal") {
+      return normalized;
+    }
+    if (normalized === "short_crisp") {
+      return "minimal";
+    }
+    if (normalized === "warm_note") {
+      return "heartfelt";
+    }
+    if (normalized.includes("play")) {
+      return "playful";
+    }
+    if (normalized.includes("witty") || normalized.includes("humor") || normalized.includes("fun")) {
+      return "witty";
+    }
+    if (
+      normalized.includes("heart") ||
+      normalized.includes("warm") ||
+      normalized.includes("romantic") ||
+      normalized.includes("reflect") ||
+      normalized.includes("uplift")
+    ) {
+      return "heartfelt";
+    }
+    return "minimal";
+  }
+
   function buildFormValuesFromResolvedTheme(theme) {
     if (!theme || typeof theme !== "object") {
       return null;
@@ -195,14 +308,14 @@ const html = htm.bind(React.createElement);
       tone_style: String(theme.tone_style || "conversational").trim(),
       tone_funny_pct: Number(theme.tone_funny_pct ?? 20),
       tone_emotion_pct: Number(theme.tone_emotion_pct ?? 80),
-      copy_style: "short_crisp",
-      target_words: 16,
+      copy_style: resolveStudioCopyStyle(theme.tone_style),
+      target_words: 14,
     };
   }
 
   function buildOutputSpec(copyStyle, targetWords) {
     return {
-      format: String(copyStyle || "short_crisp"),
+      format: resolveStudioCopyStyle(copyStyle),
       length: { target_words: Number(targetWords || 16) },
       structure: { no_lists: true, no_numbering: true },
     };
@@ -213,8 +326,8 @@ const html = htm.bind(React.createElement);
       theme_key: "",
       cards_per_theme: 10,
       notes: "",
-      copy_style: "short_crisp",
-      target_words: 16,
+      copy_style: resolveStudioCopyStyle(theme?.tone_style || theme?.default_tone_style),
+      target_words: 14,
       tone_funny_pct: Number(theme?.tone_funny_pct ?? theme?.default_funny_pct ?? 20),
     };
   }
@@ -223,10 +336,72 @@ const html = htm.bind(React.createElement);
     return {
       cards_per_theme: Number(formValues.cards_per_theme || 10),
       notes: String(formValues.notes || "").trim() || null,
-      copy_style: String(formValues.copy_style || "short_crisp"),
-      target_words: Number(formValues.target_words || 16),
+      copy_style: resolveStudioCopyStyle(formValues.copy_style),
+      target_words: Number(formValues.target_words || 14),
       tone_funny_pct: Number(formValues.tone_funny_pct ?? 20),
     };
+  }
+
+  const STUDIO_STYLE_OPTIONS = [
+    { value: "witty", label: "witty" },
+    { value: "playful", label: "playful" },
+    { value: "heartfelt", label: "heartfelt" },
+    { value: "minimal", label: "minimal" },
+  ];
+
+  function copyStyleLabel(value) {
+    const normalized = resolveStudioCopyStyle(value);
+    if (normalized === "heartfelt") {
+      return "Heartfelt";
+    }
+    if (normalized === "playful") {
+      return "Playful";
+    }
+    if (normalized === "witty") {
+      return "Witty";
+    }
+    return "Minimal";
+  }
+
+  function renderStudioStyleOptions() {
+    return STUDIO_STYLE_OPTIONS.map(
+      (option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`,
+    );
+  }
+
+  function getJobOutputSpec(job) {
+    return job && typeof job.output_spec === "object" && job.output_spec !== null ? job.output_spec : {};
+  }
+
+  function getStudioState(job) {
+    const outputSpec = getJobOutputSpec(job);
+    return outputSpec && typeof outputSpec.studio === "object" && outputSpec.studio !== null ? outputSpec.studio : {};
+  }
+
+  function isFavoriteJob(job) {
+    return Boolean(getStudioState(job).is_favorite);
+  }
+
+  async function fetchJobAssets(jobId) {
+    const payload = await requestJSON(`/api/jobs/${jobId}/assets`);
+    return Array.isArray(payload) ? payload : [];
+  }
+
+  async function fetchJobImageAssets(jobId) {
+    const payload = await requestJSON(`/api/jobs/${jobId}/image-assets`);
+    return payload && typeof payload === "object" ? payload : { candidates: [] };
+  }
+
+  async function autoBuildStudioJob(jobId) {
+    await requestJSON(`/api/jobs/${jobId}/approve-content`, { method: "POST" });
+    const imageAssets = await requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" });
+    const firstImageOption = Array.isArray(imageAssets?.candidates) ? imageAssets.candidates[0] : null;
+    if (!firstImageOption?.candidate_id) {
+      throw new Error("ImageForge returned no image candidates");
+    }
+    await requestJSON(`/api/jobs/${jobId}/image-assets/${firstImageOption.candidate_id}/select`, { method: "POST" });
+    await requestJSON(`/api/jobs/${jobId}/render-final`, { method: "POST" });
+    return { imageOptionUsed: true };
   }
 
   function splitCsv(value) {
@@ -453,6 +628,130 @@ const html = htm.bind(React.createElement);
     `;
   }
 
+  function collectImageOptionAssets(assets = []) {
+    return assets
+      .filter((asset) => {
+        const assetType = String(asset?.asset_type || "").toLowerCase();
+        return assetType === "image_option" || assetType === "image_preview";
+      })
+      .map((asset, index) => {
+        const version = String(asset.version || "");
+        const [, themeStyle = "", textAlignment = ""] = version.split(":");
+        return {
+          key: asset.relative_path || asset.public_url || `${asset.asset_type}_${index}`,
+          asset_type: asset.asset_type,
+          relative_path: asset.relative_path || "",
+          url: asset.public_url || asset.asset_url || "",
+          theme_style: themeStyle || "minimal",
+          text_alignment: textAlignment || "center",
+          approved: Boolean(asset.approved),
+          created_at: asset.created_at,
+        };
+      })
+      .filter((asset) => asset.url);
+  }
+
+  function collectImageAssetCandidates(imageAssets) {
+    const candidates = Array.isArray(imageAssets?.candidates) ? imageAssets.candidates : [];
+    return candidates
+      .map((candidate, index) => ({
+        key: candidate.candidate_id || candidate.public_url || `image_candidate_${index}`,
+        candidate_id: String(candidate.candidate_id || ""),
+        provider: String(candidate.provider || "unknown"),
+        model: String(candidate.model || "").trim(),
+        candidate_index: Number(candidate.candidate_index || index + 1),
+        url: candidate.public_url || "",
+        relative_path: candidate.relative_path || "",
+        width: candidate.width ?? null,
+        height: candidate.height ?? null,
+        is_selected: Boolean(candidate.is_selected),
+        created_at: candidate.created_at || null,
+      }))
+      .filter((candidate) => candidate.url);
+  }
+
+  function collectFinalCardOptions(job, assets = []) {
+    const hasCurrentPreview = Boolean(job?.final_preview_url)
+      || Boolean(job?.final_asset_urls && typeof job.final_asset_urls === "object" && job.final_asset_urls.png);
+    if (!hasCurrentPreview) {
+      return [];
+    }
+    const finalAssetRows = Array.isArray(assets)
+      ? assets.filter((asset) => {
+          const assetType = String(asset?.asset_type || "").toLowerCase();
+          return assetType === "final_preview" || assetType === "final_png";
+        })
+      : [];
+    return collectPreviewCandidates(job, finalAssetRows).map((candidate, index) => ({
+      key: `${candidate.source}:${index}`,
+      label: candidate.label,
+      url: candidate.url,
+      source: candidate.source,
+    }));
+  }
+
+  function getSelectedTextCandidate(job, candidates) {
+    const studioState = getStudioState(job);
+    const selectedId = Number(studioState.selected_text_candidate_id || 0);
+    if (selectedId > 0) {
+      const explicit = candidates.find((candidate) => Number(candidate.id) === selectedId);
+      if (explicit) {
+        return explicit;
+      }
+    }
+    return candidates.find((candidate) => candidate.is_selected) || null;
+  }
+
+  function getSelectedImageOption(job, assets) {
+    const studioState = getStudioState(job);
+    const selectedRelativePath = String(studioState.selected_image_relative_path || "");
+    const imageOptions = collectImageOptionAssets(assets);
+    if (selectedRelativePath) {
+      const explicit = imageOptions.find((asset) => asset.relative_path === selectedRelativePath);
+      if (explicit) {
+        return explicit;
+      }
+    }
+    const approved = imageOptions.find((asset) => asset.approved);
+    if (approved) {
+      return approved;
+    }
+    return imageOptions.find((asset) => asset.asset_type === "image_preview") || imageOptions[0] || null;
+  }
+
+  function getSelectedImageAsset(imageAssets) {
+    const candidates = collectImageAssetCandidates(imageAssets);
+    const selectedId = String(imageAssets?.selected_image_candidate_id || "");
+    if (selectedId) {
+      const explicit = candidates.find((candidate) => candidate.candidate_id === selectedId);
+      if (explicit) {
+        return explicit;
+      }
+    }
+    return candidates.find((candidate) => candidate.is_selected) || null;
+  }
+
+  function formatDimensions(width, height) {
+    if (!width || !height) {
+      return null;
+    }
+    return `${width} x ${height}`;
+  }
+
+  function statusCategory(job) {
+    const stage = String(getStageValue(job) || "").toLowerCase();
+    if (stage === "failed") {
+      return "failed";
+    }
+    if (stage === "final_card_ready") {
+      return "final_card_ready";
+    }
+    if (String(job?.status || "").toLowerCase() === "archived") {
+      return "archived";
+    }
+    return stage || "in_progress";
+  }
+
   function WorkflowConsolePage() {
     const navigate = useNavigate();
     const [jobs, setJobs] = useState([]);
@@ -481,8 +780,8 @@ const html = htm.bind(React.createElement);
       tone_style: "conversational",
       tone_funny_pct: 20,
       tone_emotion_pct: 80,
-      copy_style: "short_crisp",
-      target_words: 16,
+      copy_style: "minimal",
+      target_words: 14,
       cards_per_theme: 10,
       notes: "",
     });
@@ -509,6 +808,31 @@ const html = htm.bind(React.createElement);
       });
       return { active, completed, failed };
     }, [jobs]);
+
+    const recentCards = useMemo(
+      () => jobs
+        .filter((job) => job.final_preview_url || (job.final_asset_urls && job.final_asset_urls.png) || job.image_preview_url)
+        .slice(0, 6),
+      [jobs],
+    );
+    const inProgressJobs = useMemo(
+      () => jobs.filter((job) => {
+        const status = String(job.status || "").toLowerCase();
+        return status !== "completed" && !status.includes("failed") && !status.includes("reject") && !status.includes("timeout") && status !== "archived";
+      }).slice(0, 8),
+      [jobs],
+    );
+    const failedJobs = useMemo(
+      () => jobs.filter((job) => {
+        const status = String(job.status || "").toLowerCase();
+        return status.includes("failed") || status.includes("reject") || status.includes("timeout");
+      }).slice(0, 8),
+      [jobs],
+    );
+    const favoriteJobs = useMemo(
+      () => jobs.filter((job) => isFavoriteJob(job)).slice(0, 6),
+      [jobs],
+    );
 
     async function loadDashboard() {
       setJobsLoading(true);
@@ -611,9 +935,14 @@ const html = htm.bind(React.createElement);
           body: JSON.stringify(payload),
         });
         setCreateOpen(false);
-        setStatusMessage(`Created ${created.job_id}`);
+        try {
+          await autoBuildStudioJob(created.job_id);
+          setStatusMessage(`Created ${created.job_id} and built initial card options`);
+        } catch (autoBuildError) {
+          setStatusMessage(`Created ${created.job_id}. Studio follow-up is needed: ${autoBuildError.message || "auto-build failed"}`);
+        }
         await loadDashboard();
-        navigate(`/jobs/${created.job_id}`);
+        navigate(`/studio/${created.job_id}`);
       } catch (requestError) {
         setJobsError(requestError.message || "Unable to create new job");
       } finally {
@@ -683,13 +1012,22 @@ const html = htm.bind(React.createElement);
               body: JSON.stringify(basePayload),
             });
         setThemeRunOpen(false);
-        setStatusMessage(
-          themeRunMode === "manual"
-            ? `Created ${created.job_id} from ${themeRunValues.theme_key}`
-            : `Created ${created.job_id} from today's theme`,
-        );
+        try {
+          await autoBuildStudioJob(created.job_id);
+          setStatusMessage(
+            themeRunMode === "manual"
+              ? `Created ${created.job_id} from ${themeRunValues.theme_key} and built initial card options`
+              : `Created ${created.job_id} from today's theme and built initial card options`,
+          );
+        } catch (autoBuildError) {
+          setStatusMessage(
+            themeRunMode === "manual"
+              ? `Created ${created.job_id} from ${themeRunValues.theme_key}. Studio follow-up is needed: ${autoBuildError.message || "auto-build failed"}`
+              : `Created ${created.job_id} from today's theme. Studio follow-up is needed: ${autoBuildError.message || "auto-build failed"}`,
+          );
+        }
         await loadDashboard();
-        navigate(`/jobs/${created.job_id}`);
+        navigate(`/studio/${created.job_id}`);
       } catch (requestError) {
         setThemeError(
           requestError.message || (themeRunMode === "manual" ? "Unable to create theme job" : "Unable to create today's themed job"),
@@ -745,15 +1083,23 @@ const html = htm.bind(React.createElement);
       <section>
         <header className="page-head">
           <div>
-            <p className="page-kicker">Workflow</p>
-            <h1 className="page-title">Workflow Console</h1>
+            <p className="page-kicker">Home</p>
+            <h1 className="page-title">eCard Studio Home</h1>
             <p className="page-description">
-              Generated eCards, workflow state, and intervention controls in one internal console.
+              Card-first controls for today's theme, manual theme runs, and recent eCard output.
             </p>
           </div>
           <div className="inline-actions">
-            <button type="button" className="button primary" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
+            <button
+              type="button"
+              className="button primary"
+              onClick=${() => openThemeRunModal("today")}
+              disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
+            >
+              Generate Today's Cards
+            </button>
             <button type="button" className="button" onClick=${() => openThemeRunModal("manual")}>Generate From Theme</button>
+            <button type="button" className="button" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
             <button
               type="button"
               className="button"
@@ -762,8 +1108,6 @@ const html = htm.bind(React.createElement);
             >
               Refresh
             </button>
-            <${Link} to="/themes" className="button-link">Open Theme Factory<//>
-            <${Link} to="/compare" className="button-link">Open Compare Lab<//>
           </div>
         </header>
 
@@ -792,69 +1136,31 @@ const html = htm.bind(React.createElement);
 
         <section className="cards-grid">
           <article className="summary-card">
-            <p className="summary-label">Active Jobs</p>
-            <p className="summary-value">${jobsLoading ? "..." : summary.active}</p>
+            <p className="summary-label">Today's Theme</p>
+            <p className="summary-value summary-value-small">${resolvedTodayTheme ? resolvedTodayTheme.theme_name : "Unavailable"}</p>
           </article>
           <article className="summary-card">
-            <p className="summary-label">Completed Jobs</p>
-            <p className="summary-value">${jobsLoading ? "..." : summary.completed}</p>
+            <p className="summary-label">In Progress</p>
+            <p className="summary-value">${jobsLoading ? "..." : inProgressJobs.length}</p>
           </article>
           <article className="summary-card">
             <p className="summary-label">Failed Jobs</p>
-            <p className="summary-value">${jobsLoading ? "..." : summary.failed}</p>
+            <p className="summary-value">${jobsLoading ? "..." : failedJobs.length}</p>
           </article>
           <article className="summary-card">
-            <p className="summary-label">Storage Usage</p>
-            <p className="summary-value">${storageLoading ? "..." : storage ? formatBytes(storage.total_bytes) : "Unavailable"}</p>
+            <p className="summary-label">Favorite Cards</p>
+            <p className="summary-value">${jobsLoading ? "..." : favoriteJobs.length}</p>
           </article>
         </section>
 
-        <section className="section-panel">
+        <section className="section-panel home-hero">
           <div className="section-head">
             <div>
-              <h2 className="section-title">Generated eCards</h2>
-              <p className="section-copy">Final previews, generated image previews, and content-first placeholders for each job.</p>
-            </div>
-          </div>
-          ${jobsLoading
-            ? html`<p className="empty-state">Loading generated eCards...</p>`
-            : jobsError
-              ? html`<p className="empty-state">Unable to load generated eCards. Check API availability and refresh.</p>`
-              : jobs.length === 0
-                ? html`
-                    <div className="empty-state">
-                      <p className="empty-state-title">No generated eCards yet</p>
-                      <p className="empty-state-copy">Start a workflow job to generate the first card for this console.</p>
-                      <button type="button" className="button primary" onClick=${() => setCreateOpen(true)}>
-                        Create New Card Job
-                      </button>
-                    </div>
-                  `
-                : html`
-                    <div className="ecard-grid">
-                      ${jobs.map(
-                        (job) => html`
-                          <${GeneratedECardTile}
-                            key=${job.job_id}
-                            job=${job}
-                            actionState=${cardActionState}
-                            onArchive=${handleArchiveJob}
-                            onDelete=${handleDeleteJob}
-                          />
-                        `,
-                      )}
-                    </div>
-                  `}
-        </section>
-
-        <section className="section-panel">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">Weekly Theme Schedule</h2>
+              <h2 className="section-title">Today's Theme</h2>
               <p className="section-copy">
                 ${resolvedTodayTheme
-                  ? `Today's Theme: ${resolvedTodayTheme.theme_name} (${humanize(todayTheme?.weekday)})`
-                  : themeNotice || "Today's Theme: Unavailable"}
+                  ? `${resolvedTodayTheme.theme_name} | ${copyStyleLabel("minimal")} card flow with ${humanize(todayTheme?.weekday)} scheduling`
+                  : themeNotice || "Theme schedule not configured yet."}
               </p>
             </div>
             <div className="inline-actions">
@@ -864,39 +1170,129 @@ const html = htm.bind(React.createElement);
                 onClick=${() => openThemeRunModal("today")}
                 disabled=${creatingThemeJob || themeLoading || !resolvedTodayTheme}
               >
-                ${creatingThemeJob && themeRunMode === "today" ? "Generating..." : "Generate Today's Card"}
+                ${creatingThemeJob && themeRunMode === "today" ? "Generating..." : "Generate Today's Cards"}
               </button>
-              <${Link} to="/themes" className="button-link">Manage Themes<//>
+              <button type="button" className="button" onClick=${() => openThemeRunModal("manual")}>Generate From Theme</button>
+              <button type="button" className="button" onClick=${() => setCreateOpen(true)}>Create New Card Job</button>
             </div>
           </div>
-          ${themeNotice ? html`<div className="status-panel neutral">${themeNotice}</div>` : null}
-          ${themeLoading
-            ? html`<p className="empty-state">Loading weekly schedule...</p>`
-            : themeSchedule.length === 0
-              ? html`<p className="empty-state">Theme schedule not configured yet.</p>`
+          ${resolvedTodayTheme
+            ? html`
+                <div className="key-value-grid">
+                  <article className="key-card">
+                    <p className="key-label">theme_name</p>
+                    <p className="key-value">${resolvedTodayTheme.theme_name}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">bucket</p>
+                    <p className="key-value">${themeBucketLabel(resolvedTodayTheme.theme_bucket)}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">tone_style</p>
+                    <p className="key-value">${resolvedTodayTheme.tone_style}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">audience</p>
+                    <p className="key-value">${resolvedTodayTheme.audience}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">default run</p>
+                    <p className="key-value">10 cards | 8-18 words</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">storage</p>
+                    <p className="key-value">${storageLoading ? "..." : storage ? formatBytes(storage.total_bytes) : "Unavailable"}</p>
+                  </article>
+                </div>
+              `
+            : html`<p className="empty-state">Theme schedule not configured yet.</p>`}
+        </section>
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Recent eCards</h2>
+              <p className="section-copy">The most recent visual card outputs. Open Studio to tweak text, image, or final card direction.</p>
+            </div>
+            <${Link} to="/studio" className="button-link">Open Studio<//>
+          </div>
+          ${jobsLoading
+            ? html`<p className="empty-state">Loading recent eCards...</p>`
+            : recentCards.length === 0
+              ? html`<p className="empty-state">No rendered cards yet. Generate today's cards or run a theme manually.</p>`
+              : html`
+                  <div className="ecard-grid">
+                    ${recentCards.map(
+                      (job) => html`
+                        <${GeneratedECardTile}
+                          key=${job.job_id}
+                          job=${job}
+                          actionState=${cardActionState}
+                          onArchive=${handleArchiveJob}
+                          onDelete=${handleDeleteJob}
+                        />
+                      `,
+                    )}
+                  </div>
+                `}
+        </section>
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Favorite Cards</h2>
+              <p className="section-copy">Cards you marked for quick access and reuse.</p>
+            </div>
+          </div>
+          ${favoriteJobs.length === 0
+            ? html`<p className="empty-state">No favorite cards yet. Mark a final card from Studio.</p>`
+            : html`
+                <div className="ecard-grid">
+                  ${favoriteJobs.map(
+                    (job) => html`
+                      <${GeneratedECardTile}
+                        key=${job.job_id}
+                        job=${job}
+                        actionState=${cardActionState}
+                        onArchive=${handleArchiveJob}
+                        onDelete=${handleDeleteJob}
+                      />
+                    `,
+                  )}
+                </div>
+              `}
+        </section>
+
+        <section className="two-column">
+          <section className="section-panel">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">In Progress Jobs</h2>
+                <p className="section-copy">Jobs still moving through card generation or waiting for operator intervention.</p>
+              </div>
+              <${Link} to="/jobs" className="button-link">All Jobs<//>
+            </div>
+            ${inProgressJobs.length === 0
+              ? html`<p className="empty-state">No jobs in progress.</p>`
               : html`
                   <div className="table-wrap">
                     <table className="console-table">
                       <thead>
                         <tr>
-                          <th>date</th>
-                          <th>weekday</th>
-                          <th>theme_name</th>
-                          <th>source</th>
-                          <th>tone_style</th>
-                          <th>audience</th>
+                          <th>job_id</th>
+                          <th>theme</th>
+                          <th>status</th>
+                          <th>updated</th>
                         </tr>
                       </thead>
                       <tbody>
-                        ${themeSchedule.map(
-                          (row) => html`
-                            <tr key=${`${row.plan_date}_${row.weekday}`}>
-                              <td>${formatDate(row.plan_date)}</td>
-                              <td>${humanize(row.weekday)}</td>
-                              <td>${row.theme?.theme_name || "-"}</td>
-                              <td>${humanize(row.source)}</td>
-                              <td>${row.theme?.tone_style || "-"}</td>
-                              <td>${row.theme?.audience || "-"}</td>
+                        ${inProgressJobs.map(
+                          (job) => html`
+                            <tr key=${job.job_id}>
+                              <td><${Link} className="job-link" to=${`/studio/${job.job_id}`}>${job.job_id}<//></td>
+                              <td>${job.theme_name}</td>
+                              <td><${StatusBadge} value=${job.status} /></td>
+                              <td>${formatDate(job.updated_at)}</td>
                             </tr>
                           `,
                         )}
@@ -904,51 +1300,44 @@ const html = htm.bind(React.createElement);
                     </table>
                   </div>
                 `}
-        </section>
+          </section>
 
-        <section className="section-panel section-subdued">
-          <div className="section-head">
-            <div>
-              <h2 className="section-title">Recent Jobs</h2>
-              <p className="section-copy">Newest 50 jobs from workflow backend.</p>
+          <section className="section-panel">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">Failed Jobs</h2>
+                <p className="section-copy">Jobs that need a rerun from text, image, or final card generation.</p>
+              </div>
             </div>
-          </div>
-          ${jobsLoading
-            ? html`<p className="empty-state">Loading jobs...</p>`
-            : jobsError
-              ? html`<p className="empty-state">Unable to load jobs. Check API availability and refresh.</p>`
-              : jobs.length === 0
-                ? html`<p className="empty-state">No jobs found yet.</p>`
-                : html`
-                    <div className="table-wrap">
-                      <table className="console-table">
-                        <thead>
-                          <tr>
-                            <th>job_id</th>
-                            <th>theme_name</th>
-                            <th>current_stage</th>
-                            <th>status</th>
-                            <th>created_at</th>
-                            <th>updated_at</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          ${jobs.map(
-                            (job) => html`
-                              <tr key=${job.job_id}>
-                                <td><${Link} className="job-link" to=${`/jobs/${job.job_id}`}>${job.job_id}<//></td>
-                                <td>${job.theme_name || "-"}</td>
-                                <td>${humanize(job.current_stage)}</td>
-                                <td><${StatusBadge} value=${job.status} /></td>
-                                <td>${formatDate(job.created_at)}</td>
-                                <td>${formatDate(job.updated_at)}</td>
-                              </tr>
-                            `,
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  `}
+            ${failedJobs.length === 0
+              ? html`<p className="empty-state">No failed jobs.</p>`
+              : html`
+                  <div className="table-wrap">
+                    <table className="console-table">
+                      <thead>
+                        <tr>
+                          <th>job_id</th>
+                          <th>theme</th>
+                          <th>status</th>
+                          <th>last_error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${failedJobs.map(
+                          (job) => html`
+                            <tr key=${job.job_id}>
+                              <td><${Link} className="job-link" to=${`/studio/${job.job_id}`}>${job.job_id}<//></td>
+                              <td>${job.theme_name}</td>
+                              <td><${StatusBadge} value=${job.status} /></td>
+                              <td>${truncateText(job.last_error_message || "-", 80)}</td>
+                            </tr>
+                          `,
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
         </section>
 
         ${createOpen
@@ -956,7 +1345,7 @@ const html = htm.bind(React.createElement);
               <div className="modal-backdrop" onClick=${() => setCreateOpen(false)}>
                 <section className="modal" onClick=${(event) => event.stopPropagation()}>
                   <h2 className="section-title">Create New Card Job</h2>
-                  <p className="section-copy">Starts generation and opens approval flow.</p>
+                  <p className="section-copy">Starts a new card run with short, crisp copy defaults and opens Studio.</p>
                   <form onSubmit=${handleCreateJob}>
                     <div className="form-grid">
                       <div className="form-field full">
@@ -1028,9 +1417,7 @@ const html = htm.bind(React.createElement);
                           value=${formValues.copy_style}
                           onChange=${(event) => updateField("copy_style", event.target.value)}
                         >
-                          <option value="short_crisp">short and crisp</option>
-                          <option value="warm_note">warm note</option>
-                          <option value="playful">playful</option>
+                          ${renderStudioStyleOptions()}
                         </select>
                       </div>
                       <div className="form-field">
@@ -1056,7 +1443,7 @@ const html = htm.bind(React.createElement);
                         />
                       </div>
                       <div className="form-field full">
-                        <p className="form-helper">For actual eCards, use short and crisp with 12-20 words. Raise Funny % if you want lighter copy.</p>
+                        <p className="form-helper">Defaults target short one-line card copy. Use witty or playful for humor, heartfelt for emotional greetings.</p>
                       </div>
                       <div className="form-field full">
                         <label htmlFor="jobNotes">Notes</label>
@@ -1127,9 +1514,7 @@ const html = htm.bind(React.createElement);
                           value=${themeRunValues.copy_style}
                           onChange=${(event) => setThemeRunValues((current) => ({ ...current, copy_style: event.target.value }))}
                         >
-                          <option value="short_crisp">short and crisp</option>
-                          <option value="warm_note">warm note</option>
-                          <option value="playful">playful</option>
+                          ${renderStudioStyleOptions()}
                         </select>
                       </div>
                       <div className="form-field">
@@ -1168,7 +1553,7 @@ const html = htm.bind(React.createElement);
                         />
                       </div>
                       <div className="form-field full">
-                        <p className="form-helper">This starts a real card job from the selected theme. Keep target words low if you want greeting-card copy instead of long paragraphs.</p>
+                        <p className="form-helper">This starts a real card job from the selected theme and opens Studio for text, image, and final card control.</p>
                       </div>
                       <div className="form-field full">
                         <label htmlFor="runThemeNotes">Notes</label>
@@ -1274,31 +1659,20 @@ const html = htm.bind(React.createElement);
       if (!job) {
         return [];
       }
-      const status = String(job.status || "").toLowerCase();
-      const contentGenerationStatus =
-        job.content_preview ? "completed" : status.startsWith("content") ? "in_progress" : "pending";
-      const imageGenerationStatus =
-        job.image_preview_url || status.startsWith("final") || status === "completed"
-          ? "completed"
-          : status.startsWith("image")
-            ? "in_progress"
-            : "pending";
-      const finalRenderStatus =
-        job.final_asset_urls && (job.final_asset_urls.png || job.final_asset_urls.pdf)
-          ? "completed"
-          : status.startsWith("final")
-            ? "in_progress"
-            : status === "completed"
-              ? "completed"
-              : "pending";
+      const studioState = getStudioState(job);
+      const hasTextCandidates = Array.isArray(job.shortlist) ? job.shortlist.length > 0 : Boolean(job.shortlist_count);
+      const hasTextSelection = Boolean(studioState.selected_text_candidate_id);
+      const hasImageCandidates = Array.isArray(job.image_candidates) ? job.image_candidates.length > 0 : Boolean(job.image_candidate_count);
+      const hasImageSelection = Boolean(job.selected_image_candidate_id || job.selected_image_public_url);
+      const hasFinalPreview = Boolean(job.final_preview_url || (job.final_asset_urls && job.final_asset_urls.png));
 
       return [
-        { label: "content_generation_status", value: contentGenerationStatus },
-        { label: "content_approval_status", value: job.content_approval_status || "pending" },
-        { label: "image_generation_status", value: imageGenerationStatus },
-        { label: "image_approval_status", value: job.image_approval_status || "pending" },
-        { label: "final_render_status", value: finalRenderStatus },
-        { label: "final_approval_status", value: job.final_approval_status || "pending" },
+        { label: "current_stage", value: getStageValue(job) },
+        { label: "text_candidates", value: hasTextCandidates ? "content_candidates_ready" : "pending" },
+        { label: "text_selection", value: hasTextSelection ? "text_selected" : "pending" },
+        { label: "image_candidates", value: hasImageCandidates ? "image_candidates_ready" : "pending" },
+        { label: "image_selection", value: hasImageSelection ? "image_selected" : "pending" },
+        { label: "final_card", value: hasFinalPreview ? "final_card_ready" : "pending" },
       ];
     }, [job]);
 
@@ -1459,8 +1833,62 @@ const html = htm.bind(React.createElement);
               <section className="section-panel">
                 <div className="section-head">
                   <div>
+                    <h2 className="section-title">Card Snapshot</h2>
+                    <p className="section-copy">The selected text, selected image, and latest final card preview for this job.</p>
+                  </div>
+                  <div className="inline-actions">
+                    <${Link} to=${`/studio/${jobId}`} className="button-link">Open Studio<//>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick=${() => handleStageAction("rerun-content", `/api/jobs/${jobId}/rerun/content`, `Text rerun for ${jobId}`)}
+                      disabled=${workingAction === "rerun-content"}
+                    >
+                      ${workingAction === "rerun-content" ? "Working..." : "Regenerate Text"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick=${() => handleStageAction("rerun-image", `/api/jobs/${jobId}/rerun/image`, `Image rerun for ${jobId}`)}
+                      disabled=${workingAction === "rerun-image"}
+                    >
+                      ${workingAction === "rerun-image" ? "Working..." : "Regenerate Image"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick=${() => handleStageAction("rerun-card", `/api/jobs/${jobId}/rerun/final-render`, `Card rerun for ${jobId}`)}
+                      disabled=${workingAction === "rerun-card"}
+                    >
+                      ${workingAction === "rerun-card" ? "Working..." : "Regenerate Card"}
+                    </button>
+                  </div>
+                </div>
+                <div className="studio-current-grid">
+                  <article className="key-card">
+                    <p className="key-label">selected text</p>
+                    <p className="studio-current-copy">${job.content_preview || "No text selected yet."}</p>
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">selected image</p>
+                    ${imagePreviewSelection.currentCandidate
+                      ? html`<img className="studio-current-image" src=${imagePreviewSelection.currentCandidate.url} alt="Selected image" loading="lazy" onError=${imagePreviewSelection.handleError} />`
+                      : html`<p className="empty-state compact">No image selected yet.</p>`}
+                  </article>
+                  <article className="key-card">
+                    <p className="key-label">final card preview</p>
+                    ${finalPreviewSelection.currentCandidate
+                      ? html`<img className="studio-current-image" src=${finalPreviewSelection.currentCandidate.url} alt="Final card preview" loading="lazy" onError=${finalPreviewSelection.handleError} />`
+                      : html`<p className="empty-state compact">No final card rendered yet.</p>`}
+                  </article>
+                </div>
+              </section>
+
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
                     <h2 className="section-title">Stage and Status Breakdown</h2>
-                    <p className="section-copy">Lifecycle status across generation and approval gates.</p>
+                    <p className="section-copy">Workflow state remains available here, but Studio is the primary operator surface.</p>
                   </div>
                   <${StatusBadge} value=${job.status} />
                 </div>
@@ -1511,7 +1939,7 @@ const html = htm.bind(React.createElement);
                 <div className="section-head">
                   <div>
                     <h2 className="section-title">Content Review</h2>
-                    <p className="section-copy">Approve or reject the exact message text shown below. Regenerate if the wording is wrong.</p>
+                    <p className="section-copy">Approval is secondary here. The primary action is to rerun text if the card copy is not right.</p>
                   </div>
                   <${StatusBadge} value=${job.content_approval_status || "pending"} />
                 </div>
@@ -1519,6 +1947,14 @@ const html = htm.bind(React.createElement);
                   ? html`<div className="content-preview-block">${job.content_preview}</div>`
                   : html`<p className="empty-state">No content preview stored yet.</p>`}
                 <div className="inline-actions padded-actions">
+                  <button
+                    type="button"
+                    className="button primary"
+                    onClick=${() => handleStageAction("regenerate-content", `/api/jobs/${jobId}/regenerate-content`, `Content regenerated for ${jobId}`)}
+                    disabled=${workingAction === "regenerate-content"}
+                  >
+                    ${workingAction === "regenerate-content" ? "Working..." : "Regenerate Text"}
+                  </button>
                   <button
                     type="button"
                     className="button"
@@ -1535,14 +1971,6 @@ const html = htm.bind(React.createElement);
                   >
                     ${workingAction === "reject-content" ? "Working..." : "Reject Content"}
                   </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick=${() => handleStageAction("regenerate-content", `/api/jobs/${jobId}/regenerate-content`, `Content regenerated for ${jobId}`)}
-                    disabled=${workingAction === "regenerate-content"}
-                  >
-                    ${workingAction === "regenerate-content" ? "Working..." : "Regenerate Content"}
-                  </button>
                 </div>
               </section>
 
@@ -1550,7 +1978,7 @@ const html = htm.bind(React.createElement);
                 <div className="section-head">
                   <div>
                     <h2 className="section-title">Image Review</h2>
-                    <p className="section-copy">These buttons apply to the exact image preview shown below. Generate it after content approval, then approve or reject it.</p>
+                    <p className="section-copy">The main control here is to generate or rerun the image. Approval buttons remain available as operator overrides.</p>
                   </div>
                   <${StatusBadge} value=${job.image_approval_status || "pending"} />
                 </div>
@@ -1576,7 +2004,7 @@ const html = htm.bind(React.createElement);
                 <div className="inline-actions padded-actions">
                   <button
                     type="button"
-                    className="button"
+                    className="button primary"
                     onClick=${() => handleStageAction("generate-image", `/api/jobs/${jobId}/generate-image`, `Image generated for ${jobId}`)}
                     disabled=${workingAction === "generate-image" || job.content_approval_status !== "approved"}
                   >
@@ -1613,7 +2041,7 @@ const html = htm.bind(React.createElement);
                 <div className="section-head">
                   <div>
                     <h2 className="section-title">Final Card Review</h2>
-                    <p className="section-copy">Render the final card, then approve or reject the exact final preview shown here.</p>
+                    <p className="section-copy">Use rerun when the card layout or polish is off. Approval stays available below as a secondary control.</p>
                   </div>
                   <${StatusBadge} value=${job.final_approval_status || "pending"} />
                 </div>
@@ -1636,11 +2064,11 @@ const html = htm.bind(React.createElement);
                 <div className="inline-actions padded-actions">
                   <button
                     type="button"
-                    className="button"
+                    className="button primary"
                     onClick=${() => handleStageAction("render-final", `/api/jobs/${jobId}/render-final`, `Final rendered for ${jobId}`)}
                     disabled=${workingAction === "render-final" || job.image_approval_status !== "approved"}
                   >
-                    ${workingAction === "render-final" ? "Working..." : "Render Final"}
+                    ${workingAction === "render-final" ? "Working..." : "Regenerate Card"}
                   </button>
                   <button
                     type="button"
@@ -2197,8 +2625,13 @@ const html = htm.bind(React.createElement);
           body: JSON.stringify(buildThemeRunPayload(todayThemeRunForm)),
         });
         setTodayThemeRunOpen(false);
-        setStatusMessage(`Created ${created.job_id} from today's theme`);
-        navigate(`/jobs/${created.job_id}`);
+        try {
+          await autoBuildStudioJob(created.job_id);
+          setStatusMessage(`Created ${created.job_id} from today's theme and opened Studio`);
+        } catch (autoBuildError) {
+          setStatusMessage(`Created ${created.job_id} from today's theme. Studio follow-up is needed: ${autoBuildError.message || "auto-build failed"}`);
+        }
+        navigate(`/studio/${created.job_id}`);
       } catch (requestError) {
         setError(requestError.message || "Unable to create today's themed job");
       } finally {
@@ -2229,7 +2662,7 @@ const html = htm.bind(React.createElement);
               ${workingAction === "create-today-job" ? "Creating..." : "Use Today's Theme"}
             </button>
             <button type="button" className="button" onClick=${loadThemeFactory} disabled=${loading}>Refresh</button>
-            <${Link} to="/" className="button-link">Workflow Console<//>
+            <${Link} to="/" className="button-link">Home<//>
           </div>
         </header>
 
@@ -2522,9 +2955,7 @@ const html = htm.bind(React.createElement);
                           value=${todayThemeRunForm.copy_style}
                           onChange=${(event) => setTodayThemeRunForm((current) => ({ ...current, copy_style: event.target.value }))}
                         >
-                          <option value="short_crisp">short and crisp</option>
-                          <option value="warm_note">warm note</option>
-                          <option value="playful">playful</option>
+                          ${renderStudioStyleOptions()}
                         </select>
                       </div>
                       <div className="form-field">
@@ -2563,7 +2994,7 @@ const html = htm.bind(React.createElement);
                         />
                       </div>
                       <div className="form-field full">
-                        <p className="form-helper">Use short and crisp if you want greeting-card style output. Raise Funny % only when the theme can support it.</p>
+                        <p className="form-helper">This launches a theme run directly into Studio with short card-copy defaults.</p>
                       </div>
                       <div className="form-field full">
                         <label htmlFor="todayThemeNotes">Notes</label>
@@ -2793,6 +3224,715 @@ const html = htm.bind(React.createElement);
     `;
   }
 
+  function StudioPage() {
+    const navigate = useNavigate();
+    const { jobId } = useParams();
+    const [jobs, setJobs] = useState([]);
+    const [job, setJob] = useState(null);
+    const [assets, setAssets] = useState([]);
+    const [candidates, setCandidates] = useState([]);
+    const [shortlist, setShortlist] = useState([]);
+    const [imageAssets, setImageAssets] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [statusMessage, setStatusMessage] = useState("");
+    const [workingAction, setWorkingAction] = useState("");
+
+    const loadStudio = useCallback(async (options = {}) => {
+      const quiet = Boolean(options.quiet);
+      if (!quiet) {
+        setLoading(true);
+      }
+      setError("");
+      try {
+        const jobsPayload = await requestJSON("/api/jobs?limit=50");
+        const nextJobs = Array.isArray(jobsPayload) ? jobsPayload : [];
+        setJobs(nextJobs);
+
+        if (!jobId) {
+          setJob(null);
+          setAssets([]);
+          setCandidates([]);
+          setShortlist([]);
+          setImageAssets(null);
+          return;
+        }
+
+        const [jobPayload, assetPayload, candidatePayload, shortlistPayload, imageAssetPayload] = await Promise.all([
+          requestJSON(`/api/jobs/${jobId}`),
+          requestJSON(`/api/jobs/${jobId}/assets`),
+          requestJSON(`/api/jobs/${jobId}/candidates`),
+          requestJSON(`/api/jobs/${jobId}/shortlist`),
+          fetchJobImageAssets(jobId),
+        ]);
+        setJob(jobPayload || null);
+        setAssets(Array.isArray(assetPayload) ? assetPayload : []);
+        setCandidates(Array.isArray(candidatePayload) ? candidatePayload : []);
+        setShortlist(Array.isArray(shortlistPayload) ? shortlistPayload : []);
+        setImageAssets(imageAssetPayload || null);
+      } catch (requestError) {
+        setError(requestError.message || "Unable to load Studio");
+      } finally {
+        if (!quiet) {
+          setLoading(false);
+        }
+      }
+    }, [jobId]);
+
+    useEffect(() => {
+      loadStudio();
+    }, [loadStudio]);
+
+    useEffect(() => {
+      if (!jobId) {
+        return undefined;
+      }
+      const intervalId = window.setInterval(() => {
+        if (document.visibilityState === "visible") {
+          loadStudio({ quiet: true });
+        }
+      }, 10000);
+      return () => window.clearInterval(intervalId);
+    }, [jobId, loadStudio]);
+
+    const studioState = useMemo(() => getStudioState(job || {}), [job]);
+    const currentStage = useMemo(() => getStageValue(job || {}), [job]);
+    const selectedTextCandidate = useMemo(
+      () => getSelectedTextCandidate(job || {}, candidates),
+      [job, candidates],
+    );
+    const shortlistOptions = useMemo(
+      () => Array.isArray(shortlist) ? shortlist : [],
+      [shortlist],
+    );
+    const imageOptions = useMemo(() => collectImageAssetCandidates(imageAssets), [imageAssets]);
+    const selectedImageOption = useMemo(
+      () => getSelectedImageAsset(imageAssets),
+      [imageAssets],
+    );
+    const finalCards = useMemo(() => collectFinalCardOptions(job || {}, assets), [job, assets]);
+    const finalPreviewSelection = usePreviewSelection(finalCards);
+    const canGenerateImages = Boolean(selectedTextCandidate);
+    const canRenderFinal = Boolean(selectedTextCandidate && selectedImageOption);
+
+    async function runStudioAction(actionKey, requestFactory, successMessage, afterAction) {
+      setWorkingAction(actionKey);
+      setError("");
+      try {
+        await requestFactory();
+        if (successMessage) {
+          setStatusMessage(successMessage);
+        }
+        await loadStudio();
+        if (typeof afterAction === "function") {
+          afterAction();
+        }
+      } catch (requestError) {
+        setError(requestError.message || "Studio action failed");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    async function handleStudioDelete() {
+      if (!jobId) {
+        return;
+      }
+      const confirmed = window.confirm(`Delete ${jobId} and associated files?`);
+      if (!confirmed) {
+        return;
+      }
+      setWorkingAction("delete");
+      setError("");
+      try {
+        await requestJSON(`/api/jobs/${jobId}`, { method: "DELETE" });
+        navigate("/studio");
+      } catch (requestError) {
+        setError(requestError.message || "Unable to delete job");
+      } finally {
+        setWorkingAction("");
+      }
+    }
+
+    function handleSwitchJob(nextJobId) {
+      if (!nextJobId) {
+        navigate("/studio");
+        return;
+      }
+      navigate(`/studio/${nextJobId}`);
+    }
+
+    function renderTextSection() {
+      if (!job) {
+        return null;
+      }
+      return html`
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Text Options</h2>
+              <p className="section-copy">Choose from the filtered shortlist only. Studio removes incomplete and duplicate text before it gets here.</p>
+            </div>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="button"
+                onClick=${() => runStudioAction(
+                  "regenerate-text",
+                  () => requestJSON(`/api/jobs/${jobId}/regenerate-content`, { method: "POST" }),
+                  `Regenerated text for ${jobId}`,
+                )}
+                disabled=${workingAction === "regenerate-text"}
+              >
+                ${workingAction === "regenerate-text" ? "Working..." : "Regenerate Text"}
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                onClick=${() => runStudioAction(
+                  "more-text",
+                  () => requestJSON(`/api/jobs/${jobId}/generate-more-text`, { method: "POST" }),
+                  `Generated 10 more text options for ${jobId}`,
+                )}
+                disabled=${workingAction === "more-text"}
+              >
+                ${workingAction === "more-text" ? "Working..." : "Generate 10 More"}
+              </button>
+            </div>
+          </div>
+          <div className=${selectedTextCandidate ? "status-panel success" : "status-panel neutral"}>
+            ${selectedTextCandidate
+              ? `Selected text candidate ${selectedTextCandidate.id}: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "No text selected yet. Pick one of the shortlisted options below."}
+          </div>
+          ${shortlistOptions.length === 0
+            ? html`<p className="empty-state">No usable text shortlist is available for this job yet.</p>`
+            : html`
+                <div className="studio-option-grid">
+                  ${shortlistOptions.map((candidate) => {
+                    const isSelected = Number(selectedTextCandidate?.id || 0) === Number(candidate.candidate_id || 0);
+                    return html`
+                      <article key=${candidate.shortlist_id || candidate.candidate_id || `${candidate.model}_${candidate.text}`} className=${`studio-option-card ${isSelected ? "selected" : ""}`}>
+                        <div className="studio-option-head">
+                          <${StatusBadge} value=${isSelected ? "text_selected" : "content_candidates_ready"} />
+                          <span className="score-chip">
+                            rank ${candidate.rank} | score ${Number(candidate.score ?? 0).toFixed(3)}
+                          </span>
+                        </div>
+                        <p className="studio-option-text">${candidate.text}</p>
+                        <div className="studio-meta-row">
+                          <span className="mini-pill">candidate ${candidate.candidate_id}</span>
+                          <span className="mini-pill">${candidate.model}</span>
+                          <span className="mini-pill">${candidate.backend}</span>
+                        </div>
+                        <div className="inline-actions">
+                          <button
+                            type="button"
+                            className=${isSelected ? "button" : "button primary"}
+                            onClick=${() => runStudioAction(
+                              `select-text:${candidate.candidate_id}`,
+                              () => requestJSON(`/api/jobs/${jobId}/select-text`, {
+                                method: "POST",
+                                body: JSON.stringify({ candidate_id: candidate.candidate_id }),
+                              }),
+                              `Selected text option ${candidate.candidate_id} for ${jobId}`,
+                            )}
+                            disabled=${workingAction === `select-text:${candidate.candidate_id}` || isSelected}
+                          >
+                            ${workingAction === `select-text:${candidate.candidate_id}` ? "Working..." : isSelected ? "Using This Text" : "Use This Text"}
+                          </button>
+                        </div>
+                      </article>
+                    `;
+                  })}
+                </div>
+              `}
+        </section>
+      `;
+    }
+
+    function renderImageSection() {
+      if (!job) {
+        return null;
+      }
+      const selectedImageDetails = [
+        imageAssets?.selected_image_candidate_id ? `candidate ${imageAssets.selected_image_candidate_id}` : null,
+        imageAssets?.selected_image_provider || null,
+        imageAssets?.selected_image_model || null,
+      ].filter(Boolean).join(" | ");
+      return html`
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Image Options</h2>
+              <p className="section-copy">Generate ImageForge candidates, compare them, and choose one asset for final eCard composition.</p>
+            </div>
+            <div className="inline-actions">
+              ${imageOptions.length === 0
+                ? html`
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick=${() => runStudioAction(
+                        "generate-image-assets",
+                        () => requestJSON(`/api/jobs/${jobId}/image-assets/generate`, { method: "POST" }),
+                        `Generated image assets for ${jobId}`,
+                      )}
+                      disabled=${workingAction === "generate-image-assets" || !canGenerateImages}
+                    >
+                      ${workingAction === "generate-image-assets" ? "Working..." : "Generate Image Assets"}
+                    </button>
+                  `
+                : html`
+                    <button
+                      type="button"
+                      className="button primary"
+                      onClick=${() => runStudioAction(
+                        "regenerate-image-assets",
+                        () => requestJSON(`/api/jobs/${jobId}/image-assets/regenerate`, { method: "POST" }),
+                        `Regenerated image assets for ${jobId}`,
+                      )}
+                      disabled=${workingAction === "regenerate-image-assets" || !canGenerateImages}
+                    >
+                      ${workingAction === "regenerate-image-assets" ? "Working..." : "Regenerate Image"}
+                    </button>
+                  `}
+            </div>
+          </div>
+          <div className=${selectedTextCandidate ? "status-panel neutral studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedTextCandidate
+              ? `Selected text: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "Select text first. Image generation should only run after text_selected is true."}
+          </div>
+          ${imageAssets
+            ? html`
+                <div className="status-panel neutral studio-selected-copy">
+                  Image request: ${humanize(imageAssets.image_generation_status || "not_requested")}
+                  ${imageAssets.image_generation_stage ? ` | provider stage: ${humanize(imageAssets.image_generation_stage)}` : ""}
+                </div>
+              `
+            : null}
+          <div className=${selectedImageOption ? "status-panel success studio-selected-copy" : "status-panel neutral studio-selected-copy"}>
+            ${selectedImageOption
+              ? `Selected image: ${selectedImageDetails || "saved locally"}`
+              : "No image selected yet."}
+          </div>
+          ${imageOptions.length === 0
+            ? html`<p className="empty-state">${canGenerateImages ? "No image candidates yet. Use Generate Image Assets to create ImageForge options." : "No image candidates yet because there is no selected text."}</p>`
+            : html`
+                <div className="studio-image-grid">
+                  ${imageOptions.map((asset) => {
+                    const isSelected = selectedImageOption && selectedImageOption.candidate_id === asset.candidate_id;
+                    return html`
+                      <article key=${asset.key} className=${`studio-image-card ${isSelected ? "selected" : ""}`}>
+                        <a href=${asset.url} target="_blank" rel="noreferrer">
+                          <img src=${asset.url} alt=${asset.provider} loading="lazy" />
+                        </a>
+                        <div className="studio-image-body">
+                          <div className="studio-meta-row">
+                            <span className="mini-pill">${humanize(asset.provider)}</span>
+                            <span className="mini-pill">${asset.model || "Default Model"}</span>
+                          </div>
+                          <div className="studio-meta-row">
+                            ${formatDimensions(asset.width, asset.height)
+                              ? html`<span className="mini-pill">${formatDimensions(asset.width, asset.height)}</span>`
+                              : null}
+                            <span className="mini-pill">${formatDate(asset.created_at)}</span>
+                            <span className="mini-pill">${isSelected ? "Selected" : `Candidate ${asset.candidate_index}`}</span>
+                          </div>
+                          <div className="studio-meta-row">
+                            <span className="mini-pill">${asset.relative_path || "No relative path"}</span>
+                          </div>
+                          <div className="inline-actions">
+                            <button
+                              type="button"
+                              className=${isSelected ? "button" : "button primary"}
+                              onClick=${() => runStudioAction(
+                                `select-image-asset:${asset.candidate_id}`,
+                                () => requestJSON(`/api/jobs/${jobId}/image-assets/${asset.candidate_id}/select`, { method: "POST" }),
+                                `Selected image asset for ${jobId}`,
+                              )}
+                              disabled=${workingAction === `select-image-asset:${asset.candidate_id}` || isSelected}
+                            >
+                              ${workingAction === `select-image-asset:${asset.candidate_id}` ? "Working..." : isSelected ? "Using This Image" : "Use This Image"}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    `;
+                  })}
+                </div>
+              `}
+        </section>
+      `;
+    }
+
+    function renderFinalSection() {
+      if (!job) {
+        return null;
+      }
+      const isFavorite = Boolean(studioState.is_favorite);
+      const rerunLabel = finalCards.length > 0 ? "Regenerate Final Card" : "Render Final Card";
+      const rerunEndpoint = finalCards.length > 0 ? `/api/jobs/${jobId}/rerun/final-render` : `/api/jobs/${jobId}/render-final`;
+      return html`
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Final Card</h2>
+              <p className="section-copy">Render the actual card preview from the selected text and selected image. Final composition stays inside eCardFactory.</p>
+            </div>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="button"
+                onClick=${() => runStudioAction(
+                  "favorite",
+                  () => requestJSON(`/api/jobs/${jobId}/favorite`, {
+                    method: "POST",
+                    body: JSON.stringify({ favorite: !isFavorite }),
+                  }),
+                  isFavorite ? `Removed ${jobId} from favorites` : `Marked ${jobId} as favorite`,
+                )}
+                disabled=${workingAction === "favorite"}
+              >
+                ${workingAction === "favorite" ? "Working..." : isFavorite ? "Unfavorite" : "Mark Favorite"}
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                onClick=${() => runStudioAction(
+                  "rerun-card",
+                  () => requestJSON(rerunEndpoint, { method: "POST" }),
+                  `${rerunLabel} completed for ${jobId}`,
+                )}
+                disabled=${workingAction === "rerun-card" || !canRenderFinal}
+              >
+                ${workingAction === "rerun-card" ? "Working..." : rerunLabel}
+              </button>
+            </div>
+          </div>
+          <div className=${selectedTextCandidate ? "status-panel success studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedTextCandidate
+              ? `Text selected: ${selectedTextCandidate.text || selectedTextCandidate.content_text}`
+              : "No selected text yet."}
+          </div>
+          <div className=${selectedImageOption ? "status-panel success studio-selected-copy" : "status-panel warning studio-selected-copy"}>
+            ${selectedImageOption
+              ? `Image selected: ${imageAssets?.selected_image_candidate_id || selectedImageOption.candidate_id} | ${imageAssets?.selected_image_provider || selectedImageOption.provider} | ${imageAssets?.selected_image_model || selectedImageOption.model || "Default Model"}`
+              : "No selected image yet."}
+          </div>
+          ${finalCards.length === 0
+            ? html`
+                <p className="empty-state">
+                  ${canRenderFinal
+                    ? "No final card preview rendered yet. Render the current text + image selection."
+                    : "Select both text and image before rendering the final card preview."}
+                </p>
+              `
+            : html`
+                <div className="studio-final-grid">
+                  ${finalCards.map((card) => html`
+                    <article key=${card.key} className="studio-final-card">
+                      <a href=${card.url} target="_blank" rel="noreferrer">
+                        <img src=${card.url} alt=${card.label} loading="lazy" />
+                      </a>
+                      <div className="studio-image-body">
+                        <div className="studio-meta-row">
+                          <span className="mini-pill">${card.label}</span>
+                          <span className="mini-pill">${isFavorite ? "Favorite" : humanize(statusCategory(job))}</span>
+                        </div>
+                        <div className="ecard-actions">
+                          <a href=${card.url} target="_blank" rel="noreferrer" className="button-link">Open</a>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick=${() => runStudioAction(
+                              "favorite",
+                              () => requestJSON(`/api/jobs/${jobId}/favorite`, {
+                                method: "POST",
+                                body: JSON.stringify({ favorite: !isFavorite }),
+                              }),
+                              isFavorite ? `Removed ${jobId} from favorites` : `Marked ${jobId} as favorite`,
+                            )}
+                            disabled=${workingAction === "favorite"}
+                          >
+                            ${isFavorite ? "Unfavorite" : "Mark Favorite"}
+                          </button>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick=${() => runStudioAction(
+                              "archive",
+                              () => requestJSON(`/api/jobs/${jobId}/archive`, { method: "POST" }),
+                              `Archived ${jobId}`,
+                            )}
+                            disabled=${workingAction === "archive" || job.status === "archived"}
+                          >
+                            ${workingAction === "archive" ? "Archiving..." : "Archive"}
+                          </button>
+                          <button
+                            type="button"
+                            className="button danger"
+                            onClick=${handleStudioDelete}
+                            disabled=${workingAction === "delete"}
+                          >
+                            ${workingAction === "delete" ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  `)}
+                </div>
+              `}
+        </section>
+      `;
+    }
+
+    return html`
+      <section>
+        <header className="page-head">
+          <div>
+            <p className="page-kicker">Studio</p>
+            <h1 className="page-title">eCard Studio</h1>
+            <p className="page-description">
+              Select text, select image, and rerun only the part of the card you want to change.
+            </p>
+          </div>
+          <div className="inline-actions">
+            ${jobs.length > 0
+              ? html`
+                  <label className="inline-select">
+                    <span>Job</span>
+                    <select value=${jobId || ""} onChange=${(event) => handleSwitchJob(event.target.value)}>
+                      <option value="">Choose job</option>
+                      ${jobs.map((item) => html`
+                        <option key=${item.job_id} value=${item.job_id}>${item.theme_name} | ${item.job_id}</option>
+                      `)}
+                    </select>
+                  </label>
+                `
+              : null}
+            <button type="button" className="button" onClick=${loadStudio} disabled=${loading}>Refresh</button>
+            ${jobId ? html`<${Link} to=${`/jobs/${jobId}`} className="button-link">Job Detail<//>` : null}
+          </div>
+        </header>
+
+        ${error ? html`<div className="status-panel error">${error}</div>` : null}
+        ${statusMessage ? html`<p className="status-line">${statusMessage}</p>` : null}
+        ${loading ? html`<div className="status-panel warning">Loading Studio data...</div>` : null}
+
+        ${!jobId
+          ? html`
+              <section className="section-panel">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">Pick a Job</h2>
+                    <p className="section-copy">Open any recent job in Studio to control text, image, and final card generation.</p>
+                  </div>
+                </div>
+                ${jobs.length === 0
+                  ? html`<p className="empty-state">No jobs available yet. Start from Home or Theme Factory.</p>`
+                  : html`
+                      <div className="table-wrap">
+                        <table className="console-table">
+                          <thead>
+                            <tr>
+                              <th>job_id</th>
+                              <th>theme</th>
+                              <th>stage</th>
+                              <th>updated</th>
+                              <th>open</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            ${jobs.map((item) => html`
+                              <tr key=${item.job_id}>
+                                <td>${item.job_id}</td>
+                                <td>${item.theme_name}</td>
+                                <td><${StatusBadge} value=${getStageValue(item)} /></td>
+                                <td>${formatDate(item.updated_at)}</td>
+                                <td><${Link} className="job-link" to=${`/studio/${item.job_id}`}>Open Studio<//></td>
+                              </tr>
+                            `)}
+                          </tbody>
+                        </table>
+                      </div>
+                    `}
+              </section>
+            `
+          : job
+            ? html`
+                <section className="section-panel">
+                  <div className="section-head">
+                    <div>
+                      <h2 className="section-title">${job.theme_name}</h2>
+                      <p className="section-copy">${job.job_id} | ${job.cards_per_theme || 10} cards | ${copyStyleLabel(job?.output_spec?.format)} | backend status: ${humanize(job.status)}</p>
+                    </div>
+                    <${StatusBadge} value=${currentStage} />
+                  </div>
+                  <div className="studio-current-grid">
+                    <article className="key-card">
+                      <p className="key-label">Current Stage</p>
+                      <p className="studio-current-copy">${humanize(currentStage)}</p>
+                      <p className="section-copy">${selectedTextCandidate ? "Text is selected and locked for downstream steps." : "No text has been selected yet."}</p>
+                    </article>
+                    <article className="key-card">
+                      <p className="key-label">Selected Text</p>
+                      <p className="studio-current-copy">${selectedTextCandidate?.text || selectedTextCandidate?.content_text || "No text selected yet."}</p>
+                      ${selectedTextCandidate
+                        ? html`<p className="section-copy">candidate ${selectedTextCandidate.id} | ${selectedTextCandidate.model}</p>`
+                        : null}
+                    </article>
+                    <article className="key-card">
+                      <p className="key-label">Selected Image</p>
+                      ${selectedImageOption
+                        ? html`
+                            <img className="studio-current-image" src=${selectedImageOption.url} alt="Selected image" loading="lazy" />
+                            <p className="section-copy">
+                              ${imageAssets?.selected_image_candidate_id || selectedImageOption.candidate_id}
+                              ${imageAssets?.selected_image_provider ? ` | ${imageAssets.selected_image_provider}` : ""}
+                              ${imageAssets?.selected_image_model ? ` | ${imageAssets.selected_image_model}` : ""}
+                            </p>
+                          `
+                        : html`<p className="empty-state compact">No image selected yet.</p>`}
+                    </article>
+                    <article className="key-card">
+                      <p className="key-label">Final Card Preview</p>
+                      ${finalPreviewSelection.currentCandidate
+                        ? html`<img className="studio-current-image" src=${finalPreviewSelection.currentCandidate.url} alt="Final card" loading="lazy" onError=${finalPreviewSelection.handleError} />`
+                        : html`<p className="empty-state compact">No final card rendered yet.</p>`}
+                    </article>
+                  </div>
+                </section>
+
+                ${renderTextSection()}
+                ${renderImageSection()}
+                ${renderFinalSection()}
+              `
+            : html`<p className="empty-state">Job not found.</p>`}
+      </section>
+    `;
+  }
+
+  function JobsPage() {
+    const [jobs, setJobs] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    const loadJobs = useCallback(async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const payload = await requestJSON("/api/jobs?limit=100");
+        setJobs(Array.isArray(payload) ? payload : []);
+      } catch (requestError) {
+        setError(requestError.message || "Unable to load jobs");
+      } finally {
+        setLoading(false);
+      }
+    }, []);
+
+    useEffect(() => {
+      loadJobs();
+    }, [loadJobs]);
+
+    return html`
+      <section>
+        <header className="page-head">
+          <div>
+            <p className="page-kicker">Jobs</p>
+            <h1 className="page-title">All Jobs</h1>
+            <p className="page-description">Workflow data is still available, but Studio is the primary place to control card output.</p>
+          </div>
+          <div className="inline-actions">
+            <button type="button" className="button" onClick=${loadJobs} disabled=${loading}>Refresh</button>
+          </div>
+        </header>
+
+        ${error ? html`<div className="status-panel error">${error}</div>` : null}
+        ${loading ? html`<div className="status-panel warning">Loading jobs...</div>` : null}
+
+        <section className="section-panel">
+          <div className="section-head">
+            <div>
+              <h2 className="section-title">Jobs</h2>
+              <p className="section-copy">Open Studio for operator control or Job Detail for audit-heavy troubleshooting.</p>
+            </div>
+          </div>
+          ${jobs.length === 0
+            ? html`<p className="empty-state">No jobs found.</p>`
+            : html`
+                <div className="table-wrap">
+                  <table className="console-table">
+                    <thead>
+                      <tr>
+                        <th>job_id</th>
+                        <th>theme</th>
+                        <th>status</th>
+                        <th>stage</th>
+                        <th>updated</th>
+                        <th>actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${jobs.map((job) => html`
+                        <tr key=${job.job_id}>
+                          <td>${job.job_id}</td>
+                          <td>${job.theme_name}</td>
+                          <td><${StatusBadge} value=${job.status} /></td>
+                          <td>${humanize(job.current_stage)}</td>
+                          <td>${formatDate(job.updated_at)}</td>
+                          <td>
+                            <div className="inline-actions">
+                              <${Link} className="button-link" to=${`/studio/${job.job_id}`}>Studio<//>
+                              <${Link} className="button-link" to=${`/jobs/${job.job_id}`}>Detail<//>
+                            </div>
+                          </td>
+                        </tr>
+                      `)}
+                    </tbody>
+                  </table>
+                </div>
+              `}
+        </section>
+      </section>
+    `;
+  }
+
+  function ConsoleSidebar() {
+    const navItems = [
+      { to: "/", label: "Home", icon: "home", end: true },
+      { to: "/themes", label: "Theme Factory", icon: "themes" },
+      { to: "/studio", label: "Studio", icon: "studio" },
+      { to: "/compare", label: "Compare Lab", icon: "compare" },
+      { to: "/jobs", label: "Jobs", icon: "jobs" },
+    ];
+
+    return html`
+      <aside className="console-sidebar">
+        <div className="sidebar-brand">
+          <p className="brand-overline">eCardFactory</p>
+          <p className="sidebar-brand-mark">ECF</p>
+        </div>
+        <nav className="sidebar-nav icon-only" aria-label="Primary">
+          ${navItems.map((item) => html`
+            <${NavLink}
+              key=${item.to}
+              to=${item.to}
+              end=${Boolean(item.end)}
+              title=${item.label}
+              data-tooltip=${item.label}
+              className=${({ isActive }) => (isActive ? "nav-link icon-link active" : "nav-link icon-link")}
+            >
+              <span className="nav-icon"><${SidebarIcon} name=${item.icon} /></span>
+              <span className="sr-only">${item.label}</span>
+            <//>
+          `)}
+        </nav>
+      </aside>
+    `;
+  }
+
   function CompareLabPage() {
     return html`
       <section>
@@ -2830,38 +3970,16 @@ const html = htm.bind(React.createElement);
   function AppFrame() {
     return html`
       <div className="console-layout">
-        <aside className="console-sidebar">
-          <p className="brand-overline">eCardFactory</p>
-          <h1 className="brand-title">Internal Console</h1>
-          <p className="brand-subtitle">Workflow-first operations panel</p>
-          <nav className="sidebar-nav" aria-label="Primary">
-            <${NavLink}
-              to="/"
-              end
-              className=${({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
-            >
-              Workflow Console
-            <//>
-            <${NavLink}
-              to="/themes"
-              className=${({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
-            >
-              Theme Factory
-            <//>
-            <${NavLink}
-              to="/compare"
-              className=${({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
-            >
-              Compare Lab
-            <//>
-          </nav>
-        </aside>
+        <${ConsoleSidebar} />
 
         <main className="console-main">
           <${Routes}>
             <${Route} path="/" element=${html`<${WorkflowConsolePage} />`} />
             <${Route} path="/themes" element=${html`<${ThemeFactoryPage} />`} />
+            <${Route} path="/studio" element=${html`<${StudioPage} />`} />
+            <${Route} path="/studio/:jobId" element=${html`<${StudioPage} />`} />
             <${Route} path="/compare" element=${html`<${CompareLabPage} />`} />
+            <${Route} path="/jobs" element=${html`<${JobsPage} />`} />
             <${Route} path="/jobs/:jobId" element=${html`<${JobDetailPage} />`} />
             <${Route} path="*" element=${html`<${Navigate} to="/" replace=${true} />`} />
           <//>
@@ -2893,16 +4011,7 @@ const html = htm.bind(React.createElement);
       }
       return html`
         <div className="console-layout">
-          <aside className="console-sidebar">
-            <p className="brand-overline">eCardFactory</p>
-            <h1 className="brand-title">Internal Console</h1>
-            <p className="brand-subtitle">Workflow-first operations panel</p>
-            <nav className="sidebar-nav" aria-label="Primary">
-              <a className="nav-link active" href="/">Workflow Console</a>
-              <a className="nav-link" href="/themes">Theme Factory</a>
-              <a className="nav-link" href="/compare">Compare Lab</a>
-            </nav>
-          </aside>
+          <${ConsoleSidebar} />
           <main className="console-main">
             <header className="page-head">
               <div>

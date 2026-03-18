@@ -19,6 +19,7 @@ from app.models.workflow import (
     CardAsset,
     CardAuditLog,
     CardContentCandidate,
+    CardImageCandidate,
     CardJob,
     CardJudgeResult,
     CardShortlist,
@@ -72,6 +73,16 @@ class WorkflowJobRepository:
                         final_approval_status=job["final_approval_status"],
                         image_prompt=job["image_prompt"],
                         image_preview_url=job["image_preview_url"],
+                        imageforge_request_id=job.get("imageforge_request_id"),
+                        imageforge_trace_id=job.get("imageforge_trace_id"),
+                        image_generation_status=job.get("image_generation_status"),
+                        image_generation_stage=job.get("image_generation_stage"),
+                        selected_image_candidate_id=job.get("selected_image_candidate_id"),
+                        selected_image_public_url=job.get("selected_image_public_url"),
+                        selected_image_relative_path=job.get("selected_image_relative_path"),
+                        selected_image_provider=job.get("selected_image_provider"),
+                        selected_image_model=job.get("selected_image_model"),
+                        image_generated_at=job.get("image_generated_at"),
                         final_preview_url=job["final_preview_url"],
                         final_asset_urls=job["final_asset_urls"],
                         cards_per_theme=int(job.get("cards_per_theme") or 10),
@@ -110,6 +121,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
                         selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
@@ -141,7 +153,11 @@ class WorkflowJobRepository:
             async with async_session_factory() as session:
                 statement = (
                     select(CardJob)
-                    .options(selectinload(CardJob.assets))
+                    .options(
+                        selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
+                        selectinload(CardJob.shortlists),
+                    )
                     .order_by(CardJob.created_at.desc(), CardJob.job_id.desc())
                     .limit(safe_limit)
                 )
@@ -163,10 +179,18 @@ class WorkflowJobRepository:
                     "job_id": item.job_id,
                     "theme_name": item.theme_name,
                     "status": item.status,
+                    "output_spec": item.output_spec or {},
                     "content_preview": item.content_preview,
                     "image_preview_url": image_preview_url,
+                    "imageforge_request_id": item.imageforge_request_id,
+                    "image_generation_status": item.image_generation_status,
+                    "image_generation_stage": item.image_generation_stage,
+                    "selected_image_candidate_id": item.selected_image_candidate_id,
+                    "selected_image_public_url": item.selected_image_public_url,
                     "final_preview_url": final_preview_url,
                     "final_asset_urls": final_asset_urls,
+                    "shortlist_count": len(item.shortlists),
+                    "image_candidate_count": len(item.image_candidates),
                     "cards_per_theme": item.cards_per_theme,
                     "content_approval_status": item.content_approval_status,
                     "image_approval_status": item.image_approval_status,
@@ -262,6 +286,7 @@ class WorkflowJobRepository:
                         selectinload(CardJob.judge_results),
                         selectinload(CardJob.approvals),
                         selectinload(CardJob.assets),
+                        selectinload(CardJob.image_candidates),
                         selectinload(CardJob.shortlists).selectinload(CardShortlist.candidate),
                         selectinload(CardJob.audit_events),
                     )
@@ -298,8 +323,10 @@ class WorkflowJobRepository:
             job = await self._memory.get_job(job_id)
             if job is None:
                 return
+            existing_candidates = list(job.get("candidates") or [])
             normalized_candidates: list[dict[str, Any]] = []
-            for index, candidate in enumerate(candidates, start=1):
+            start_index = len(existing_candidates) + 1 if not replace_existing else 1
+            for index, candidate in enumerate(candidates, start=start_index):
                 normalized_candidates.append(
                     {
                         "id": int(candidate.get("id") or index),
@@ -316,7 +343,7 @@ class WorkflowJobRepository:
                         "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
                     }
                 )
-            job["candidates"] = normalized_candidates
+            job["candidates"] = normalized_candidates if replace_existing else existing_candidates + normalized_candidates
             if replace_existing:
                 job["shortlist"] = []
             await self._memory.merge_snapshot(job)
@@ -595,6 +622,185 @@ class WorkflowJobRepository:
                 ),
             )
 
+    async def update_asset_selection(
+        self,
+        job_id: str,
+        *,
+        asset_type: str,
+        selected_relative_path: str,
+    ) -> None:
+        """Mark one asset as selected/approved within a given asset group."""
+
+        normalized_path = str(selected_relative_path or "").strip()
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            next_assets = []
+            for asset in list(job.get("assets") or []):
+                updated = dict(asset)
+                if str(updated.get("asset_type") or "") == asset_type:
+                    updated["approved"] = str(updated.get("relative_path") or "").strip() == normalized_path
+                next_assets.append(updated)
+            job["assets"] = next_assets
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(CardAsset).where(
+                        CardAsset.job_id == job_id,
+                        CardAsset.asset_type == asset_type,
+                    )
+                )
+                for asset in result.scalars().all():
+                    asset.approved = str(asset.relative_path or "").strip() == normalized_path
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="update_asset_selection",
+                error=exc,
+                memory_action=lambda: self.update_asset_selection(
+                    job_id,
+                    asset_type=asset_type,
+                    selected_relative_path=normalized_path,
+                ),
+            )
+
+    async def save_image_candidates(
+        self,
+        job_id: str,
+        candidates: list[dict[str, Any]],
+        *,
+        replace_existing: bool = False,
+        stage: str | None = None,
+    ) -> None:
+        """Persist workflow image candidate metadata."""
+
+        normalized_stage = str(stage or "").strip().lower() or None
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            existing_candidates = list(job.get("image_candidates") or [])
+            if replace_existing and normalized_stage:
+                existing_candidates = [
+                    item
+                    for item in existing_candidates
+                    if str(item.get("stage") or "").strip().lower() != normalized_stage
+                ]
+            elif replace_existing:
+                existing_candidates = []
+            start_index = len(existing_candidates) + 1
+            next_candidates = []
+            for index, candidate in enumerate(candidates, start=start_index):
+                next_candidates.append(
+                    {
+                        "id": int(candidate.get("id") or index),
+                        "stage": str(candidate.get("stage") or stage or "image_generation"),
+                        "provider": str(candidate.get("provider") or settings.image_provider),
+                        "model": str(candidate.get("model") or "") or None,
+                        "prompt": str(candidate.get("prompt") or ""),
+                        "prompt_used": str(candidate.get("prompt_used") or candidate.get("prompt") or "") or None,
+                        "negative_prompt_used": str(candidate.get("negative_prompt_used") or "") or None,
+                        "imageforge_request_id": str(candidate.get("imageforge_request_id") or "") or None,
+                        "candidate_id": str(candidate.get("candidate_id") or "") or None,
+                        "provider_run_id": str(candidate.get("provider_run_id") or "") or None,
+                        "candidate_index": int(candidate.get("candidate_index") or index),
+                        "public_url": str(candidate.get("public_url") or ""),
+                        "relative_path": str(candidate.get("relative_path") or ""),
+                        "width": int(candidate["width"]) if candidate.get("width") is not None else None,
+                        "height": int(candidate["height"]) if candidate.get("height") is not None else None,
+                        "is_selected": bool(candidate.get("is_selected")),
+                        "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
+                    }
+                )
+            job["image_candidates"] = existing_candidates + next_candidates
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                if replace_existing:
+                    statement = select(CardImageCandidate).where(CardImageCandidate.job_id == job_id)
+                    if normalized_stage:
+                        statement = statement.where(CardImageCandidate.stage == normalized_stage)
+                    result = await session.execute(statement)
+                    for record in result.scalars().all():
+                        await session.delete(record)
+                    await session.flush()
+
+                for candidate in candidates:
+                    session.add(
+                        CardImageCandidate(
+                            job_id=job_id,
+                            stage=str(candidate.get("stage") or stage or "image_generation"),
+                            imageforge_request_id=str(candidate.get("imageforge_request_id") or "") or None,
+                            candidate_id=str(candidate.get("candidate_id") or "") or None,
+                            provider_run_id=str(candidate.get("provider_run_id") or "") or None,
+                            provider=str(candidate.get("provider") or settings.image_provider),
+                            model=str(candidate.get("model") or "") or None,
+                            prompt=str(candidate.get("prompt") or ""),
+                            prompt_used=str(candidate.get("prompt_used") or candidate.get("prompt") or "") or None,
+                            negative_prompt_used=str(candidate.get("negative_prompt_used") or "") or None,
+                            candidate_index=int(candidate.get("candidate_index") or 1),
+                            public_url=str(candidate.get("public_url") or ""),
+                            relative_path=str(candidate.get("relative_path") or ""),
+                            width=int(candidate["width"]) if candidate.get("width") is not None else None,
+                            height=int(candidate["height"]) if candidate.get("height") is not None else None,
+                            is_selected=bool(candidate.get("is_selected")),
+                            created_at=candidate.get("created_at") or datetime.now(timezone.utc),
+                        )
+                    )
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="save_image_candidates",
+                error=exc,
+                memory_action=lambda: self.save_image_candidates(
+                    job_id,
+                    candidates,
+                    replace_existing=replace_existing,
+                    stage=stage,
+                ),
+            )
+
+    async def update_image_candidate_selection(self, job_id: str, *, selected_relative_path: str) -> None:
+        """Persist which image candidate is currently selected."""
+
+        normalized_path = str(selected_relative_path or "").strip()
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            next_candidates = []
+            for candidate in list(job.get("image_candidates") or []):
+                updated = dict(candidate)
+                updated["is_selected"] = str(updated.get("relative_path") or "").strip() == normalized_path
+                next_candidates.append(updated)
+            job["image_candidates"] = next_candidates
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(CardImageCandidate).where(CardImageCandidate.job_id == job_id)
+                )
+                for candidate in result.scalars().all():
+                    candidate.is_selected = str(candidate.relative_path or "").strip() == normalized_path
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="update_image_candidate_selection",
+                error=exc,
+                memory_action=lambda: self.update_image_candidate_selection(
+                    job_id,
+                    selected_relative_path=normalized_path,
+                ),
+            )
+
     async def append_audit_event(
         self,
         job_id: str,
@@ -693,6 +899,7 @@ class WorkflowJobRepository:
         shortlists = sorted(job.shortlists, key=lambda item: (item.rank, item.id or 0))
         approvals = sorted(job.approvals, key=lambda item: item.id or 0)
         assets = sorted(job.assets, key=lambda item: item.id or 0)
+        image_candidates = sorted(job.image_candidates, key=lambda item: item.id or 0)
         judge_results = sorted(job.judge_results, key=lambda item: item.id or 0)
         audit_events = sorted(job.audit_events, key=lambda item: item.id or 0)
         shortlist_rank_by_candidate = {
@@ -723,6 +930,16 @@ class WorkflowJobRepository:
             "final_approval_status": job.final_approval_status,
             "image_prompt": job.image_prompt,
             "image_preview_url": image_preview_url,
+            "imageforge_request_id": job.imageforge_request_id,
+            "imageforge_trace_id": job.imageforge_trace_id,
+            "image_generation_status": job.image_generation_status,
+            "image_generation_stage": job.image_generation_stage,
+            "selected_image_candidate_id": job.selected_image_candidate_id,
+            "selected_image_public_url": job.selected_image_public_url,
+            "selected_image_relative_path": job.selected_image_relative_path,
+            "selected_image_provider": job.selected_image_provider,
+            "selected_image_model": job.selected_image_model,
+            "image_generated_at": job.image_generated_at,
             "final_preview_url": final_preview_url,
             "final_asset_urls": final_assets or None,
             "cards_per_theme": job.cards_per_theme,
@@ -750,6 +967,28 @@ class WorkflowJobRepository:
                     "created_at": item.created_at,
                 }
                 for item in candidates
+            ],
+            "image_candidates": [
+                {
+                    "id": item.id,
+                    "stage": item.stage,
+                    "imageforge_request_id": item.imageforge_request_id,
+                    "candidate_id": item.candidate_id,
+                    "provider_run_id": item.provider_run_id,
+                    "provider": item.provider,
+                    "model": item.model,
+                    "prompt": item.prompt,
+                    "prompt_used": item.prompt_used,
+                    "negative_prompt_used": item.negative_prompt_used,
+                    "candidate_index": item.candidate_index,
+                    "public_url": item.public_url,
+                    "relative_path": item.relative_path,
+                    "width": item.width,
+                    "height": item.height,
+                    "is_selected": item.is_selected,
+                    "created_at": item.created_at,
+                }
+                for item in image_candidates
             ],
             "shortlist": [
                 {

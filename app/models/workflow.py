@@ -63,6 +63,16 @@ class CardJob(Base):
     )
     image_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    imageforge_request_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    imageforge_trace_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image_generation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    image_generation_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selected_image_candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    selected_image_public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_image_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_image_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selected_image_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    image_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     final_preview_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_asset_urls: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
     cards_per_theme: Mapped[int] = mapped_column(
@@ -110,6 +120,10 @@ class CardJob(Base):
         cascade="all, delete-orphan",
     )
     assets: Mapped[list["CardAsset"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+    image_candidates: Mapped[list["CardImageCandidate"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
@@ -265,6 +279,47 @@ class CardAsset(Base):
     )
 
     job: Mapped[CardJob] = relationship(back_populates="assets")
+
+
+class CardImageCandidate(Base):
+    """Stored image candidate metadata for one workflow job."""
+
+    __tablename__ = "card_image_candidates"
+    __table_args__ = {"schema": settings.db_schema}
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey(f"{settings.db_schema}.card_jobs.job_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    imageforge_request_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    provider_run_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negative_prompt_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    public_url: Mapped[str] = mapped_column(Text, nullable=False)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_selected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    job: Mapped[CardJob] = relationship(back_populates="image_candidates")
 
 
 class CardJudgeResult(Base):

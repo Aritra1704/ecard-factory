@@ -35,6 +35,7 @@ class InMemoryJobStore:
             record["judge_results"] = []
             record["approvals"] = []
             record["assets"] = []
+            record["image_candidates"] = []
             record["audit_log"] = deepcopy(audit_events)
             self._jobs[record["job_id"]] = record
 

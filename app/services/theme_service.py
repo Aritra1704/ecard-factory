@@ -43,6 +43,7 @@ WEEKDAY_ORDER = [
     "saturday",
     "sunday",
 ]
+SHORT_CAMPAIGN_MAX_DAYS = 7
 
 
 @dataclass(slots=True)
@@ -433,14 +434,38 @@ class ThemeService:
             if item.is_active and item.theme_id in theme_lookup and self._schedule_matches_location(item, region=region, country=country)
         ]
 
-        date_range_candidates = [
+        single_day_candidates = [
             item
             for item in active_schedules
-            if item.schedule_type in {"single_day", "date_range"} and self._schedule_matches_date(item, plan_date)
+            if item.schedule_type == "single_day" and self._schedule_matches_date(item, plan_date)
         ]
-        date_range_candidates.sort(key=lambda item: (item.priority, theme_lookup[item.theme_id].priority), reverse=True)
-        if date_range_candidates:
-            chosen = date_range_candidates[0]
+        single_day_candidates.sort(key=lambda item: (item.priority, theme_lookup[item.theme_id].priority), reverse=True)
+        if single_day_candidates:
+            chosen = single_day_candidates[0]
+            return ThemeTodayResponse(
+                timezone="Asia/Kolkata",
+                plan_date=plan_date,
+                weekday=weekday,
+                source="schedule",
+                schedule_type=chosen.schedule_type,
+                schedule_id=chosen.id,
+                override_id=None,
+                resolution_note=chosen.notes,
+                theme=self._resolved_theme_payload(theme_lookup[chosen.theme_id]),
+            )
+
+        # Let short campaign weeks win, but keep everyday weekday themes ahead
+        # of long seasonal ranges such as month-long observances.
+        short_campaign_candidates = [
+            item
+            for item in active_schedules
+            if item.schedule_type == "date_range"
+            and self._schedule_matches_date(item, plan_date)
+            and self._schedule_duration_days(item) <= SHORT_CAMPAIGN_MAX_DAYS
+        ]
+        short_campaign_candidates.sort(key=lambda item: (item.priority, theme_lookup[item.theme_id].priority), reverse=True)
+        if short_campaign_candidates:
+            chosen = short_campaign_candidates[0]
             return ThemeTodayResponse(
                 timezone="Asia/Kolkata",
                 plan_date=plan_date,
@@ -463,6 +488,29 @@ class ThemeService:
         weekly_candidates.sort(key=lambda item: (item.priority, theme_lookup[item.theme_id].priority), reverse=True)
         if weekly_candidates:
             chosen = weekly_candidates[0]
+            return ThemeTodayResponse(
+                timezone="Asia/Kolkata",
+                plan_date=plan_date,
+                weekday=weekday,
+                source="schedule",
+                schedule_type=chosen.schedule_type,
+                schedule_id=chosen.id,
+                override_id=None,
+                resolution_note=chosen.notes,
+                theme=self._resolved_theme_payload(theme_lookup[chosen.theme_id]),
+            )
+
+        extended_date_range_candidates = [
+            item
+            for item in active_schedules
+            if item.schedule_type == "date_range" and self._schedule_matches_date(item, plan_date)
+        ]
+        extended_date_range_candidates.sort(
+            key=lambda item: (item.priority, theme_lookup[item.theme_id].priority),
+            reverse=True,
+        )
+        if extended_date_range_candidates:
+            chosen = extended_date_range_candidates[0]
             return ThemeTodayResponse(
                 timezone="Asia/Kolkata",
                 plan_date=plan_date,
@@ -572,6 +620,12 @@ class ThemeService:
         if override.end_at and override.end_at < current_dt:
             return False
         return True
+
+    @staticmethod
+    def _schedule_duration_days(schedule: ThemeScheduleResponse) -> int:
+        if schedule.start_date and schedule.end_date:
+            return (schedule.end_date - schedule.start_date).days + 1
+        return 0
 
 
 @lru_cache(maxsize=1)

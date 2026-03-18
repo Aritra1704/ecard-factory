@@ -7,4 +7,5 @@ __pycache__/
 .DS_Store
 config/local.ports.env
 node_modules/
+package-lock.json
 assets/

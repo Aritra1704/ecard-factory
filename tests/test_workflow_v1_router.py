@@ -138,23 +138,24 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert isinstance(start_payload["content_preview"], str)
         assert isinstance(start_payload["winner_model"], str)
         assert start_payload["candidate_pool_count"] == 30
-        assert start_payload["shortlist_count"] == 10
+        assert 3 <= start_payload["shortlist_count"] <= 5
 
         candidates_response = client.get(f"/api/jobs/{job_id}/candidates")
         assert candidates_response.status_code == 200
         candidates_payload = candidates_response.json()
         assert len(candidates_payload) == 30
-        assert sum(1 for item in candidates_payload if item["is_shortlisted"]) == 10
+        assert sum(1 for item in candidates_payload if item["is_shortlisted"]) == start_payload["shortlist_count"]
 
         shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
         assert shortlist_response.status_code == 200
         shortlist_payload = shortlist_response.json()
-        assert len(shortlist_payload) == 10
+        assert len(shortlist_payload) == start_payload["shortlist_count"]
         assert shortlist_payload[0]["rank"] == 1
 
         get_after_start = client.get(f"/api/jobs/{job_id}")
         assert get_after_start.status_code == 200
         assert get_after_start.json()["status"] == "content_pending_approval"
+        assert get_after_start.json()["current_stage"] == "content_candidates_ready"
         assert get_after_start.json()["cards_per_theme"] == 10
 
         content_response = client.post(
@@ -169,8 +170,11 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         get_after_content = client.get(f"/api/jobs/{job_id}")
         assert get_after_content.status_code == 200
         assert get_after_content.json()["status"] == "image_pending_approval"
+        assert get_after_content.json()["current_stage"] == "image_candidates_ready"
         assert get_after_content.json()["content_approval_status"] == "approved"
         assert get_after_content.json()["image_approval_status"] == "pending"
+        assert len(get_after_content.json()["image_candidates"]) == 3
+        assert all(item["provider"] == "local_sdxl" for item in get_after_content.json()["image_candidates"])
 
         image_response = client.post(
             f"/api/jobs/{job_id}/image-approval",
@@ -185,6 +189,7 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         get_after_image = client.get(f"/api/jobs/{job_id}")
         assert get_after_image.status_code == 200
         assert get_after_image.json()["status"] == "final_pending_approval"
+        assert get_after_image.json()["current_stage"] == "final_card_ready"
         assert get_after_image.json()["image_approval_status"] == "approved"
         assert get_after_image.json()["final_preview_url"] == (
             f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
@@ -209,6 +214,7 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         list_payload = list_response.json()
         list_item = next(item for item in list_payload if item["job_id"] == job_id)
         assert list_item["content_preview"]
+        assert list_item["current_stage"] == "final_card_ready"
         assert list_item["cards_per_theme"] == 10
         assert list_item["image_preview_url"] == f"http://localhost:8080/assets/image/{job_id}_image_preview.png"
         assert list_item["final_preview_url"] == f"http://localhost:8080/assets/preview/{job_id}_content_preview.png"
@@ -218,9 +224,10 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         assert get_after_final.status_code == 200
         debug_payload = get_after_final.json()
         assert debug_payload["status"] == "completed"
+        assert debug_payload["current_stage"] == "final_card_ready"
         assert debug_payload["final_approval_status"] == "approved"
         assert len(debug_payload["candidates"]) == 30
-        assert len(debug_payload["shortlist"]) == 10
+        assert len(debug_payload["shortlist"]) == start_payload["shortlist_count"]
         assert any(event["event_type"] == "job_completed" for event in debug_payload["audit_log"])
         (_assets_dir() / "image" / f"{job_id}_image_preview.png").unlink(missing_ok=True)
         (_assets_dir() / "preview" / f"{job_id}_content_preview.png").unlink(missing_ok=True)
@@ -371,10 +378,36 @@ def test_workflow_v1_rerun_and_shortlist_render_endpoints(configured_env: dict[s
         assert rerun_content.json()["stage"] == "content"
         assert rerun_content.json()["retry_count"] == 1
 
+        refreshed_shortlist = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert refreshed_shortlist.status_code == 200
+        refreshed_shortlist_payload = refreshed_shortlist.json()
+        assert refreshed_shortlist_payload
+        select_text = client.post(
+            f"/api/jobs/{job_id}/select-text",
+            json={"candidate_id": refreshed_shortlist_payload[0]["candidate_id"]},
+        )
+        assert select_text.status_code == 200
+        assert select_text.json()["current_stage"] == "text_selected"
+
         rerun_image = client.post(f"/api/jobs/{job_id}/rerun/image")
         assert rerun_image.status_code == 200
         assert rerun_image.json()["stage"] == "image"
         assert rerun_image.json()["status"] == "image_pending_approval"
+
+        image_assets = client.get(f"/api/jobs/{job_id}/assets")
+        assert image_assets.status_code == 200
+        selectable_options = [
+            asset
+            for asset in image_assets.json()
+            if asset["asset_type"] == "image_option" and asset.get("relative_path")
+        ]
+        assert selectable_options
+        select_image = client.post(
+            f"/api/jobs/{job_id}/select-image",
+            json={"relative_path": selectable_options[0]["relative_path"]},
+        )
+        assert select_image.status_code == 200
+        assert select_image.json()["current_stage"] == "image_selected"
 
         rerun_final = client.post(f"/api/jobs/{job_id}/rerun/final-render")
         assert rerun_final.status_code == 200
@@ -509,6 +542,62 @@ def test_workflow_v1_operator_stage_control_endpoints(configured_env: dict[str, 
         assert approve_final.status_code == 200
         assert approve_final.json()["status"] == "completed"
         assert approve_final.json()["final_asset_urls"]["png"].endswith("_final.png")
+
+
+def test_workflow_v1_image_provider_generates_three_local_candidates(configured_env: dict[str, str]) -> None:
+    """Image generation should default to local provider candidates and allow explicit selection."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
+        assert client.post(f"/api/jobs/{job_id}/approve-content").status_code == 200
+        assert client.post(f"/api/jobs/{job_id}/generate-image").status_code == 200
+
+        debug_response = client.get(f"/api/jobs/{job_id}")
+        assert debug_response.status_code == 200
+        debug_payload = debug_response.json()
+        assert len(debug_payload["image_candidates"]) == 3
+        assert all(item["provider"] == "local_sdxl" for item in debug_payload["image_candidates"])
+        assert sum(1 for item in debug_payload["image_candidates"] if item["is_selected"]) == 1
+
+        assets_response = client.get(f"/api/jobs/{job_id}/assets")
+        assert assets_response.status_code == 200
+        image_assets = [
+            asset
+            for asset in assets_response.json()
+            if asset["asset_type"] in {"image_preview", "image_option"}
+        ]
+        assert len(image_assets) == 3
+
+        more_response = client.post(f"/api/jobs/{job_id}/generate-more-images")
+        assert more_response.status_code == 200
+        assert more_response.json()["generated_count"] == 3
+
+        refreshed_assets = client.get(f"/api/jobs/{job_id}/assets").json()
+        selectable_options = [
+            asset
+            for asset in refreshed_assets
+            if asset["asset_type"] == "image_option" and asset.get("relative_path")
+        ]
+        assert len(selectable_options) >= 4
+
+        selected_option = selectable_options[-1]
+        select_response = client.post(
+            f"/api/jobs/{job_id}/select-image",
+            json={"relative_path": selected_option["relative_path"]},
+        )
+        assert select_response.status_code == 200
+        assert select_response.json()["image_preview_url"] == selected_option["public_url"]
+
+        selected_debug = client.get(f"/api/jobs/{job_id}").json()
+        matching_candidates = [
+            candidate
+            for candidate in selected_debug["image_candidates"]
+            if candidate["relative_path"] == selected_option["relative_path"]
+        ]
+        assert matching_candidates
+        assert matching_candidates[0]["is_selected"] is True
 
 
 def test_workflow_v1_generic_rerun_stage_endpoint(configured_env: dict[str, str]) -> None:

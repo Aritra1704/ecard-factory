@@ -15,9 +15,13 @@ ECARD_RELOAD="${ECARD_RELOAD:-false}"
 
 cd "${ROOT_DIR}"
 
+PYTHON_BIN=""
 if [[ -d "${ROOT_DIR}/venv" ]]; then
   # shellcheck source=/dev/null
   source "${ROOT_DIR}/venv/bin/activate"
+  if [[ -x "${ROOT_DIR}/venv/bin/python" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/venv/bin/python"
+  fi
 fi
 
 CONSOLE_BUNDLE="${ROOT_DIR}/app/static/console/app.js"
@@ -41,6 +45,14 @@ fi
 export APP_PORT="${ECARD_PORT}"
 
 echo "Starting eCardFactory on ${ECARD_HOST_BIND}:${ECARD_PORT} (reload=${ECARD_RELOAD})"
+
+if [[ -n "${PYTHON_BIN}" ]]; then
+  if [[ "${ECARD_RELOAD}" == "true" ]]; then
+    exec "${PYTHON_BIN}" -m uvicorn app.main:app --host "${ECARD_HOST_BIND}" --port "${ECARD_PORT}" --reload
+  else
+    exec "${PYTHON_BIN}" -m uvicorn app.main:app --host "${ECARD_HOST_BIND}" --port "${ECARD_PORT}"
+  fi
+fi
 
 if [[ "${ECARD_RELOAD}" == "true" ]]; then
   exec uvicorn app.main:app --host "${ECARD_HOST_BIND}" --port "${ECARD_PORT}" --reload

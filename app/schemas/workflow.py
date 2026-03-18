@@ -27,6 +27,7 @@ class OutputSpec(BaseModel):
     format: str = "paragraph"
     length: OutputLength = Field(default_factory=OutputLength)
     structure: OutputStructure = Field(default_factory=OutputStructure)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RenderConfig(BaseModel):
@@ -85,8 +86,8 @@ class ThemeJobCreateRequest(BaseModel):
 
     cards_per_theme: int = Field(default=10, ge=1, le=50)
     notes: str | None = None
-    copy_style: Literal["short_crisp", "warm_note", "playful"] = "short_crisp"
-    target_words: int = Field(default=16, ge=4, le=60)
+    copy_style: Literal["witty", "playful", "heartfelt", "minimal", "short_crisp", "warm_note"] = "minimal"
+    target_words: int = Field(default=14, ge=4, le=60)
     tone_funny_pct: int | None = Field(default=None, ge=0, le=100)
 
 
@@ -190,6 +191,28 @@ class ApprovalDebugResponse(BaseModel):
     decided_at: datetime
 
 
+class ImageCandidateDebugResponse(BaseModel):
+    """Persisted image candidate metadata returned by debug endpoint."""
+
+    id: int | None = None
+    stage: str
+    imageforge_request_id: str | None = None
+    candidate_id: str | None = None
+    provider_run_id: str | None = None
+    provider: str
+    model: str | None = None
+    prompt: str
+    prompt_used: str | None = None
+    negative_prompt_used: str | None = None
+    candidate_index: int
+    public_url: str
+    relative_path: str
+    width: int | None = None
+    height: int | None = None
+    is_selected: bool = False
+    created_at: datetime | None = None
+
+
 class AuditEventDebugResponse(BaseModel):
     """Audit event returned by the debug endpoint."""
 
@@ -204,9 +227,11 @@ class JobDebugResponse(BaseModel):
     job_id: str
     trace_id: str
     status: str
+    current_stage: str
     theme_name: str
     audience: str
     cultural_context: str
+    output_spec: dict[str, Any] = Field(default_factory=dict)
     content_preview: str | None = None
     winner_model: str | None = None
     content_approval_status: str = "pending"
@@ -214,6 +239,16 @@ class JobDebugResponse(BaseModel):
     final_approval_status: str = "pending"
     image_prompt: str | None = None
     image_preview_url: str | None = None
+    imageforge_request_id: str | None = None
+    imageforge_trace_id: str | None = None
+    image_generation_status: str | None = None
+    image_generation_stage: str | None = None
+    selected_image_candidate_id: str | None = None
+    selected_image_public_url: str | None = None
+    selected_image_relative_path: str | None = None
+    selected_image_provider: str | None = None
+    selected_image_model: str | None = None
+    image_generated_at: datetime | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
     cards_per_theme: int = 10
@@ -225,6 +260,7 @@ class JobDebugResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     candidates: list[CandidateDebugResponse] = Field(default_factory=list)
+    image_candidates: list[ImageCandidateDebugResponse] = Field(default_factory=list)
     shortlist: list[ShortlistEntryResponse] = Field(default_factory=list)
     approvals: list[ApprovalDebugResponse] = Field(default_factory=list)
     audit_log: list[AuditEventDebugResponse] = Field(default_factory=list)
@@ -237,6 +273,7 @@ class JobListItemResponse(BaseModel):
     theme_name: str
     current_stage: str
     status: str
+    output_spec: dict[str, Any] = Field(default_factory=dict)
     content_preview: str | None = None
     image_preview_url: str | None = None
     final_preview_url: str | None = None
@@ -265,6 +302,85 @@ class JobAssetResponse(BaseModel):
     version: str | None = None
     approved: bool = False
     created_at: datetime | None = None
+
+
+class SelectTextRequest(BaseModel):
+    """Request payload for choosing one generated text option as the active card copy."""
+
+    candidate_id: int = Field(ge=1)
+
+
+class SelectImageRequest(BaseModel):
+    """Request payload for choosing one generated image option as the active visual direction."""
+
+    relative_path: str | None = None
+    public_url: str | None = None
+
+
+class FavoriteCardRequest(BaseModel):
+    """Request payload for toggling favorite state on the current card job."""
+
+    favorite: bool = True
+
+
+class StudioActionResponse(BaseModel):
+    """Lightweight response for Studio selection and favorite actions."""
+
+    job_id: str
+    status: str
+    current_stage: str
+    content_preview: str | None = None
+    image_preview_url: str | None = None
+    final_preview_url: str | None = None
+    is_favorite: bool = False
+
+
+class GenerateMoreResponse(BaseModel):
+    """Response payload for generating additional options inside Studio."""
+
+    job_id: str
+    status: str
+    generated_count: int = 0
+
+
+class RegenerateImageAssetsRequest(BaseModel):
+    """Optional payload for requesting a fresh ImageForge candidate batch."""
+
+    candidate_count: int | None = Field(default=None, ge=1)
+
+
+class ImageAssetCandidateResponse(BaseModel):
+    """UI-ready image candidate metadata owned by eCardFactory."""
+
+    candidate_id: str
+    provider: str
+    model: str | None = None
+    candidate_index: int
+    public_url: str
+    relative_path: str
+    width: int | None = None
+    height: int | None = None
+    is_selected: bool = False
+    created_at: datetime | None = None
+
+
+class JobImageAssetsResponse(BaseModel):
+    """Normalized image asset payload returned to Studio."""
+
+    job_id: str
+    imageforge_enabled: bool = True
+    imageforge_request_id: str | None = None
+    imageforge_trace_id: str | None = None
+    image_generation_status: str | None = None
+    image_generation_stage: str | None = None
+    selected_text: str | None = None
+    selected_image_candidate_id: str | None = None
+    selected_image_public_url: str | None = None
+    selected_image_relative_path: str | None = None
+    selected_image_provider: str | None = None
+    selected_image_model: str | None = None
+    image_generated_at: datetime | None = None
+    candidates: list[ImageAssetCandidateResponse] = Field(default_factory=list)
 
 
 class JobEventResponse(BaseModel):
@@ -308,6 +424,7 @@ class StageActionResponse(BaseModel):
 
     job_id: str
     status: str
+    current_stage: str
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
     final_approval_status: str = "pending"

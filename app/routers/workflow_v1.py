@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.schemas.workflow import (
     ApprovalRequest,
@@ -12,7 +13,10 @@ from app.schemas.workflow import (
     ContentApprovalRequest,
     ContentApprovalResponse,
     DailyThemeJobResponse,
+    FavoriteCardRequest,
     FinalApprovalResponse,
+    GenerateMoreResponse,
+    JobImageAssetsResponse,
     ImageApprovalRequest,
     ImageApprovalResponse,
     JobArchiveResponse,
@@ -26,9 +30,13 @@ from app.schemas.workflow import (
     RenderShortlistRequest,
     RenderShortlistResponse,
     RenderConfig,
+    RegenerateImageAssetsRequest,
+    SelectImageRequest,
+    SelectTextRequest,
     StageActionResponse,
     StageRerunRequest,
     ShortlistEntryResponse,
+    StudioActionResponse,
     StageRerunResponse,
     StartFromThemeRequest,
     StartJobRequest,
@@ -36,6 +44,7 @@ from app.schemas.workflow import (
     ThemeJobCreateRequest,
 )
 from app.schemas.theme_factory import ThemeCatalogResponse, ThemeResolvedPayload
+from app.services.image_generation_service import ImageGenerationService, get_image_generation_service
 from app.services.theme_service import ThemeService, get_theme_service
 from app.services.workflow_v1_service import WorkflowV1Service, get_workflow_v1_service
 
@@ -89,6 +98,13 @@ def _build_theme_start_request(
         output_spec=OutputSpec(
             format=copy_style,
             length=OutputLength(target_words=target_words),
+            metadata={
+                "theme_key": getattr(theme, "theme_key", None),
+                "theme_bucket": getattr(theme, "theme_bucket", "everyday"),
+                "theme_type": getattr(theme, "theme_type", None),
+                "theme_description": getattr(theme, "description", None),
+                "default_visual_style": visual_style,
+            },
         ),
         rendering=RenderConfig(theme_style=_map_visual_style_to_template(visual_style)),
         cards_per_theme=cards_per_theme,
@@ -264,6 +280,124 @@ async def render_job_shortlist(
     return await service.render_shortlist(job_id, payload)
 
 
+@router.post("/{job_id}/select-text", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def select_text_option(
+    job_id: str,
+    payload: SelectTextRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Choose one generated text option as the active card copy."""
+
+    return await service.select_text_option(job_id, payload)
+
+
+@router.post("/{job_id}/generate-more-text", response_model=GenerateMoreResponse, status_code=status.HTTP_200_OK)
+async def generate_more_text(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> GenerateMoreResponse:
+    """Append more short card-copy options for Studio."""
+
+    return await service.generate_more_text_options(job_id, count=10)
+
+
+@router.post("/{job_id}/generate-more-images", response_model=GenerateMoreResponse, status_code=status.HTTP_200_OK)
+async def generate_more_images(
+    job_id: str,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> GenerateMoreResponse:
+    """Append more Studio image options for the currently selected text."""
+
+    return await service.generate_more_image_options(
+        job_id,
+        count=settings.image_candidates_per_run,
+        refresh_batch=False,
+    )
+
+
+@router.post("/{job_id}/select-image", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def select_image_option(
+    job_id: str,
+    payload: SelectImageRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Choose one generated image option as the active card visual."""
+
+    return await service.select_image_option(job_id, payload)
+
+
+@router.post(
+    "/{job_id}/image-assets/generate",
+    response_model=JobImageAssetsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def generate_image_assets(
+    job_id: str,
+    service: ImageGenerationService = Depends(get_image_generation_service),
+) -> JobImageAssetsResponse:
+    """Generate ImageForge-backed image asset candidates for the current job."""
+
+    return await service.generate_image_assets_for_job(job_id)
+
+
+@router.post(
+    "/{job_id}/image-assets/regenerate",
+    response_model=JobImageAssetsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def regenerate_image_assets(
+    job_id: str,
+    payload: RegenerateImageAssetsRequest | None = Body(default=None),
+    service: ImageGenerationService = Depends(get_image_generation_service),
+) -> JobImageAssetsResponse:
+    """Request another ImageForge candidate batch for the current job."""
+
+    return await service.regenerate_image_assets_for_job(
+        job_id,
+        candidate_count=payload.candidate_count if payload else None,
+    )
+
+
+@router.post(
+    "/{job_id}/image-assets/{candidate_id}/select",
+    response_model=JobImageAssetsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def select_image_asset_candidate(
+    job_id: str,
+    candidate_id: str,
+    service: ImageGenerationService = Depends(get_image_generation_service),
+) -> JobImageAssetsResponse:
+    """Select one ImageForge candidate for final card composition."""
+
+    return await service.select_image_candidate_for_job(job_id, candidate_id)
+
+
+@router.get(
+    "/{job_id}/image-assets",
+    response_model=JobImageAssetsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_image_assets(
+    job_id: str,
+    service: ImageGenerationService = Depends(get_image_generation_service),
+) -> JobImageAssetsResponse:
+    """Return normalized ImageForge image asset state for Studio."""
+
+    return await service.get_image_assets_for_job(job_id)
+
+
+@router.post("/{job_id}/favorite", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+async def favorite_job(
+    job_id: str,
+    payload: FavoriteCardRequest | None = Body(default=None),
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StudioActionResponse:
+    """Mark or unmark the current card job as a favorite."""
+
+    return await service.mark_favorite(job_id, payload or FavoriteCardRequest())
+
+
 @router.post("/{job_id}/rerun/content", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
 async def rerun_content_stage(
     job_id: str,
@@ -433,4 +567,3 @@ async def delete_job(
     """Delete one workflow job and attempt to remove associated asset files."""
 
     return await service.delete_job(job_id)
-    payload = payload or ThemeJobCreateRequest()

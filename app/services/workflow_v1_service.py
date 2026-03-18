@@ -12,14 +12,18 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 
+from app.config import settings
+from app.integrations.contentforge import ContentForgeWorkflowClient
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
     ApprovalRequest,
     CandidateDebugResponse,
     ContentApprovalRequest,
     ContentApprovalResponse,
+    FavoriteCardRequest,
     FinalApprovalResponse,
     FinalAssetUrls,
+    GenerateMoreResponse,
     ImageApprovalRequest,
     ImageApprovalResponse,
     JobArchiveResponse,
@@ -31,13 +35,18 @@ from app.schemas.workflow import (
     RenderShortlistRequest,
     RenderShortlistResponse,
     RenderedShortlistAssetResponse,
+    SelectImageRequest,
+    SelectTextRequest,
     ShortlistEntryResponse,
     StageActionResponse,
+    StudioActionResponse,
     StageRerunRequest,
     StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
 )
+from app.services.content_shortlist_service import build_shortlist_seed
+from app.services.image_provider import ImageCandidateResult, ImageGenerationRequest, ImageProvider, get_image_provider
 from app.services.workflow_card_renderer import (
     FinalCardRenderInput,
     PreviewCardRenderInput,
@@ -62,7 +71,81 @@ class StubContentForgeClient:
     ]
 
     async def generate_and_judge(self, payload: StartJobRequest) -> dict[str, Any]:
-        """Generate a pooled candidate set, judge it, and return a top-10 shortlist."""
+        """Generate a pooled candidate set, judge it, and return a strict shortlist."""
+
+        theme = payload.theme_name.strip() or "Untitled Theme"
+        candidates = self._build_candidate_rows(payload, total_count=30, start_index=0)
+        shortlist = build_shortlist_seed(
+            candidates,
+            target_words=self._resolve_target_words(payload),
+        )
+        shortlist_signatures = {
+            (str(item.get("model") or ""), str(item.get("content_text") or ""))
+            for item in shortlist
+        }
+
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: (float(item["judge_score"]), float(item["raw_score"]), item["model"]),
+            reverse=True,
+        )
+        for candidate in ranked_candidates:
+            signature = (str(candidate.get("model") or ""), str(candidate.get("content_text") or ""))
+            candidate["is_shortlisted"] = signature in shortlist_signatures
+            candidate["is_selected"] = False
+            candidate["is_winner"] = False
+
+        winner = next(
+            (
+                candidate
+                for candidate in ranked_candidates
+                if (str(candidate.get("model") or ""), str(candidate.get("content_text") or "")) in shortlist_signatures
+            ),
+            ranked_candidates[0],
+        )
+        winner["is_winner"] = True
+        judge_summary = (
+            f"Evaluated {len(candidates)} greeting-card candidates for '{theme}'. "
+            f"Shortlisted top {len(shortlist)} across all models using judged score."
+        )
+
+        return {
+            "source": "contentforge_stub",
+            "used_stub": True,
+            "candidates": candidates,
+            "shortlist": shortlist,
+            "winner": winner,
+            "judge_summary": judge_summary,
+            "judge_provider": "contentforge_stub",
+            "judge_model": "stub-judge",
+            "leaderboard_json": {
+                "models": [item["model"] for item in candidates],
+                "shortlist": shortlist,
+            },
+            "pairwise_json": {},
+            "reason_summary": judge_summary,
+        }
+
+    async def generate_more_candidates(
+        self,
+        payload: StartJobRequest,
+        *,
+        count: int,
+        start_index: int,
+    ) -> list[dict[str, Any]]:
+        """Return additional text candidates without replacing the existing pool."""
+
+        safe_count = max(1, min(count, 30))
+        return self._build_candidate_rows(payload, total_count=safe_count, start_index=max(start_index, 0))
+
+    def _build_candidate_rows(
+        self,
+        payload: StartJobRequest,
+        *,
+        total_count: int,
+        start_index: int,
+    ) -> list[dict[str, Any]]:
+        """Generate one batch of short-form card copy candidates."""
 
         theme = payload.theme_name.strip()
         tone = payload.tone_style.strip() or "conversational"
@@ -70,90 +153,64 @@ class StubContentForgeClient:
         emotion_pct = int(payload.tone_emotion_pct)
         copy_style = self._resolve_copy_style(payload)
         target_words = self._resolve_target_words(payload)
+        safe_total = max(1, total_count)
 
         candidates: list[dict[str, Any]] = []
-        for model_index, (model, backend, style_hint) in enumerate(self._MODEL_PROFILES):
-            for variant in range(10):
-                raw_score = round(0.72 + (model_index * 0.04) + ((9 - variant) * 0.009), 4)
-                brevity_bonus = 0.02 if target_words <= 18 else 0.012 if target_words <= 24 else 0.0
-                judge_bonus = round(
-                    ((variant % 5) * 0.008)
-                    + (emotion_pct / 1000)
-                    + (funny_pct / 3000)
-                    + brevity_bonus,
-                    4,
-                )
-                judged_score = round(raw_score + 0.08 + judge_bonus, 4)
-                content_text = self._compose_candidate_text(
-                    theme=theme,
-                    audience=payload.audience,
-                    tone=tone,
-                    funny_pct=funny_pct,
-                    emotion_pct=emotion_pct,
-                    copy_style=copy_style,
-                    target_words=target_words,
-                    style_hint=style_hint,
-                    variant=variant,
-                    model_index=model_index,
-                )
-                candidates.append(
-                    {
-                        "model": model,
-                        "backend": backend,
-                        "content_text": content_text,
-                        "text": content_text,
-                        "raw_score": raw_score,
-                        "judge_score": judged_score,
-                        "judged_score": judged_score,
-                        "is_winner": False,
-                        "is_shortlisted": False,
-                        "is_selected": False,
-                    }
-                )
-
-        ranked_candidates = sorted(
-            candidates,
-            key=lambda item: (float(item["judge_score"]), float(item["raw_score"]), item["model"]),
-            reverse=True,
-        )
-        shortlist = []
-        for rank, candidate in enumerate(ranked_candidates[:10], start=1):
-            candidate["is_shortlisted"] = True
-            candidate["is_selected"] = rank == 1
-            candidate["is_winner"] = rank == 1
-            shortlist.append(
+        for offset in range(safe_total):
+            sequence = start_index + offset
+            model_index = sequence % len(self._MODEL_PROFILES)
+            variant = sequence // len(self._MODEL_PROFILES)
+            model, backend, style_hint = self._MODEL_PROFILES[model_index]
+            raw_score = round(0.71 + (model_index * 0.035) + max(0, (12 - (variant % 12))) * 0.007, 4)
+            brevity_bonus = 0.02 if target_words <= 18 else 0.012 if target_words <= 24 else 0.0
+            judge_bonus = round(
+                ((sequence % 5) * 0.008)
+                + (emotion_pct / 1000)
+                + (funny_pct / 3000)
+                + brevity_bonus,
+                4,
+            )
+            judged_score = round(raw_score + 0.08 + judge_bonus, 4)
+            content_text = self._compose_candidate_text(
+                theme=theme,
+                audience=payload.audience,
+                tone=tone,
+                funny_pct=funny_pct,
+                emotion_pct=emotion_pct,
+                copy_style=copy_style,
+                target_words=target_words,
+                style_hint=style_hint,
+                variant=variant,
+                model_index=model_index,
+            )
+            candidates.append(
                 {
-                    "rank": rank,
-                    "score": float(candidate["judge_score"]),
-                    "model": candidate["model"],
-                    "backend": candidate["backend"],
-                    "content_text": candidate["content_text"],
+                    "model": model,
+                    "backend": backend,
+                    "content_text": content_text,
+                    "text": content_text,
+                    "raw_score": raw_score,
+                    "judge_score": judged_score,
+                    "judged_score": judged_score,
+                    "is_winner": False,
+                    "is_shortlisted": False,
+                    "is_selected": False,
                 }
             )
-
-        winner = ranked_candidates[0]
-        judge_summary = (
-            f"Evaluated {len(candidates)} greeting-card candidates for '{theme}'. "
-            f"Shortlisted top {len(shortlist)} across all models using judged score."
-        )
-
-        return {
-            "candidates": candidates,
-            "shortlist": shortlist,
-            "winner": winner,
-            "judge_summary": judge_summary,
-        }
+        return candidates
 
     @staticmethod
     def _resolve_copy_style(payload: StartJobRequest) -> str:
         """Return one supported content style for short-form card copy."""
 
-        value = str(payload.output_spec.format or "short_crisp").strip().lower()
-        if value in {"short_crisp", "warm_note", "playful"}:
+        value = str(payload.output_spec.format or "minimal").strip().lower()
+        if value in {"witty", "playful", "heartfelt", "minimal"}:
             return value
-        if value in {"paragraph", "letter"}:
-            return "warm_note"
-        return "short_crisp"
+        if value == "short_crisp":
+            return "minimal"
+        if value in {"warm_note", "letter", "paragraph"}:
+            return "heartfelt"
+        return "minimal"
 
     @staticmethod
     def _resolve_target_words(payload: StartJobRequest) -> int:
@@ -332,14 +389,14 @@ class StubContentForgeClient:
     def _pick_style_line(copy_style: str, style_hint: str, sequence: int) -> str:
         """Pick one style line that keeps the card short and readable."""
 
-        balanced = [
+        minimal = [
             "Keep it clear and easy to feel.",
             "Let it land simply and well.",
             "Make the warmth feel immediate.",
             "Keep the line clean and memorable.",
             "Let the note stay light on its feet.",
         ]
-        warm_note = [
+        heartfelt = [
             "Sending warmth without overexplaining it.",
             "Keeping the note soft, close, and sincere.",
             "Let this read like a real human voice.",
@@ -353,12 +410,21 @@ class StubContentForgeClient:
             "Give the day something to grin about.",
             "Let the note stay quick and bright.",
         ]
+        witty = [
+            "Keep it sharp without losing the heart.",
+            "A clean line and a sly smile work well here.",
+            "Let the wit stay light, not loud.",
+            "Quick words, bright finish.",
+            "Make the cleverness feel effortless.",
+        ]
         if copy_style == "playful":
             lines = playful
-        elif copy_style == "warm_note":
-            lines = warm_note
+        elif copy_style == "heartfelt":
+            lines = heartfelt
+        elif copy_style == "witty":
+            lines = witty
         else:
-            lines = balanced
+            lines = minimal
         if "uplifting" in style_hint and copy_style != "playful":
             lines = lines + ["Keep the energy optimistic and steady."]
         return lines[sequence % len(lines)]
@@ -427,11 +493,12 @@ class StubContentForgeClient:
         """Return a short closer that feels like a card signoff."""
 
         closers = {
-            "short_crisp": ["You've got this.", "Keep going.", "Still rooting for you.", "Stay bright.", "Onward."],
-            "warm_note": ["With warmth.", "Sending good energy.", "Keeping you in mind.", "Right here with you.", "With love."],
+            "minimal": ["You've got this.", "Keep going.", "Still rooting for you.", "Stay bright.", "Onward."],
+            "heartfelt": ["With warmth.", "Sending good energy.", "Keeping you in mind.", "Right here with you.", "With love."],
             "playful": ["Carry the smile with you.", "Go make the day jealous.", "Keep the sparkle loud.", "Now go steal the scene.", "Stay brilliant."],
+            "witty": ["Stay clever.", "Keep the grin close.", "Go win the day.", "Still sharp, still warm.", "Carry the spark."],
         }
-        lines = closers.get(copy_style, closers["short_crisp"])
+        lines = closers.get(copy_style, closers["minimal"])
         return lines[sequence % len(lines)]
 
     @staticmethod
@@ -453,11 +520,20 @@ class WorkflowV1Service:
         *,
         repository: WorkflowJobRepository | None = None,
         asset_storage: AssetStorage | None = None,
+        image_provider: ImageProvider | None = None,
     ) -> None:
-        self._contentforge = StubContentForgeClient()
+        stub_contentforge = StubContentForgeClient()
+        self._contentforge = ContentForgeWorkflowClient(
+            enabled=bool(settings.contentforge_enabled),
+            base_url=str(settings.contentforge_base_url),
+            timeout_seconds=float(settings.contentforge_timeout_seconds),
+            model_names=[item.strip() for item in str(settings.contentforge_models).split(",") if item.strip()],
+            fallback_client=stub_contentforge,
+        )
         self._repository = repository or get_workflow_job_repository()
         self._asset_storage = asset_storage or get_asset_storage()
         self._card_renderer = WorkflowCardRenderer()
+        self._image_provider = image_provider or get_image_provider()
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
@@ -500,6 +576,16 @@ class WorkflowV1Service:
             "final_approval_status": "pending",
             "image_prompt": None,
             "image_preview_url": None,
+            "imageforge_request_id": None,
+            "imageforge_trace_id": None,
+            "image_generation_status": None,
+            "image_generation_stage": None,
+            "selected_image_candidate_id": None,
+            "selected_image_public_url": None,
+            "selected_image_relative_path": None,
+            "selected_image_provider": None,
+            "selected_image_model": None,
+            "image_generated_at": None,
             "final_preview_url": None,
             "final_asset_urls": None,
             "cards_per_theme": int(payload.cards_per_theme),
@@ -519,8 +605,8 @@ class WorkflowV1Service:
                 "content_text": str(candidate["content_text"]),
                 "text": str(candidate["content_text"]),
                 "raw_score": float(candidate["raw_score"]),
-                "judge_score": float(candidate["judge_score"]),
-                "judged_score": float(candidate["judge_score"]),
+                "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
                 "is_winner": bool(candidate["is_winner"]),
                 "is_shortlisted": bool(candidate.get("is_shortlisted")),
                 "is_selected": bool(candidate.get("is_selected")),
@@ -533,8 +619,14 @@ class WorkflowV1Service:
             events=[
                 ("api_start_called", {"endpoint": "/api/jobs/start"}),
                 ("job_created", {"status": "content_pending_approval"}),
-                ("contentforge_request_sent", {"stub": True}),
-                ("contentforge_response_received", {"candidate_count": len(candidate_records)}),
+                ("contentforge_request_sent", {"stub": bool(generation.get("used_stub", True))}),
+                (
+                    "contentforge_response_received",
+                    {
+                        "candidate_count": len(candidate_records),
+                        "source": str(generation.get("source") or "contentforge_stub"),
+                    },
+                ),
                 ("shortlist_created", {"shortlist_count": len(shortlist_seed)}),
                 ("winner_selected", {"winner_model": winner_model}),
                 ("content_approval_requested", {"approval_message": approval_message}),
@@ -552,15 +644,16 @@ class WorkflowV1Service:
         await self._repository.save_judge_results(
             job_id,
             {
-                "judge_provider": "contentforge_stub",
-                "judge_model": "stub-judge",
+                "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
+                "judge_model": str(generation.get("judge_model") or "stub-judge"),
                 "winner_model": winner_model,
-                "leaderboard_json": {
+                "leaderboard_json": generation.get("leaderboard_json")
+                or {
                     "models": [item["model"] for item in candidate_records],
                     "shortlist": shortlist_seed,
                 },
-                "pairwise_json": {},
-                "reason_summary": generation["judge_summary"],
+                "pairwise_json": generation.get("pairwise_json") or {},
+                "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
             },
         )
         await self._repository.append_audit_events(job_id, audit_events)
@@ -586,6 +679,11 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No generated content available to approve")
 
         transition_time = datetime.now(timezone.utc)
+        updated_output_spec = await self._build_selected_text_output_spec(
+            job_id=job_id,
+            job=job,
+            selection_time=transition_time,
+        )
         updated = await self._repository.update_job_status(
             job_id=job_id,
             updates={
@@ -597,6 +695,7 @@ class WorkflowV1Service:
                 "image_preview_url": None,
                 "final_preview_url": None,
                 "final_asset_urls": None,
+                "output_spec": updated_output_spec,
                 "last_stage_started_at": transition_time,
                 "last_stage_finished_at": transition_time,
                 "last_error_message": None,
@@ -684,30 +783,27 @@ class WorkflowV1Service:
 
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image_generation", increment_retry=False)
         try:
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
             image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Image Generation",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            selected_style = str(primary_candidate["theme_style"])
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=selected_style,
+                image_option_batch=batch,
+            )
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -719,32 +815,28 @@ class WorkflowV1Service:
                     "image_preview_url": image_preview_url,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=image_preview_url,
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=image_preview_url,
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
             await self._repository.append_audit_events(
                 job_id,
                 self._build_audit_events(
                     job_id=job_id,
                     events=[
                         ("api_generate_image_called", {"endpoint": f"/api/jobs/{job_id}/generate-image"}),
-                        ("image_generated", {"image_preview_url": image_preview_url, "mode": "operator"}),
+                        (
+                            "image_generated",
+                            {
+                                "image_preview_url": image_preview_url,
+                                "provider": self._image_provider.name,
+                                "generated_count": len(generated["assets"]),
+                                "mode": "operator",
+                            },
+                        ),
                         ("image_approval_requested", {"image_preview_url": image_preview_url}),
                     ],
                 ),
@@ -785,6 +877,7 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No generated image preview available to approve")
 
         transition_time = datetime.now(timezone.utc)
+        selected_image_updates = self._build_selected_image_updates(job)
         updated = await self._repository.update_job_status(
             job_id=job_id,
             updates={
@@ -793,6 +886,7 @@ class WorkflowV1Service:
                 "final_approval_status": "pending",
                 "final_preview_url": None,
                 "final_asset_urls": None,
+                **selected_image_updates,
                 "last_stage_started_at": transition_time,
                 "last_stage_finished_at": transition_time,
                 "last_error_message": None,
@@ -857,33 +951,15 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        if str(job.get("image_approval_status") or "").lower() != "approved":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Image must be approved before rendering final")
+        if not self._has_selected_text(job):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select text before rendering the final card")
+        if not self._has_selected_image(job):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select an image before rendering the final card")
 
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render", increment_retry=False)
         try:
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            self._save_internal_preview_asset(
-                relative_path=final_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Final Render",
-                    message=self._resolve_winning_content(job),
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="final_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Tone: {job.get('tone_style', 'N/A')}",
-                        "Final preview ready for operator approval",
-                    ],
-                ),
-            )
-            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
+            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -997,36 +1073,38 @@ class WorkflowV1Service:
         transition_time = datetime.now(timezone.utc)
 
         if decision == "approved":
-            image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Content Approved - Image Review",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Approved content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            updated_output_spec = await self._build_selected_text_output_spec(
+                job_id=job_id,
+                job=job,
+                selection_time=transition_time,
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            image_prompt = self.build_image_prompt(job)
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
+            )
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            updated_output_spec = self._with_studio_state(
+                {"output_spec": updated_output_spec},
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=str(primary_candidate["theme_style"]),
+                image_option_batch=batch,
+            )
             updates = {
                 "status": "image_pending_approval",
                 "content_approval_status": "approved",
                 "image_approval_status": "pending",
                 "image_prompt": image_prompt,
                 "image_preview_url": image_preview_url,
+                "output_spec": updated_output_spec,
                 "last_stage_started_at": transition_time,
                 "last_stage_finished_at": transition_time,
                 "last_error_message": None,
@@ -1034,8 +1112,15 @@ class WorkflowV1Service:
             events = [
                 ("api_content_approval_called", {"endpoint": f"/api/jobs/{job_id}/content-approval"}),
                 ("content_approved", {"decision": decision, "notes": notes}),
-                ("image_prompt_created", {"stub": True, "approved_content": approved_content}),
-                ("image_generated", {"stub": False, "image_preview_url": image_preview_url}),
+                ("image_prompt_created", {"provider": self._image_provider.name}),
+                (
+                    "image_generated",
+                    {
+                        "image_preview_url": image_preview_url,
+                        "provider": self._image_provider.name,
+                        "generated_count": len(generated["assets"]),
+                    },
+                ),
                 ("image_approval_requested", {"image_preview_url": image_preview_url}),
             ]
         elif decision == "rejected":
@@ -1074,21 +1159,6 @@ class WorkflowV1Service:
         assert updated is not None
         await self._repository.append_audit_events(job_id, audit_events)
 
-        if decision == "approved":
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=str(updated.get("image_preview_url") or ""),
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=str(updated.get("image_preview_url") or ""),
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
         logger.info(
             "workflow transition job_id=%s stage=content %s -> %s",
             job_id,
@@ -1140,31 +1210,13 @@ class WorkflowV1Service:
         transition_time = datetime.now(timezone.utc)
         if normalized_decision == "approved":
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            self._save_internal_preview_asset(
-                relative_path=final_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Image Approved - Final Review",
-                    message=self._resolve_winning_content(job),
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="final_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Tone: {job.get('tone_style', 'N/A')}",
-                        "Final card render queued",
-                    ],
-                ),
-            )
-            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
+            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
+            selected_image_updates = self._build_selected_image_updates(job)
             updates = {
                 "status": "final_pending_approval",
                 "image_approval_status": "approved",
                 "final_preview_url": final_preview_url,
+                **selected_image_updates,
                 "last_stage_started_at": transition_time,
                 "last_stage_finished_at": transition_time,
                 "last_error_message": None,
@@ -1421,7 +1473,7 @@ class WorkflowV1Service:
         return [CandidateDebugResponse.model_validate(item) for item in candidates]
 
     async def get_job_shortlist(self, job_id: str) -> list[ShortlistEntryResponse]:
-        """Return the ranked top-10 shortlist for one job."""
+        """Return the ranked Studio shortlist for one job."""
 
         job = await self._load_job(job_id)
         if job is None:
@@ -1447,8 +1499,8 @@ class WorkflowV1Service:
                     "content_text": str(candidate["content_text"]),
                     "text": str(candidate["content_text"]),
                     "raw_score": float(candidate["raw_score"]),
-                    "judge_score": float(candidate["judge_score"]),
-                    "judged_score": float(candidate["judge_score"]),
+                    "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                    "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
                     "is_winner": bool(candidate["is_winner"]),
                     "is_shortlisted": bool(candidate.get("is_shortlisted")),
                     "is_selected": bool(candidate.get("is_selected")),
@@ -1464,6 +1516,19 @@ class WorkflowV1Service:
                 shortlist_seed=list(generation.get("shortlist") or []),
             )
             await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_text_candidate_id=None,
+                text_selected_at=None,
+                selected_image_relative_path=None,
+                selected_image_url=None,
+                selected_image_version=None,
+                selected_image_style=None,
+                image_option_batch=0,
+            )
+            rerendering = dict(updated_output_spec.get("rendering") or {})
+            rerendering.pop("background_image_url", None)
+            updated_output_spec["rendering"] = rerendering
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1476,26 +1541,44 @@ class WorkflowV1Service:
                     "final_approval_status": "pending",
                     "image_prompt": None,
                     "image_preview_url": None,
+                    "imageforge_request_id": None,
+                    "imageforge_trace_id": None,
+                    "image_generation_status": None,
+                    "image_generation_stage": None,
+                    "selected_image_candidate_id": None,
+                    "selected_image_public_url": None,
+                    "selected_image_relative_path": None,
+                    "selected_image_provider": None,
+                    "selected_image_model": None,
+                    "image_generated_at": None,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
+            await self._repository.save_image_candidates(
+                job_id,
+                [],
+                replace_existing=True,
+                stage="image_generation",
+            )
             await self._repository.save_judge_results(
                 job_id,
                 {
-                    "judge_provider": "contentforge_stub",
-                    "judge_model": "stub-judge",
+                    "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
+                    "judge_model": str(generation.get("judge_model") or "stub-judge"),
                     "winner_model": winner_model,
-                    "leaderboard_json": {
+                    "leaderboard_json": generation.get("leaderboard_json")
+                    or {
                         "models": [item["model"] for item in candidate_records],
                         "shortlist": generation.get("shortlist") or [],
                     },
-                    "pairwise_json": {},
-                    "reason_summary": generation["judge_summary"],
+                    "pairwise_json": generation.get("pairwise_json") or {},
+                    "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
                 },
             )
             await self._repository.append_audit_events(
@@ -1523,30 +1606,26 @@ class WorkflowV1Service:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No approved content available to rerun image stage")
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="image")
         try:
+            batch = int(self._studio_state(job).get("image_option_batch") or 0) + 1
             image_prompt = self.build_image_prompt(job)
-            image_preview_relative_path = self._build_image_preview_relative_path(job_id)
-            approved_content = self._resolve_winning_content(job)
-            self._save_internal_preview_asset(
-                relative_path=image_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Image Stage Rerun",
-                    message=image_prompt,
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="image_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Context: {job.get('cultural_context', 'N/A')}",
-                        f"Selected content: {self._shorten(approved_content, max_len=120)}",
-                    ],
-                ),
+            generated = await self._generate_image_candidates_for_job(
+                job_id=job_id,
+                job=job,
+                count=settings.image_candidates_per_run,
+                batch=batch,
+                include_preview_candidate=True,
+                stage="image_generation",
             )
-            image_preview_url = self._asset_storage.get_public_url(image_preview_relative_path)
+            primary_candidate = generated["primary_candidate"]
+            image_preview_url = str(primary_candidate["public_url"])
+            updated_output_spec = self._with_studio_state(
+                job,
+                selected_image_relative_path=str(primary_candidate["relative_path"]),
+                selected_image_url=image_preview_url,
+                selected_image_version=str(primary_candidate["version"]),
+                selected_image_style=str(primary_candidate["theme_style"]),
+                image_option_batch=batch,
+            )
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1558,32 +1637,27 @@ class WorkflowV1Service:
                     "image_preview_url": image_preview_url,
                     "final_preview_url": None,
                     "final_asset_urls": None,
+                    "output_spec": updated_output_spec,
                     "last_stage_started_at": started_at,
                     "last_stage_finished_at": finished_at,
                     "last_error_message": None,
                 },
             )
             assert updated is not None
-            await self._repository.save_asset(
-                job_id,
-                asset_type="image_preview",
-                asset_url=image_preview_url,
-                storage_backend=self._asset_storage.backend,
-                storage_root=self._asset_storage.get_absolute_path(""),
-                relative_path=image_preview_relative_path,
-                public_url=image_preview_url,
-                absolute_path=self._asset_storage.get_absolute_path(image_preview_relative_path),
-                file_size_bytes=self._read_file_size_bytes(image_preview_relative_path),
-                version="v1",
-                approved=False,
-            )
             await self._repository.append_audit_events(
                 job_id,
                 self._build_audit_events(
                     job_id=job_id,
                     events=[
                         ("rerun_requested", {"stage": "image"}),
-                        ("image_rerun_completed", {"image_preview_url": image_preview_url}),
+                        (
+                            "image_rerun_completed",
+                            {
+                                "image_preview_url": image_preview_url,
+                                "provider": self._image_provider.name,
+                                "generated_count": len(generated["assets"]),
+                            },
+                        ),
                     ],
                 ),
             )
@@ -1598,32 +1672,14 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        if not str(job.get("image_preview_url") or "").strip():
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No image preview available to rerun final render")
+        if not self._has_selected_text(job):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select text before rerunning the final card")
+        if not self._has_selected_image(job):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select an image before rerunning the final card")
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render")
         try:
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            self._save_internal_preview_asset(
-                relative_path=final_preview_relative_path,
-                payload=PreviewCardRenderInput(
-                    title="Final Render Rerun",
-                    message=self._resolve_winning_content(job),
-                    signoff="Internal Preview",
-                    theme_style=self._resolve_theme_style(job),
-                    background_image_url=self._resolve_background_image_url(job),
-                    text_alignment="left",
-                    export_size=self._resolve_export_size(job),
-                    theme_name=str(job.get("theme_name") or ""),
-                    job_id=job_id,
-                    status="final_pending_approval",
-                    metadata_lines=[
-                        f"Audience: {job.get('audience', 'N/A')}",
-                        f"Tone: {job.get('tone_style', 'N/A')}",
-                        "Final preview rebuilt from shortlisted content",
-                    ],
-                ),
-            )
-            final_preview_url = self._asset_storage.get_public_url(final_preview_relative_path)
+            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1770,6 +1826,264 @@ class WorkflowV1Service:
             rendered_assets=rendered_assets,
         )
 
+    async def select_text_option(self, job_id: str, payload: SelectTextRequest) -> StudioActionResponse:
+        """Choose one candidate as the active card copy and clear downstream visuals."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        candidates = list(job.get("candidates") or [])
+        selected = next((item for item in candidates if int(item.get("id") or 0) == payload.candidate_id), None)
+        if selected is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Text option not found.")
+
+        await self._repository.update_candidate_selection(job_id, [payload.candidate_id])
+        selection_time = datetime.now(timezone.utc)
+        updated_output_spec = self._with_studio_state(
+            job,
+            selected_text_candidate_id=payload.candidate_id,
+            selected_image_relative_path=None,
+            selected_image_url=None,
+            selected_image_version=None,
+            selected_image_style=None,
+            text_selected_at=selection_time.isoformat(),
+            image_option_batch=0,
+        )
+        rendering = dict(updated_output_spec.get("rendering") or {})
+        rendering.pop("background_image_url", None)
+        updated_output_spec["rendering"] = rendering
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_approved",
+                "content_preview": str(selected.get("content_text") or selected.get("text") or ""),
+                "winner_model": str(selected.get("model") or "") or None,
+                "content_approval_status": "approved",
+                "image_approval_status": "pending",
+                "final_approval_status": "pending",
+                "image_prompt": None,
+                "image_preview_url": None,
+                "imageforge_request_id": None,
+                "imageforge_trace_id": None,
+                "image_generation_status": None,
+                "image_generation_stage": None,
+                "selected_image_candidate_id": None,
+                "selected_image_public_url": None,
+                "selected_image_relative_path": None,
+                "selected_image_provider": None,
+                "selected_image_model": None,
+                "image_generated_at": None,
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "output_spec": updated_output_spec,
+                "last_stage_started_at": selection_time,
+                "last_stage_finished_at": selection_time,
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.save_image_candidates(
+            job_id,
+            [],
+            replace_existing=True,
+            stage="image_generation",
+        )
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_text_selected", {"candidate_id": payload.candidate_id, "model": str(selected.get("model") or "")}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
+    async def generate_more_text_options(self, job_id: str, *, count: int = 10) -> GenerateMoreResponse:
+        """Append more short card-copy options without replacing the current selection."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        payload = self._build_start_payload_from_job(job)
+        existing_count = len(list(job.get("candidates") or []))
+        generated = await self._contentforge.generate_more_candidates(
+            payload,
+            count=count,
+            start_index=existing_count,
+        )
+        if not generated:
+            return GenerateMoreResponse(job_id=job_id, status=str(job.get("status") or "unknown"), generated_count=0)
+
+        await self._repository.save_content_candidates(job_id, generated, replace_existing=False)
+        shortlist_seed, shortlist_rows, refreshed = await self._rebuild_shortlist_for_job(job_id=job_id, job=job)
+        if not self._has_selected_text(job) and shortlist_seed:
+            top_shortlist = shortlist_seed[0]
+            refreshed = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "content_preview": str(top_shortlist.get("content_text") or ""),
+                    "winner_model": str(top_shortlist.get("model") or "") or None,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            assert refreshed is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    (
+                        "studio_more_text_generated",
+                        {
+                            "generated_count": len(generated),
+                            "shortlist_count": len(shortlist_rows),
+                        },
+                    ),
+                ],
+            ),
+        )
+        return GenerateMoreResponse(
+            job_id=job_id,
+            status=str(refreshed.get("status") or job.get("status") or "unknown") if refreshed else str(job.get("status") or "unknown"),
+            generated_count=len(generated),
+        )
+
+    async def generate_more_image_options(self, job_id: str, *, count: int = 3, refresh_batch: bool = False) -> GenerateMoreResponse:
+        """Generate more card-style visual options for the currently selected text."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        selected_text = self._resolve_winning_content(job)
+        if not selected_text.strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No selected text available to generate image options")
+
+        studio_state = self._studio_state(job)
+        current_batch = int(studio_state.get("image_option_batch") or 0)
+        batch = 1 if refresh_batch and current_batch <= 0 else current_batch + 1
+        generated_assets = await self._generate_image_option_assets(job_id=job_id, job=job, count=count, batch=batch)
+        updated_output_spec = self._with_studio_state(
+            job,
+            image_option_batch=batch,
+            text_selected_at=studio_state.get("text_selected_at") or datetime.now(timezone.utc).isoformat(),
+        )
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "output_spec": updated_output_spec,
+                "status": str(job.get("status") or "content_approved"),
+                "last_stage_started_at": datetime.now(timezone.utc),
+                "last_stage_finished_at": datetime.now(timezone.utc),
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_more_images_generated", {"generated_count": len(generated_assets), "batch": batch}),
+                ],
+            ),
+        )
+        return GenerateMoreResponse(job_id=job_id, status=str(updated.get("status") or "unknown"), generated_count=len(generated_assets))
+
+    async def select_image_option(self, job_id: str, payload: SelectImageRequest) -> StudioActionResponse:
+        """Choose one visual option as the active card direction."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        assets = list(job.get("assets") or [])
+        selected_asset = self._find_image_asset(assets, payload)
+        if selected_asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image option not found.")
+
+        relative_path = str(selected_asset.get("relative_path") or "")
+        selected_url = str(selected_asset.get("public_url") or selected_asset.get("asset_url") or "") or None
+        selected_style = self._extract_theme_style_from_asset(selected_asset)
+        current_output_spec = self._resolve_output_spec(job)
+        rendering = dict(current_output_spec.get("rendering") or {})
+        if selected_style:
+            rendering["theme_style"] = selected_style
+        updated_output_spec = self._with_studio_state(
+            job,
+            selected_image_relative_path=relative_path,
+            selected_image_url=selected_url,
+            selected_image_version=str(selected_asset.get("version") or "") or None,
+            selected_image_style=selected_style,
+        )
+        updated_output_spec["rendering"] = rendering
+        selected_image_updates = self._build_selected_image_updates(
+            job,
+            selected_url=selected_url,
+            relative_path=relative_path,
+        )
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "image_approved",
+                "image_preview_url": selected_url,
+                "image_approval_status": "approved",
+                "final_approval_status": "pending",
+                "final_preview_url": None,
+                "final_asset_urls": None,
+                "output_spec": updated_output_spec,
+                **selected_image_updates,
+                "last_stage_started_at": datetime.now(timezone.utc),
+                "last_stage_finished_at": datetime.now(timezone.utc),
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+        await self._repository.update_asset_selection(
+            job_id,
+            asset_type=str(selected_asset.get("asset_type") or "image_option"),
+            selected_relative_path=relative_path,
+        )
+        await self._repository.update_image_candidate_selection(
+            job_id,
+            selected_relative_path=relative_path,
+        )
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_image_selected", {"relative_path": relative_path, "theme_style": selected_style}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
+    async def mark_favorite(self, job_id: str, payload: FavoriteCardRequest) -> StudioActionResponse:
+        """Mark or unmark the current card job as a favorite."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        updated_output_spec = self._with_studio_state(job, is_favorite=bool(payload.favorite))
+        updated = await self._repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "output_spec": updated_output_spec,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        assert updated is not None
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("studio_favorite_updated", {"is_favorite": bool(payload.favorite)}),
+                ],
+            ),
+        )
+        return self._build_studio_action_response(updated)
+
     async def get_job_debug(self, job_id: str) -> JobDebugResponse:
         """Return a full job snapshot including approvals, candidates, and audit events."""
 
@@ -1790,7 +2104,12 @@ class WorkflowV1Service:
             str(final_assets.get("png") or ""),
             asset_urls[:4],
         )
-        return JobDebugResponse.model_validate(job)
+        return JobDebugResponse.model_validate(
+            {
+                **job,
+                "current_stage": self._resolve_current_stage(job),
+            }
+        )
 
     async def list_jobs(self, *, limit: int = 100) -> list[JobListItemResponse]:
         """Return newest-first jobs with a compact status payload for admin console."""
@@ -1806,8 +2125,9 @@ class WorkflowV1Service:
                 JobListItemResponse(
                     job_id=str(row.get("job_id")),
                     theme_name=str(row.get("theme_name") or "Untitled"),
-                    current_stage=self._resolve_current_stage(status_value),
+                    current_stage=self._resolve_current_stage(row),
                     status=status_value,
+                    output_spec=row.get("output_spec") if isinstance(row.get("output_spec"), dict) else {},
                     content_preview=str(row.get("content_preview") or "") or None,
                     image_preview_url=str(row.get("image_preview_url") or "") or None,
                     final_preview_url=str(row.get("final_preview_url") or "") or None,
@@ -1984,24 +2304,93 @@ class WorkflowV1Service:
             return fallback
         return datetime.now(timezone.utc)
 
-    @staticmethod
-    def _resolve_current_stage(status_value: str) -> str:
-        """Map persisted workflow status to one coarse-grained current stage."""
+    @classmethod
+    def _resolve_current_stage(cls, job: dict[str, Any]) -> str:
+        """Map persisted workflow state into one explicit Studio stage."""
 
-        normalized = status_value.strip().lower()
-        if normalized == "content_approved":
-            return "image_generation"
-        if normalized == "image_approved":
-            return "final_render"
-        if normalized.startswith("content"):
-            return "content_generation"
-        if normalized.startswith("image"):
-            return "image_generation"
-        if normalized.startswith("final"):
-            return "final_render"
-        if normalized in {"completed", "archived"}:
-            return normalized
-        return "queued"
+        if cls._has_final_preview(job):
+            return "final_card_ready"
+        if cls._is_failed_state(job):
+            return "failed"
+        if cls._has_selected_image(job):
+            return "image_selected"
+        if cls._has_image_candidates(job):
+            return "image_candidates_ready"
+        if cls._has_selected_text(job):
+            return "text_selected"
+        if cls._has_text_candidates(job):
+            return "content_candidates_ready"
+        return "failed"
+
+    @classmethod
+    def _has_text_candidates(cls, job: dict[str, Any]) -> bool:
+        shortlist = job.get("shortlist")
+        if isinstance(shortlist, list) and shortlist:
+            return True
+        shortlist_count = int(job.get("shortlist_count") or 0)
+        if shortlist_count > 0:
+            return True
+        candidates = job.get("candidates")
+        return isinstance(candidates, list) and len(candidates) > 0
+
+    @classmethod
+    def _selected_text_candidate_id(cls, job: dict[str, Any]) -> int | None:
+        studio_state = cls._studio_state(job)
+        selected_id = int(studio_state.get("selected_text_candidate_id") or 0)
+        if selected_id > 0:
+            return selected_id
+        candidates = job.get("candidates")
+        if isinstance(candidates, list):
+            selected = next((item for item in candidates if bool(item.get("is_selected"))), None)
+            if selected is not None:
+                selected_candidate_id = int(selected.get("id") or 0)
+                return selected_candidate_id or None
+        return None
+
+    @classmethod
+    def _has_selected_text(cls, job: dict[str, Any]) -> bool:
+        if cls._selected_text_candidate_id(job) is not None:
+            return True
+        return str(job.get("content_approval_status") or "").strip().lower() == "approved"
+
+    @staticmethod
+    def _has_image_candidates(job: dict[str, Any]) -> bool:
+        image_candidates = job.get("image_candidates")
+        if isinstance(image_candidates, list) and image_candidates:
+            return True
+        return int(job.get("image_candidate_count") or 0) > 0
+
+    @staticmethod
+    def _has_selected_image(job: dict[str, Any]) -> bool:
+        if str(job.get("selected_image_candidate_id") or "").strip():
+            return True
+        if str(job.get("selected_image_public_url") or "").strip():
+            return True
+        return str(job.get("image_approval_status") or "").strip().lower() == "approved"
+
+    @staticmethod
+    def _has_final_preview(job: dict[str, Any]) -> bool:
+        if str(job.get("final_preview_url") or "").strip():
+            return True
+        final_asset_urls = job.get("final_asset_urls")
+        if isinstance(final_asset_urls, dict) and str(final_asset_urls.get("png") or "").strip():
+            return True
+        normalized_status = str(job.get("status") or "").strip().lower()
+        if normalized_status not in {"final_pending_approval", "completed", "final_rejected", "final_timeout"}:
+            return False
+        assets = job.get("assets")
+        if isinstance(assets, list):
+            return any(
+                str(item.get("asset_type") or "").lower() in {"final_preview", "final_png"}
+                and str(item.get("public_url") or item.get("asset_url") or "").strip()
+                for item in assets
+            )
+        return False
+
+    @staticmethod
+    def _is_failed_state(job: dict[str, Any]) -> bool:
+        normalized = str(job.get("status") or "").strip().lower()
+        return any(token in normalized for token in ("failed", "rejected", "timeout"))
 
     async def _mark_stage_started(
         self,
@@ -2096,6 +2485,7 @@ class WorkflowV1Service:
         return StageActionResponse(
             job_id=str(updated.get("job_id") or ""),
             status=str(updated.get("status") or "unknown"),
+            current_stage=WorkflowV1Service._resolve_current_stage(updated),
             content_approval_status=str(updated.get("content_approval_status") or "pending"),
             image_approval_status=str(updated.get("image_approval_status") or "pending"),
             final_approval_status=str(updated.get("final_approval_status") or "pending"),
@@ -2119,6 +2509,97 @@ class WorkflowV1Service:
         )
 
     @staticmethod
+    def _build_studio_action_response(updated: dict[str, Any]) -> StudioActionResponse:
+        """Build a compact Studio response after a selection or favorite action."""
+
+        studio_state = WorkflowV1Service._studio_state(updated)
+        return StudioActionResponse(
+            job_id=str(updated.get("job_id") or ""),
+            status=str(updated.get("status") or "unknown"),
+            current_stage=WorkflowV1Service._resolve_current_stage(updated),
+            content_preview=str(updated.get("content_preview") or "") or None,
+            image_preview_url=str(updated.get("image_preview_url") or "") or None,
+            final_preview_url=str(updated.get("final_preview_url") or "") or None,
+            is_favorite=bool(studio_state.get("is_favorite")),
+        )
+
+    @staticmethod
+    def _resolve_output_spec(job: dict[str, Any]) -> dict[str, Any]:
+        """Return one mutable copy of output_spec from a job snapshot."""
+
+        output_spec = job.get("output_spec")
+        return dict(output_spec) if isinstance(output_spec, dict) else {}
+
+    @staticmethod
+    def _studio_state(job: dict[str, Any]) -> dict[str, Any]:
+        """Return Studio metadata stored inside output_spec.studio."""
+
+        output_spec = WorkflowV1Service._resolve_output_spec(job)
+        studio = output_spec.get("studio")
+        return dict(studio) if isinstance(studio, dict) else {}
+
+    @staticmethod
+    def _with_studio_state(job: dict[str, Any], **updates: Any) -> dict[str, Any]:
+        """Return output_spec with nested Studio metadata merged in."""
+
+        output_spec = WorkflowV1Service._resolve_output_spec(job)
+        studio = WorkflowV1Service._studio_state(job)
+        for key, value in updates.items():
+            if value is None:
+                studio.pop(key, None)
+            else:
+                studio[key] = value
+        output_spec["studio"] = studio
+        return output_spec
+
+    @classmethod
+    def _resolve_default_text_candidate_id(cls, job: dict[str, Any]) -> int | None:
+        """Resolve the best current candidate id for downstream text selection."""
+
+        selected_id = cls._selected_text_candidate_id(job)
+        if selected_id is not None:
+            return selected_id
+
+        shortlist = job.get("shortlist")
+        if isinstance(shortlist, list):
+            ranked = sorted(shortlist, key=lambda item: int(item.get("rank") or 9999))
+            for entry in ranked:
+                candidate_id = int(entry.get("candidate_id") or 0)
+                if candidate_id > 0:
+                    return candidate_id
+
+        candidates = job.get("candidates")
+        if isinstance(candidates, list):
+            winner = next((item for item in candidates if bool(item.get("is_winner"))), None)
+            if winner is not None:
+                candidate_id = int(winner.get("id") or 0)
+                if candidate_id > 0:
+                    return candidate_id
+            first = next((item for item in candidates if int(item.get("id") or 0) > 0), None)
+            if first is not None:
+                return int(first.get("id") or 0)
+
+        return None
+
+    async def _build_selected_text_output_spec(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        selection_time: datetime,
+    ) -> dict[str, Any]:
+        """Persist the active text choice in candidate rows and studio metadata."""
+
+        selected_candidate_id = self._resolve_default_text_candidate_id(job)
+        if selected_candidate_id is not None:
+            await self._repository.update_candidate_selection(job_id, [selected_candidate_id])
+        return self._with_studio_state(
+            job,
+            selected_text_candidate_id=selected_candidate_id,
+            text_selected_at=selection_time.isoformat(),
+        )
+
+    @staticmethod
     def _build_shortlist_rows(
         *,
         persisted_candidates: list[dict[str, Any]],
@@ -2126,20 +2607,21 @@ class WorkflowV1Service:
     ) -> list[dict[str, Any]]:
         """Map shortlist seed rows to persisted candidate ids."""
 
-        candidates_by_signature: dict[tuple[str, str], dict[str, Any]] = {}
+        candidates_by_signature: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for candidate in persisted_candidates:
             signature = (
                 str(candidate.get("model") or ""),
                 str(candidate.get("content_text") or candidate.get("text") or ""),
             )
-            candidates_by_signature[signature] = candidate
+            candidates_by_signature.setdefault(signature, []).append(candidate)
 
         shortlist_rows: list[dict[str, Any]] = []
         for row in shortlist_seed:
             signature = (str(row.get("model") or ""), str(row.get("content_text") or ""))
-            candidate = candidates_by_signature.get(signature)
-            if candidate is None:
+            matches = candidates_by_signature.get(signature) or []
+            if not matches:
                 continue
+            candidate = matches.pop(0)
             shortlist_rows.append(
                 {
                     "candidate_id": int(candidate.get("id") or 0),
@@ -2149,6 +2631,36 @@ class WorkflowV1Service:
             )
         shortlist_rows.sort(key=lambda item: item["rank"])
         return shortlist_rows
+
+    @staticmethod
+    def _resolve_target_words_from_job(job: dict[str, Any]) -> int:
+        """Return the requested target word count for shortlist filtering."""
+
+        output_spec = job.get("output_spec") if isinstance(job.get("output_spec"), dict) else {}
+        length = output_spec.get("length") if isinstance(output_spec.get("length"), dict) else {}
+        target_words = int(length.get("target_words") or 16)
+        return min(max(target_words, 4), 60)
+
+    async def _rebuild_shortlist_for_job(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+        """Recompute the strict shortlist from the full persisted candidate pool."""
+
+        persisted = await self._load_job(job_id)
+        shortlist_seed = build_shortlist_seed(
+            list(persisted.get("candidates") or []),
+            target_words=self._resolve_target_words_from_job(job),
+        )
+        shortlist_rows = self._build_shortlist_rows(
+            persisted_candidates=list(persisted.get("candidates") or []),
+            shortlist_seed=shortlist_seed,
+        )
+        await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
+        refreshed = await self._load_job(job_id)
+        return shortlist_seed, shortlist_rows, refreshed
 
     @staticmethod
     def _build_shortlist_preview_relative_path(job_id: str, candidate_id: int) -> str:
@@ -2306,6 +2818,196 @@ class WorkflowV1Service:
             f"Approved message text: {winning_content}"
         )
 
+    async def _generate_image_option_assets(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        count: int,
+        batch: int,
+    ) -> list[dict[str, Any]]:
+        """Render selectable visual directions for Studio image options."""
+
+        generated = await self._generate_image_candidates_for_job(
+            job_id=job_id,
+            job=job,
+            count=count,
+            batch=batch,
+            include_preview_candidate=False,
+            stage="image_generation",
+        )
+        return list(generated["assets"])
+
+    async def _persist_image_option_assets(self, job_id: str, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Persist already-rendered Studio image option assets."""
+
+        for asset in assets:
+            await self._repository.save_asset(
+                job_id,
+                asset_type=str(asset["asset_type"]),
+                asset_url=str(asset["asset_url"]),
+                storage_backend=str(asset["storage_backend"]),
+                storage_root=str(asset["storage_root"]),
+                relative_path=str(asset["relative_path"]),
+                public_url=str(asset["public_url"]),
+                absolute_path=str(asset["absolute_path"]),
+                file_size_bytes=asset.get("file_size_bytes"),
+                version=str(asset["version"]),
+                approved=bool(asset.get("approved")),
+            )
+        return assets
+
+    async def _generate_image_candidates_for_job(
+        self,
+        *,
+        job_id: str,
+        job: dict[str, Any],
+        count: int,
+        batch: int,
+        include_preview_candidate: bool,
+        stage: str,
+    ) -> dict[str, Any]:
+        """Generate provider-backed image candidates and persist both files and metadata."""
+
+        request = ImageGenerationRequest(
+            job_id=job_id,
+            theme_name=str(job.get("theme_name") or ""),
+            approved_text=self._resolve_winning_content(job),
+            prompt=self.build_image_prompt(job),
+            audience=str(job.get("audience") or ""),
+            cultural_context=str(job.get("cultural_context") or ""),
+            theme_style=self._resolve_theme_style(job),
+            export_size=self._resolve_export_size(job),
+            count=max(1, count),
+            batch=batch,
+            background_image_url=self._resolve_background_image_url(job),
+        )
+        provider_candidates = await self._image_provider.generate_candidates(request)
+        if not provider_candidates:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Image provider '{self._image_provider.name}' returned no candidates",
+            )
+        persisted_assets: list[dict[str, Any]] = []
+        persisted_candidate_rows: list[dict[str, Any]] = []
+
+        for candidate in provider_candidates:
+            relative_path, asset_type = self._resolve_image_candidate_path(
+                job_id=job_id,
+                candidate=candidate,
+                batch=batch,
+                include_preview_candidate=include_preview_candidate,
+            )
+            self._asset_storage.save_bytes(relative_path, candidate.image_bytes)
+            public_url = self._asset_storage.get_public_url(relative_path)
+            version = f"{candidate.provider}:{candidate.theme_style}:{candidate.text_alignment}"
+            asset_record = {
+                "asset_type": asset_type,
+                "asset_url": public_url,
+                "storage_backend": self._asset_storage.backend,
+                "storage_root": self._asset_storage.get_absolute_path(""),
+                "relative_path": relative_path,
+                "public_url": public_url,
+                "absolute_path": self._asset_storage.get_absolute_path(relative_path),
+                "file_size_bytes": self._read_file_size_bytes(relative_path),
+                "version": version,
+                "approved": include_preview_candidate and asset_type == "image_preview",
+                "provider": candidate.provider,
+                "theme_style": candidate.theme_style,
+                "text_alignment": candidate.text_alignment,
+            }
+            persisted_assets.append(asset_record)
+            persisted_candidate_rows.append(
+                {
+                    "stage": stage,
+                    "provider": candidate.provider,
+                    "prompt": candidate.prompt,
+                    "candidate_index": candidate.candidate_index,
+                    "public_url": public_url,
+                    "relative_path": relative_path,
+                    "is_selected": include_preview_candidate and asset_type == "image_preview",
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+
+        await self._persist_image_option_assets(job_id=job_id, assets=persisted_assets)
+        await self._repository.save_image_candidates(
+            job_id,
+            persisted_candidate_rows,
+            replace_existing=False,
+            stage=stage,
+        )
+        primary_candidate = persisted_assets[0] if persisted_assets else None
+        if primary_candidate is not None:
+            await self._repository.update_image_candidate_selection(
+                job_id,
+                selected_relative_path=str(primary_candidate["relative_path"]),
+            )
+        return {
+            "assets": persisted_assets,
+            "primary_candidate": primary_candidate,
+            "prompt": request.prompt,
+        }
+
+    def _resolve_image_candidate_path(
+        self,
+        *,
+        job_id: str,
+        candidate: ImageCandidateResult,
+        batch: int,
+        include_preview_candidate: bool,
+    ) -> tuple[str, str]:
+        """Return the storage path and asset type for one generated image candidate."""
+
+        if include_preview_candidate and int(candidate.candidate_index) == 1:
+            return self._build_image_preview_relative_path(job_id), "image_preview"
+        return (
+            self._build_image_option_relative_path(
+                job_id,
+                batch=batch,
+                sequence=int(candidate.candidate_index),
+                theme_style=candidate.theme_style,
+            ),
+            "image_option",
+        )
+
+    @staticmethod
+    def _find_image_asset(assets: list[dict[str, Any]], payload: SelectImageRequest) -> dict[str, Any] | None:
+        """Resolve one image-option asset from relative path or public URL."""
+
+        requested_relative_path = str(payload.relative_path or "").strip()
+        requested_url = str(payload.public_url or "").strip()
+        for asset in assets:
+            asset_type = str(asset.get("asset_type") or "").strip()
+            if asset_type not in {"image_option", "image_preview"}:
+                continue
+            if requested_relative_path and str(asset.get("relative_path") or "").strip() == requested_relative_path:
+                return asset
+            asset_url = str(asset.get("public_url") or asset.get("asset_url") or "").strip()
+            if requested_url and asset_url == requested_url:
+                return asset
+        return None
+
+    @staticmethod
+    def _extract_theme_style_from_asset(asset: dict[str, Any]) -> str | None:
+        """Extract theme style token from a persisted Studio image option asset."""
+
+        version = str(asset.get("version") or "").strip()
+        if ":" not in version:
+            return None
+        parts = version.split(":")
+        if len(parts) < 2:
+            return None
+        style = parts[1].strip().lower()
+        return style if style in {"minimal", "festive", "elegant", "playful"} else None
+
+    @staticmethod
+    def _build_image_option_relative_path(job_id: str, *, batch: int, sequence: int, theme_style: str) -> str:
+        """Return relative storage path for one Studio image option."""
+
+        safe_style = "".join(char for char in theme_style.lower() if char.isalnum() or char == "_") or "minimal"
+        return f"image/{job_id}_option_b{batch}_{sequence}_{safe_style}.png"
+
     @staticmethod
     def _build_image_preview_relative_path(job_id: str) -> str:
         """Return relative storage path for image approval preview."""
@@ -2326,6 +3028,28 @@ class WorkflowV1Service:
             "png": f"final/{job_id}_final.png",
             "pdf": f"pdf/{job_id}_final.pdf",
         }
+
+    def _render_final_preview_asset(self, *, job_id: str, job: dict[str, Any]) -> str:
+        """Render a real final-card preview PNG using the current text and image selections."""
+
+        relative_path = self._build_final_preview_relative_path(job_id)
+        preview_payload = FinalCardRenderInput(
+            title=self._resolve_final_title(job),
+            message=self._resolve_final_message(job),
+            signoff=self._resolve_final_signoff(job),
+            theme_style=self._resolve_theme_style(job),
+            background_image_url=self._resolve_background_image_url(job),
+            text_alignment=self._resolve_text_alignment(job),
+            export_size=self._resolve_export_size(job),
+        )
+        png_bytes = self._card_renderer.render_final_png(preview_payload)
+        self._asset_storage.save_bytes(relative_path, png_bytes)
+        if not self._asset_storage.file_exists(relative_path):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate final card preview",
+            )
+        return self._asset_storage.get_public_url(relative_path)
 
     def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Render polished final card assets and ensure files exist."""
@@ -2444,12 +3168,61 @@ class WorkflowV1Service:
         alignment = str(options.get("text_alignment") or "center").strip().lower()
         return alignment if alignment in {"left", "center", "right"} else "center"
 
+    def _build_selected_image_updates(
+        self,
+        job: dict[str, Any],
+        *,
+        selected_url: str | None = None,
+        relative_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Return normalized selected-image fields derived from stored image candidates."""
+
+        studio_state = self._studio_state(job)
+        normalized_relative_path = str(relative_path or studio_state.get("selected_image_relative_path") or "").strip() or None
+        normalized_url = str(selected_url or studio_state.get("selected_image_url") or job.get("image_preview_url") or "").strip() or None
+
+        image_candidates = list(job.get("image_candidates") or [])
+        selected_candidate = None
+        if normalized_relative_path:
+            selected_candidate = next(
+                (
+                    item
+                    for item in image_candidates
+                    if str(item.get("relative_path") or "").strip() == normalized_relative_path
+                ),
+                None,
+            )
+        if selected_candidate is None:
+            selected_candidate = next((item for item in image_candidates if bool(item.get("is_selected"))), None)
+        if selected_candidate is not None:
+            normalized_relative_path = normalized_relative_path or str(selected_candidate.get("relative_path") or "").strip() or None
+            normalized_url = normalized_url or str(selected_candidate.get("public_url") or "").strip() or None
+
+        return {
+            "selected_image_candidate_id": str(selected_candidate.get("candidate_id") or "").strip() or None if selected_candidate else None,
+            "selected_image_public_url": normalized_url,
+            "selected_image_relative_path": normalized_relative_path,
+            "selected_image_provider": str(selected_candidate.get("provider") or settings.image_provider).strip() or settings.image_provider
+            if normalized_url or selected_candidate is not None
+            else None,
+            "selected_image_model": str(selected_candidate.get("model") or "").strip() or None if selected_candidate else None,
+        }
+
     def _resolve_background_image_url(self, job: dict[str, Any]) -> str | None:
         """Resolve optional background image URL from rendering options."""
 
         options = self._resolve_rendering_options(job)
         background_url = str(options.get("background_image_url") or "").strip()
-        return background_url or None
+        if background_url:
+            return background_url
+
+        selected_url = str(job.get("selected_image_public_url") or "").strip()
+        if selected_url:
+            return selected_url
+
+        studio_state = self._studio_state(job)
+        studio_selected_url = str(studio_state.get("selected_image_url") or "").strip()
+        return studio_selected_url or None
 
     def _resolve_final_title(self, job: dict[str, Any]) -> str | None:
         """Resolve optional user-facing title for final card mode."""
@@ -2507,4 +3280,5 @@ def get_workflow_v1_service() -> WorkflowV1Service:
     return WorkflowV1Service(
         repository=get_workflow_job_repository(),
         asset_storage=get_asset_storage(),
+        image_provider=get_image_provider(),
     )
