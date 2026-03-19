@@ -27,10 +27,13 @@ Expected URL:
 Frontend build note:
 - The active React source now lives in `../content_engine_ui`.
 - `ecard-factory` still keeps a temporary static fallback in `app/static/console/app.js`.
-- First-time setup for the fallback bridge:
+- `./scripts/run-ecard.sh` no longer builds the frontend from inside `ecard-factory`.
+- If you want to refresh the temporary fallback manually:
   - `npm install`
   - `npm run build:console`
-- `./scripts/run-ecard.sh` still runs `npm run build:console` automatically to keep the fallback bundle synced.
+- Optional legacy fallback gate:
+  - `ECARD_ENABLE_LEGACY_FRONTEND=true` keeps backend root routes serving the embedded console
+  - `ECARD_ENABLE_LEGACY_FRONTEND=false` disables those routes so only APIs/assets stay active
 
 Standalone UI app:
 
@@ -94,6 +97,15 @@ If `/` shows only a background and no visible console:
 3. Rebuild local bundle:
    - `npm run build:console`
 4. A boot fallback panel now appears with explicit runtime errors if mount/render fails.
+
+If `/` returns a plain-text message instead of the console:
+
+1. Check whether the legacy fallback is intentionally disabled:
+   - `ECARD_ENABLE_LEGACY_FRONTEND=false`
+2. Or rebuild the fallback bundle manually:
+   - `npm run build:console`
+3. Otherwise use the standalone UI:
+   - `npm --prefix ../content_engine_ui run dev`
 
 If the standalone UI is running on its own port but API calls fail:
 

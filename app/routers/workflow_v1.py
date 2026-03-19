@@ -42,6 +42,7 @@ from app.schemas.workflow import (
     StartJobRequest,
     StartJobResponse,
     ThemeJobCreateRequest,
+    WorkflowContractResponse,
 )
 from app.schemas.theme_factory import ThemeCatalogResponse, ThemeResolvedPayload
 from app.services.image_generation_service import ImageGenerationService, get_image_generation_service
@@ -132,6 +133,15 @@ async def start_job(
     return await service.start_job(payload)
 
 
+@router.get("/workflow-contract", response_model=WorkflowContractResponse, status_code=status.HTTP_200_OK)
+async def get_workflow_contract(
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> WorkflowContractResponse:
+    """Return the explicit Stage 0 canonical workflow contract and endpoint inventory."""
+
+    return service.get_workflow_contract()
+
+
 @router.post("/create-daily-theme-job", response_model=DailyThemeJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_daily_theme_job(
     payload: ThemeJobCreateRequest | None = Body(default=None),
@@ -186,35 +196,35 @@ async def start_job_from_theme(
     return await service.start_job(start_payload)
 
 
-@router.post("/{job_id}/content-approval", response_model=ContentApprovalResponse)
+@router.post("/{job_id}/content-approval", response_model=ContentApprovalResponse, deprecated=True)
 async def submit_content_approval(
     job_id: str,
     payload: ContentApprovalRequest,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> ContentApprovalResponse:
-    """Persist content approval decision and prepare image approval stage."""
+    """Legacy n8n callback that auto-advances from content approval to image generation."""
 
     return await service.submit_content_approval(job_id, payload)
 
 
-@router.post("/{job_id}/image-approval", response_model=ImageApprovalResponse)
+@router.post("/{job_id}/image-approval", response_model=ImageApprovalResponse, deprecated=True)
 async def submit_image_approval(
     job_id: str,
     payload: ImageApprovalRequest,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> ImageApprovalResponse:
-    """Persist image approval decision and prepare final approval stage."""
+    """Legacy n8n callback that auto-advances from image approval to preview rendering."""
 
     return await service.submit_image_approval(job_id, payload)
 
 
-@router.post("/{job_id}/final-approval", response_model=FinalApprovalResponse)
+@router.post("/{job_id}/final-approval", response_model=FinalApprovalResponse, deprecated=True)
 async def submit_final_approval(
     job_id: str,
     payload: ApprovalRequest,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> FinalApprovalResponse:
-    """Persist final approval decision and mark the job as completed when approved."""
+    """Legacy n8n callback that accepts final approval decisions through one payload endpoint."""
 
     return await service.submit_final_approval(job_id, payload)
 
@@ -301,12 +311,17 @@ async def generate_more_text(
     return await service.generate_more_text_options(job_id, count=10)
 
 
-@router.post("/{job_id}/generate-more-images", response_model=GenerateMoreResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/generate-more-images",
+    response_model=GenerateMoreResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def generate_more_images(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> GenerateMoreResponse:
-    """Append more Studio image options for the currently selected text."""
+    """Legacy local image-option generation path that bypasses the ImageForge asset contract."""
 
     return await service.generate_more_image_options(
         job_id,
@@ -315,13 +330,18 @@ async def generate_more_images(
     )
 
 
-@router.post("/{job_id}/select-image", response_model=StudioActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/select-image",
+    response_model=StudioActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def select_image_option(
     job_id: str,
     payload: SelectImageRequest,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StudioActionResponse:
-    """Choose one generated image option as the active card visual."""
+    """Legacy local image-option selection path that bypasses ImageForge candidate ids."""
 
     return await service.select_image_option(job_id, payload)
 
@@ -334,9 +354,11 @@ async def select_image_option(
 async def generate_image_assets(
     job_id: str,
     service: ImageGenerationService = Depends(get_image_generation_service),
+    workflow_service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> JobImageAssetsResponse:
     """Generate ImageForge-backed image asset candidates for the current job."""
 
+    await workflow_service.assert_can_generate_image_assets(job_id, regenerate=False)
     return await service.generate_image_assets_for_job(job_id)
 
 
@@ -349,9 +371,11 @@ async def regenerate_image_assets(
     job_id: str,
     payload: RegenerateImageAssetsRequest | None = Body(default=None),
     service: ImageGenerationService = Depends(get_image_generation_service),
+    workflow_service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> JobImageAssetsResponse:
     """Request another ImageForge candidate batch for the current job."""
 
+    await workflow_service.assert_can_generate_image_assets(job_id, regenerate=True)
     return await service.regenerate_image_assets_for_job(
         job_id,
         candidate_count=payload.candidate_count if payload else None,
@@ -367,9 +391,11 @@ async def select_image_asset_candidate(
     job_id: str,
     candidate_id: str,
     service: ImageGenerationService = Depends(get_image_generation_service),
+    workflow_service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> JobImageAssetsResponse:
     """Select one ImageForge candidate for final card composition."""
 
+    await workflow_service.assert_can_select_image_asset(job_id)
     return await service.select_image_candidate_for_job(job_id, candidate_id)
 
 
@@ -438,72 +464,107 @@ async def rerun_full_job(
     return await service.rerun_full(job_id)
 
 
-@router.post("/{job_id}/approve-content", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/approve-content",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def approve_content(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Approve content stage only."""
+    """Legacy operator shortcut that approves the current winner without explicit text selection."""
 
     return await service.approve_content(job_id)
 
 
-@router.post("/{job_id}/reject-content", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/reject-content",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def reject_content(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Reject content stage only."""
+    """Legacy operator content rejection shortcut."""
 
     return await service.reject_content(job_id)
 
 
-@router.post("/{job_id}/regenerate-content", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/regenerate-content",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def regenerate_content(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Regenerate content stage only."""
+    """Legacy content regeneration shortcut."""
 
     return await service.regenerate_content(job_id)
 
 
-@router.post("/{job_id}/generate-image", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/generate-image",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def generate_image(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Generate image preview after content approval."""
+    """Legacy image generation shortcut that bypasses the ImageForge asset contract."""
 
     return await service.generate_image(job_id)
 
 
-@router.post("/{job_id}/regenerate-image", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/regenerate-image",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def regenerate_image(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Regenerate image preview only."""
+    """Legacy image regeneration shortcut that bypasses the ImageForge asset contract."""
 
     return await service.regenerate_image(job_id)
 
 
-@router.post("/{job_id}/approve-image", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/approve-image",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def approve_image(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Approve image stage only."""
+    """Legacy operator shortcut that approves image state without candidate-id selection."""
 
     return await service.approve_image(job_id)
 
 
-@router.post("/{job_id}/reject-image", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/reject-image",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def reject_image(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Reject image stage only."""
+    """Legacy operator image rejection shortcut."""
 
     return await service.reject_image(job_id)
 
@@ -528,23 +589,33 @@ async def approve_final(
     return await service.approve_final(job_id)
 
 
-@router.post("/{job_id}/reject-final", response_model=StageActionResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/reject-final",
+    response_model=StageActionResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def reject_final(
     job_id: str,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageActionResponse:
-    """Reject final stage only."""
+    """Legacy final rejection shortcut kept for compatibility."""
 
     return await service.reject_final(job_id)
 
 
-@router.post("/{job_id}/rerun-stage", response_model=StageRerunResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/{job_id}/rerun-stage",
+    response_model=StageRerunResponse,
+    status_code=status.HTTP_200_OK,
+    deprecated=True,
+)
 async def rerun_stage(
     job_id: str,
     payload: StageRerunRequest,
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
 ) -> StageRerunResponse:
-    """Rerun one explicit workflow stage."""
+    """Legacy generic rerun endpoint replaced by explicit stage rerun routes."""
 
     return await service.rerun_stage(job_id, payload)
 

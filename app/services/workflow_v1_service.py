@@ -16,6 +16,7 @@ from app.config import settings
 from app.integrations.contentforge import ContentForgeWorkflowClient
 from app.repositories.workflow_repository import WorkflowJobRepository, get_workflow_job_repository
 from app.schemas.workflow import (
+    CANONICAL_WORKFLOW_STAGE_ORDER,
     ApprovalRequest,
     CandidateDebugResponse,
     ContentApprovalRequest,
@@ -31,6 +32,12 @@ from app.schemas.workflow import (
     JobDebugResponse,
     JobDeleteResponse,
     JobEventResponse,
+    WorkflowCanonicalStage,
+    WorkflowContractResponse,
+    WorkflowEndpointDefinition,
+    WorkflowEndpointRole,
+    WorkflowStageDefinition,
+    WorkflowStageOwner,
     JobListItemResponse,
     RenderShortlistRequest,
     RenderShortlistResponse,
@@ -44,6 +51,7 @@ from app.schemas.workflow import (
     StageRerunResponse,
     StartJobRequest,
     StartJobResponse,
+    WORKFLOW_COMPATIBILITY_STAGE_LABELS,
 )
 from app.services.content_shortlist_service import build_shortlist_seed
 from app.services.image_provider import ImageCandidateResult, ImageGenerationRequest, ImageProvider, get_image_provider
@@ -55,6 +63,282 @@ from app.services.workflow_card_renderer import (
 from app.storage import AssetStorage, get_asset_storage
 
 logger = logging.getLogger(__name__)
+
+
+WORKFLOW_STAGE_DEFINITIONS: tuple[WorkflowStageDefinition, ...] = (
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.JOB_CREATED,
+        owner=WorkflowStageOwner.ECARD_FACTORY,
+        description="eCardFactory has created the job record and normalized the request payload.",
+        allowed_next_stages=[WorkflowCanonicalStage.TEXT_CANDIDATES_READY, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
+        owner=WorkflowStageOwner.HUMAN_REVIEW,
+        description="The shortlist exists and a human must choose the text to carry forward.",
+        allowed_next_stages=[WorkflowCanonicalStage.TEXT_SELECTED, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.TEXT_SELECTED,
+        owner=WorkflowStageOwner.ECARD_FACTORY,
+        description="The selected text is locked for the current pass and image generation can start.",
+        allowed_next_stages=[WorkflowCanonicalStage.IMAGE_CANDIDATES_READY, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.IMAGE_CANDIDATES_READY,
+        owner=WorkflowStageOwner.HUMAN_REVIEW,
+        description="Image candidates exist and a human must choose the image to carry forward.",
+        allowed_next_stages=[WorkflowCanonicalStage.IMAGE_SELECTED, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.IMAGE_SELECTED,
+        owner=WorkflowStageOwner.ECARD_FACTORY,
+        description="A selected image exists and eCardFactory can assemble the final preview.",
+        allowed_next_stages=[WorkflowCanonicalStage.PREVIEW_READY, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.PREVIEW_READY,
+        owner=WorkflowStageOwner.HUMAN_REVIEW,
+        description="The final preview exists and a human can approve export.",
+        allowed_next_stages=[WorkflowCanonicalStage.EXPORT_READY, WorkflowCanonicalStage.FAILED],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.EXPORT_READY,
+        owner=WorkflowStageOwner.ECARD_FACTORY,
+        description="Final export assets exist and the canonical Stage 0 workflow is complete.",
+        allowed_next_stages=[],
+    ),
+    WorkflowStageDefinition(
+        stage=WorkflowCanonicalStage.FAILED,
+        owner=WorkflowStageOwner.ECARD_FACTORY,
+        description="The workflow has entered a rejected, timed-out, or failed terminal state.",
+        allowed_next_stages=[],
+    ),
+)
+
+
+WORKFLOW_PRIMARY_ENDPOINTS: tuple[WorkflowEndpointDefinition, ...] = (
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/start",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Create a job and generate the initial shortlist.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/select-text",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Choose the text that owns the next image-generation step.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/image-assets/generate",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Generate ImageForge candidates for the selected text.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/image-assets/{candidate_id}/select",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Choose the ImageForge candidate for final composition.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/render-final",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Render the final preview from the selected text and image.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/approve-final",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Approve the preview and export final assets.",
+    ),
+)
+
+
+WORKFLOW_SECONDARY_ENDPOINTS: tuple[WorkflowEndpointDefinition, ...] = (
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/create-daily-theme-job",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Start the same workflow from the resolved Theme Factory schedule.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/start-from-theme",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Start the same workflow from a manually selected Theme Factory entry.",
+    ),
+    WorkflowEndpointDefinition(
+        method="GET",
+        path="/api/jobs/{job_id}/shortlist",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Inspect the ranked shortlist before text selection.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/render-shortlist",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Render shortlist previews without advancing the canonical path.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/generate-more-text",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Append more text options without replacing the canonical path.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/image-assets/regenerate",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Request another ImageForge batch for the already selected text.",
+    ),
+    WorkflowEndpointDefinition(
+        method="GET",
+        path="/api/jobs/{job_id}/image-assets",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Inspect normalized ImageForge state for the job.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/favorite",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Toggle favorite state without affecting workflow stage.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/rerun/content",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Rerun content generation only.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/rerun/image",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Rerun image generation only.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/rerun/final-render",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Rerun final preview rendering only.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/rerun/full",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Restart the workflow from content generation.",
+    ),
+)
+
+
+WORKFLOW_LEGACY_ENDPOINTS: tuple[WorkflowEndpointDefinition, ...] = (
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/content-approval",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy n8n callback that auto-advances from content approval to image generation.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/image-approval",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy n8n callback that auto-advances from image approval to preview render.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/final-approval",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy n8n callback that accepts approval decisions through one payload endpoint.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/generate-more-images",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy local image-option generation path that bypasses ImageForge.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/select-image",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy local image-option selection path that bypasses ImageForge candidate ids.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/approve-content",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy operator shortcut that approves the current winner without explicit text selection.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/reject-content",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy operator content rejection shortcut.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/regenerate-content",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy content regeneration shortcut.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/generate-image",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy image generation shortcut that bypasses the ImageForge asset contract.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/regenerate-image",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy image regeneration shortcut that bypasses the ImageForge asset contract.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/approve-image",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy operator shortcut that approves image state without candidate-id selection.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/reject-image",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy operator image rejection shortcut.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/reject-final",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy final rejection shortcut kept for compatibility.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/{job_id}/rerun-stage",
+        role=WorkflowEndpointRole.LEGACY,
+        summary="Legacy generic rerun endpoint replaced by explicit stage rerun routes.",
+    ),
+)
+
+
+PRIMARY_WORKFLOW_ACTION_ALLOWED_STAGES: dict[str, tuple[WorkflowCanonicalStage, ...]] = {
+    "select_text": (
+        WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
+        WorkflowCanonicalStage.TEXT_SELECTED,
+        WorkflowCanonicalStage.IMAGE_CANDIDATES_READY,
+        WorkflowCanonicalStage.IMAGE_SELECTED,
+        WorkflowCanonicalStage.PREVIEW_READY,
+    ),
+    "generate_image_assets": (WorkflowCanonicalStage.TEXT_SELECTED,),
+    "regenerate_image_assets": (
+        WorkflowCanonicalStage.IMAGE_CANDIDATES_READY,
+        WorkflowCanonicalStage.IMAGE_SELECTED,
+        WorkflowCanonicalStage.PREVIEW_READY,
+    ),
+    "select_image_asset": (WorkflowCanonicalStage.IMAGE_CANDIDATES_READY,),
+    "render_final": (WorkflowCanonicalStage.IMAGE_SELECTED,),
+    "approve_final": (WorkflowCanonicalStage.PREVIEW_READY,),
+}
 
 
 class StubContentForgeClient:
@@ -535,6 +819,34 @@ class WorkflowV1Service:
         self._card_renderer = WorkflowCardRenderer()
         self._image_provider = image_provider or get_image_provider()
 
+    def get_workflow_contract(self) -> WorkflowContractResponse:
+        """Return the explicit Stage 0 canonical workflow contract."""
+
+        return WorkflowContractResponse(
+            canonical_stage_order=list(CANONICAL_WORKFLOW_STAGE_ORDER),
+            stages=list(WORKFLOW_STAGE_DEFINITIONS),
+            primary_endpoints=list(WORKFLOW_PRIMARY_ENDPOINTS),
+            secondary_endpoints=list(WORKFLOW_SECONDARY_ENDPOINTS),
+            legacy_endpoints=list(WORKFLOW_LEGACY_ENDPOINTS),
+        )
+
+    async def assert_can_generate_image_assets(self, job_id: str, *, regenerate: bool = False) -> None:
+        """Validate canonical stage before calling the ImageForge asset generation path."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        action = "regenerate_image_assets" if regenerate else "generate_image_assets"
+        self._assert_primary_workflow_action(job, action=action)
+
+    async def assert_can_select_image_asset(self, job_id: str) -> None:
+        """Validate canonical stage before selecting one ImageForge candidate."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        self._assert_primary_workflow_action(job, action="select_image_asset")
+
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
         """Create a job, run stub generation/judging, persist state, and return approval payload."""
 
@@ -662,6 +974,7 @@ class WorkflowV1Service:
         return StartJobResponse(
             job_id=job_id,
             status="content_pending_approval",
+            canonical_stage=WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
             content_preview=content_preview,
             winner_model=winner_model,
             approval_message=approval_message,
@@ -951,6 +1264,7 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        self._assert_primary_workflow_action(job, action="render_final")
         if not self._has_selected_text(job):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select text before rendering the final card")
         if not self._has_selected_image(job):
@@ -1012,6 +1326,10 @@ class WorkflowV1Service:
     async def approve_final(self, job_id: str) -> StageActionResponse:
         """Approve final preview and export final assets."""
 
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        self._assert_primary_workflow_action(job, action="approve_final")
         await self.apply_final_approval(job_id, "approved", "")
         updated = await self._load_job(job_id)
         assert updated is not None
@@ -1169,6 +1487,7 @@ class WorkflowV1Service:
         return ContentApprovalResponse(
             job_id=job_id,
             status=str(updated["status"]),
+            canonical_stage=self._resolve_canonical_stage(updated),
             image_prompt=updated.get("image_prompt"),
             image_preview_url=updated.get("image_preview_url"),
         )
@@ -1312,6 +1631,7 @@ class WorkflowV1Service:
         return ImageApprovalResponse(
             job_id=job_id,
             status=str(updated["status"]),
+            canonical_stage=self._resolve_canonical_stage(updated),
             final_preview_url=updated.get("final_preview_url"),
         )
 
@@ -1454,6 +1774,7 @@ class WorkflowV1Service:
         return FinalApprovalResponse(
             job_id=job_id,
             status=str(updated["status"]),
+            canonical_stage=self._resolve_canonical_stage(updated),
             final_asset_urls=FinalAssetUrls.model_validate(asset_urls) if asset_urls else None,
         )
 
@@ -1832,6 +2153,7 @@ class WorkflowV1Service:
         job = await self._load_job(job_id)
         if job is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        self._assert_primary_workflow_action(job, action="select_text")
         candidates = list(job.get("candidates") or [])
         selected = next((item for item in candidates if int(item.get("id") or 0) == payload.candidate_id), None)
         if selected is None:
@@ -2107,6 +2429,7 @@ class WorkflowV1Service:
         return JobDebugResponse.model_validate(
             {
                 **job,
+                "canonical_stage": self._resolve_canonical_stage(job),
                 "current_stage": self._resolve_current_stage(job),
             }
         )
@@ -2125,6 +2448,7 @@ class WorkflowV1Service:
                 JobListItemResponse(
                     job_id=str(row.get("job_id")),
                     theme_name=str(row.get("theme_name") or "Untitled"),
+                    canonical_stage=self._resolve_canonical_stage(row),
                     current_stage=self._resolve_current_stage(row),
                     status=status_value,
                     output_spec=row.get("output_spec") if isinstance(row.get("output_spec"), dict) else {},
@@ -2265,6 +2589,23 @@ class WorkflowV1Service:
                 detail=f"Invalid state transition. Expected '{expected}' but current status is '{current}'.",
             )
 
+    @classmethod
+    def _assert_primary_workflow_action(cls, job: dict[str, Any], *, action: str) -> WorkflowCanonicalStage:
+        """Validate one canonical action against the authoritative Stage 0 state graph."""
+
+        current_stage = cls._resolve_canonical_stage(job)
+        allowed_stages = PRIMARY_WORKFLOW_ACTION_ALLOWED_STAGES[action]
+        if current_stage not in allowed_stages:
+            allowed_text = ", ".join(stage.value for stage in allowed_stages)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Canonical workflow action '{action}' is not allowed from stage "
+                    f"'{current_stage.value}'. Allowed stage(s): {allowed_text}."
+                ),
+            )
+        return current_stage
+
     @staticmethod
     def _build_audit_events(
         *,
@@ -2305,22 +2646,31 @@ class WorkflowV1Service:
         return datetime.now(timezone.utc)
 
     @classmethod
-    def _resolve_current_stage(cls, job: dict[str, Any]) -> str:
-        """Map persisted workflow state into one explicit Studio stage."""
+    def _resolve_canonical_stage(cls, job: dict[str, Any]) -> WorkflowCanonicalStage:
+        """Map persisted workflow state into the authoritative canonical stage."""
 
-        if cls._has_final_preview(job):
-            return "final_card_ready"
         if cls._is_failed_state(job):
-            return "failed"
+            return WorkflowCanonicalStage.FAILED
+        if cls._has_export_assets(job):
+            return WorkflowCanonicalStage.EXPORT_READY
+        if cls._has_final_preview(job):
+            return WorkflowCanonicalStage.PREVIEW_READY
         if cls._has_selected_image(job):
-            return "image_selected"
+            return WorkflowCanonicalStage.IMAGE_SELECTED
         if cls._has_image_candidates(job):
-            return "image_candidates_ready"
+            return WorkflowCanonicalStage.IMAGE_CANDIDATES_READY
         if cls._has_selected_text(job):
-            return "text_selected"
+            return WorkflowCanonicalStage.TEXT_SELECTED
         if cls._has_text_candidates(job):
-            return "content_candidates_ready"
-        return "failed"
+            return WorkflowCanonicalStage.TEXT_CANDIDATES_READY
+        return WorkflowCanonicalStage.JOB_CREATED
+
+    @classmethod
+    def _resolve_current_stage(cls, job: dict[str, Any]) -> str:
+        """Return the backward-compatible UI stage label derived from canonical stage."""
+
+        canonical_stage = cls._resolve_canonical_stage(job)
+        return WORKFLOW_COMPATIBILITY_STAGE_LABELS[canonical_stage]
 
     @classmethod
     def _has_text_candidates(cls, job: dict[str, Any]) -> bool:
@@ -2369,11 +2719,22 @@ class WorkflowV1Service:
         return str(job.get("image_approval_status") or "").strip().lower() == "approved"
 
     @staticmethod
-    def _has_final_preview(job: dict[str, Any]) -> bool:
-        if str(job.get("final_preview_url") or "").strip():
-            return True
+    def _has_export_assets(job: dict[str, Any]) -> bool:
         final_asset_urls = job.get("final_asset_urls")
         if isinstance(final_asset_urls, dict) and str(final_asset_urls.get("png") or "").strip():
+            return True
+        assets = job.get("assets")
+        if isinstance(assets, list):
+            return any(
+                str(item.get("asset_type") or "").lower() == "final_png"
+                and str(item.get("public_url") or item.get("asset_url") or "").strip()
+                for item in assets
+            )
+        return False
+
+    @staticmethod
+    def _has_final_preview(job: dict[str, Any]) -> bool:
+        if str(job.get("final_preview_url") or "").strip():
             return True
         normalized_status = str(job.get("status") or "").strip().lower()
         if normalized_status not in {"final_pending_approval", "completed", "final_rejected", "final_timeout"}:
@@ -2381,7 +2742,7 @@ class WorkflowV1Service:
         assets = job.get("assets")
         if isinstance(assets, list):
             return any(
-                str(item.get("asset_type") or "").lower() in {"final_preview", "final_png"}
+                str(item.get("asset_type") or "").lower() == "final_preview"
                 and str(item.get("public_url") or item.get("asset_url") or "").strip()
                 for item in assets
             )
@@ -2485,6 +2846,7 @@ class WorkflowV1Service:
         return StageActionResponse(
             job_id=str(updated.get("job_id") or ""),
             status=str(updated.get("status") or "unknown"),
+            canonical_stage=WorkflowV1Service._resolve_canonical_stage(updated),
             current_stage=WorkflowV1Service._resolve_current_stage(updated),
             content_approval_status=str(updated.get("content_approval_status") or "pending"),
             image_approval_status=str(updated.get("image_approval_status") or "pending"),
@@ -2516,6 +2878,7 @@ class WorkflowV1Service:
         return StudioActionResponse(
             job_id=str(updated.get("job_id") or ""),
             status=str(updated.get("status") or "unknown"),
+            canonical_stage=WorkflowV1Service._resolve_canonical_stage(updated),
             current_stage=WorkflowV1Service._resolve_current_stage(updated),
             content_preview=str(updated.get("content_preview") or "") or None,
             image_preview_url=str(updated.get("image_preview_url") or "") or None,

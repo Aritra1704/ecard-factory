@@ -923,3 +923,58 @@ def test_repository_recovers_preview_urls_from_filesystem_when_metadata_is_missi
     (assets_dir / "image" / f"{job_id}_image_preview.png").unlink(missing_ok=True)
     (assets_dir / "preview" / f"{job_id}_content_preview.png").unlink(missing_ok=True)
     (assets_dir / "final" / f"{job_id}_final.png").unlink(missing_ok=True)
+
+
+def test_workflow_contract_exposes_canonical_stages_and_endpoint_roles(configured_env: dict[str, str]) -> None:
+    """The workflow contract endpoint should make the primary path and legacy routes explicit."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        response = client.get("/api/jobs/workflow-contract")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == "stage0_canonical_v1"
+    assert payload["canonical_path_name"] == "start_select_generate_select_render_export"
+    assert payload["canonical_stage_order"] == [
+        "job_created",
+        "text_candidates_ready",
+        "text_selected",
+        "image_candidates_ready",
+        "image_selected",
+        "preview_ready",
+        "export_ready",
+    ]
+
+    stages = {item["stage"]: item for item in payload["stages"]}
+    assert stages["text_candidates_ready"]["owner"] == "human_review"
+    assert stages["preview_ready"]["allowed_next_stages"] == ["export_ready", "failed"]
+    assert stages["failed"]["allowed_next_stages"] == []
+
+    primary_paths = {item["path"] for item in payload["primary_endpoints"]}
+    secondary_paths = {item["path"] for item in payload["secondary_endpoints"]}
+    legacy_paths = {item["path"] for item in payload["legacy_endpoints"]}
+    assert "/api/jobs/start" in primary_paths
+    assert "/api/jobs/{job_id}/image-assets/generate" in primary_paths
+    assert "/api/jobs/{job_id}/render-shortlist" in secondary_paths
+    assert "/api/jobs/{job_id}/content-approval" in legacy_paths
+    assert "/api/jobs/{job_id}/approve-content" in legacy_paths
+
+
+def test_openapi_marks_legacy_workflow_routes_deprecated(configured_env: dict[str, str]) -> None:
+    """Legacy approval and shortcut routes should be flagged as deprecated in OpenAPI."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert paths["/api/jobs/{job_id}/content-approval"]["post"]["deprecated"] is True
+    assert paths["/api/jobs/{job_id}/image-approval"]["post"]["deprecated"] is True
+    assert paths["/api/jobs/{job_id}/final-approval"]["post"]["deprecated"] is True
+    assert paths["/api/jobs/{job_id}/approve-content"]["post"]["deprecated"] is True
+    assert paths["/api/jobs/{job_id}/generate-more-images"]["post"]["deprecated"] is True
+    assert paths["/api/jobs/{job_id}/approve-final"]["post"].get("deprecated") is not True

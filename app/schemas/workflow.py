@@ -3,9 +3,61 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+class WorkflowCanonicalStage(StrEnum):
+    """Authoritative Stage 0 workflow stages for the canonical start-to-export path."""
+
+    JOB_CREATED = "job_created"
+    TEXT_CANDIDATES_READY = "text_candidates_ready"
+    TEXT_SELECTED = "text_selected"
+    IMAGE_CANDIDATES_READY = "image_candidates_ready"
+    IMAGE_SELECTED = "image_selected"
+    PREVIEW_READY = "preview_ready"
+    EXPORT_READY = "export_ready"
+    FAILED = "failed"
+
+
+class WorkflowStageOwner(StrEnum):
+    """Actor expected to advance the workflow from the current canonical stage."""
+
+    ECARD_FACTORY = "ecard_factory"
+    HUMAN_REVIEW = "human_review"
+
+
+class WorkflowEndpointRole(StrEnum):
+    """Classification used to distinguish canonical routes from side-path routes."""
+
+    PRIMARY = "primary"
+    SECONDARY = "secondary"
+    LEGACY = "legacy"
+
+
+CANONICAL_WORKFLOW_STAGE_ORDER: tuple[WorkflowCanonicalStage, ...] = (
+    WorkflowCanonicalStage.JOB_CREATED,
+    WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
+    WorkflowCanonicalStage.TEXT_SELECTED,
+    WorkflowCanonicalStage.IMAGE_CANDIDATES_READY,
+    WorkflowCanonicalStage.IMAGE_SELECTED,
+    WorkflowCanonicalStage.PREVIEW_READY,
+    WorkflowCanonicalStage.EXPORT_READY,
+)
+
+
+WORKFLOW_COMPATIBILITY_STAGE_LABELS: dict[WorkflowCanonicalStage, str] = {
+    WorkflowCanonicalStage.JOB_CREATED: "job_created",
+    WorkflowCanonicalStage.TEXT_CANDIDATES_READY: "content_candidates_ready",
+    WorkflowCanonicalStage.TEXT_SELECTED: "text_selected",
+    WorkflowCanonicalStage.IMAGE_CANDIDATES_READY: "image_candidates_ready",
+    WorkflowCanonicalStage.IMAGE_SELECTED: "image_selected",
+    WorkflowCanonicalStage.PREVIEW_READY: "final_card_ready",
+    WorkflowCanonicalStage.EXPORT_READY: "final_card_ready",
+    WorkflowCanonicalStage.FAILED: "failed",
+}
 
 
 class OutputLength(BaseModel):
@@ -63,6 +115,7 @@ class StartJobResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     content_preview: str
     winner_model: str
     approval_message: str
@@ -123,6 +176,7 @@ class ContentApprovalResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     image_prompt: str | None = None
     image_preview_url: str | None = None
 
@@ -132,6 +186,7 @@ class ImageApprovalResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     final_preview_url: str | None = None
 
 
@@ -147,7 +202,39 @@ class FinalApprovalResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     final_asset_urls: FinalAssetUrls | None = None
+
+
+class WorkflowStageDefinition(BaseModel):
+    """One canonical workflow stage with ownership and allowed forward transitions."""
+
+    stage: WorkflowCanonicalStage
+    owner: WorkflowStageOwner
+    description: str
+    allowed_next_stages: list[WorkflowCanonicalStage] = Field(default_factory=list)
+
+
+class WorkflowEndpointDefinition(BaseModel):
+    """One workflow endpoint classification entry."""
+
+    method: Literal["GET", "POST", "DELETE"]
+    path: str
+    role: WorkflowEndpointRole
+    summary: str
+    notes: str | None = None
+
+
+class WorkflowContractResponse(BaseModel):
+    """Explicit Stage 0 workflow contract returned by eCardFactory."""
+
+    version: str = "stage0_canonical_v1"
+    canonical_path_name: str = "start_select_generate_select_render_export"
+    canonical_stage_order: list[WorkflowCanonicalStage] = Field(default_factory=list)
+    stages: list[WorkflowStageDefinition] = Field(default_factory=list)
+    primary_endpoints: list[WorkflowEndpointDefinition] = Field(default_factory=list)
+    secondary_endpoints: list[WorkflowEndpointDefinition] = Field(default_factory=list)
+    legacy_endpoints: list[WorkflowEndpointDefinition] = Field(default_factory=list)
 
 
 class CandidateDebugResponse(BaseModel):
@@ -227,6 +314,7 @@ class JobDebugResponse(BaseModel):
     job_id: str
     trace_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     current_stage: str
     theme_name: str
     audience: str
@@ -271,6 +359,7 @@ class JobListItemResponse(BaseModel):
 
     job_id: str
     theme_name: str
+    canonical_stage: WorkflowCanonicalStage
     current_stage: str
     status: str
     output_spec: dict[str, Any] = Field(default_factory=dict)
@@ -328,6 +417,7 @@ class StudioActionResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     current_stage: str
     content_preview: str | None = None
     image_preview_url: str | None = None
@@ -424,6 +514,7 @@ class StageActionResponse(BaseModel):
 
     job_id: str
     status: str
+    canonical_stage: WorkflowCanonicalStage
     current_stage: str
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"

@@ -29,6 +29,7 @@ Current split behavior:
 - `content_engine_ui` starts as a standalone UI app
 - `ecard-factory` still serves the legacy static fallback from `app/static/console`
 - fallback bundle updates are bridged from the new app with `npm run build:console`
+- `./scripts/run-ecard.sh` no longer builds frontend assets during backend startup
 
 Standalone UI commands:
 
@@ -39,8 +40,10 @@ Standalone UI config:
 
 - `CONTENT_ENGINE_UI_API_BASE_URL`
 - `CONTENT_ENGINE_UI_ASSET_BASE_URL`
+- `ECARD_ENABLE_LEGACY_FRONTEND`
 
-Both default to `http://localhost:8080` for local development.
+The UI base URLs default to `http://localhost:8080` for local development.
+Set `ECARD_ENABLE_LEGACY_FRONTEND=false` if you want the backend to expose only APIs/assets and not serve the temporary embedded console shell.
 
 ## ImageForge Integration
 

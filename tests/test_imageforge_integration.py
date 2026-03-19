@@ -501,8 +501,86 @@ def test_get_image_assets_endpoint_returns_ui_ready_structure(configured_env: di
     main_module.app.dependency_overrides.clear()
 
 
-def test_stage_transitions_and_final_preview_follow_selected_text_and_image(configured_env: dict[str, str]) -> None:
-    """Stage values should advance only when text, image, and final preview state actually exist."""
+def test_canonical_stage0_flow_runs_start_select_generate_select_render_export(
+    configured_env: dict[str, str],
+) -> None:
+    """The canonical Stage 0 path should move cleanly from shortlist to final export."""
+
+    (
+        main_module,
+        _workflow_router_module,
+        image_generation_service_module,
+        repository_module,
+        schemas_module,
+        _mapper_module,
+    ) = reload_imageforge_modules()
+    fake_client = FakeImageForgeClient(schemas_module)
+    service = build_image_generation_service(image_generation_service_module, repository_module, fake_client)
+    main_module.app.dependency_overrides[image_generation_service_module.get_image_generation_service] = lambda: service
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        assert start_response.status_code == 200
+        start_payload = start_response.json()
+        job_id = start_payload["job_id"]
+        assert start_payload["canonical_stage"] == "text_candidates_ready"
+
+        start_debug = client.get(f"/api/jobs/{job_id}")
+        assert start_debug.status_code == 200
+        assert start_debug.json()["canonical_stage"] == "text_candidates_ready"
+        assert start_debug.json()["current_stage"] == "content_candidates_ready"
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        shortlist = shortlist_response.json()
+        selected_text_response = client.post(
+            f"/api/jobs/{job_id}/select-text",
+            json={"candidate_id": shortlist[0]["candidate_id"]},
+        )
+        assert selected_text_response.status_code == 200
+        assert selected_text_response.json()["canonical_stage"] == "text_selected"
+        assert selected_text_response.json()["current_stage"] == "text_selected"
+
+        generate_response = client.post(f"/api/jobs/{job_id}/image-assets/generate")
+        assert generate_response.status_code == 200
+        after_generate = client.get(f"/api/jobs/{job_id}")
+        assert after_generate.status_code == 200
+        assert after_generate.json()["canonical_stage"] == "image_candidates_ready"
+        assert after_generate.json()["current_stage"] == "image_candidates_ready"
+
+        select_response = client.post(f"/api/jobs/{job_id}/image-assets/cand_2/select")
+        assert select_response.status_code == 200
+        after_select = client.get(f"/api/jobs/{job_id}")
+        assert after_select.status_code == 200
+        assert after_select.json()["canonical_stage"] == "image_selected"
+        assert after_select.json()["current_stage"] == "image_selected"
+
+        render_response = client.post(f"/api/jobs/{job_id}/render-final")
+        assert render_response.status_code == 200
+        render_body = render_response.json()
+        assert render_body["canonical_stage"] == "preview_ready"
+        assert render_body["current_stage"] == "final_card_ready"
+        assert render_body["final_preview_url"].endswith("_content_preview.png")
+
+        approve_final_response = client.post(f"/api/jobs/{job_id}/approve-final")
+        assert approve_final_response.status_code == 200
+        approve_final_body = approve_final_response.json()
+        assert approve_final_body["canonical_stage"] == "export_ready"
+        assert approve_final_body["final_asset_urls"]["png"].endswith(f"/{job_id}_final.png")
+        assert approve_final_body["final_asset_urls"]["pdf"].endswith(f"/{job_id}_final.pdf")
+
+        final_debug = client.get(f"/api/jobs/{job_id}")
+        assert final_debug.status_code == 200
+        assert final_debug.json()["canonical_stage"] == "export_ready"
+        assert final_debug.json()["current_stage"] == "final_card_ready"
+        assert final_debug.json()["final_preview_url"].endswith("_content_preview.png")
+        assert final_debug.json()["final_asset_urls"]["png"].endswith(f"/{job_id}_final.png")
+
+    main_module.app.dependency_overrides.clear()
+
+
+def test_canonical_imageforge_path_rejects_out_of_order_primary_actions(configured_env: dict[str, str]) -> None:
+    """Primary ImageForge path endpoints should reject invalid canonical stage transitions."""
 
     (
         main_module,
@@ -519,35 +597,24 @@ def test_stage_transitions_and_final_preview_follow_selected_text_and_image(conf
     with TestClient(main_module.app) as client:
         job_id = client.post("/api/jobs/start", json=sample_start_payload()).json()["job_id"]
 
-        start_debug = client.get(f"/api/jobs/{job_id}")
-        assert start_debug.status_code == 200
-        assert start_debug.json()["current_stage"] == "content_candidates_ready"
+        generate_before_select = client.post(f"/api/jobs/{job_id}/image-assets/generate")
+        assert generate_before_select.status_code == 409
+        assert "generate_image_assets" in generate_before_select.json()["detail"]
+        assert "text_selected" in generate_before_select.json()["detail"]
 
-        approve_response = client.post(f"/api/jobs/{job_id}/approve-content")
-        assert approve_response.status_code == 200
-        assert approve_response.json()["current_stage"] == "text_selected"
+        select_before_generate = client.post(f"/api/jobs/{job_id}/image-assets/cand_2/select")
+        assert select_before_generate.status_code == 409
+        assert "select_image_asset" in select_before_generate.json()["detail"]
+        assert "image_candidates_ready" in select_before_generate.json()["detail"]
 
-        generate_response = client.post(f"/api/jobs/{job_id}/image-assets/generate")
-        assert generate_response.status_code == 200
-        after_generate = client.get(f"/api/jobs/{job_id}")
-        assert after_generate.status_code == 200
-        assert after_generate.json()["current_stage"] == "image_candidates_ready"
+        render_before_select = client.post(f"/api/jobs/{job_id}/render-final")
+        assert render_before_select.status_code == 409
+        assert "render_final" in render_before_select.json()["detail"]
+        assert "image_selected" in render_before_select.json()["detail"]
 
-        select_response = client.post(f"/api/jobs/{job_id}/image-assets/cand_2/select")
-        assert select_response.status_code == 200
-        after_select = client.get(f"/api/jobs/{job_id}")
-        assert after_select.status_code == 200
-        assert after_select.json()["current_stage"] == "image_selected"
-
-        render_response = client.post(f"/api/jobs/{job_id}/render-final")
-        assert render_response.status_code == 200
-        render_body = render_response.json()
-        assert render_body["current_stage"] == "final_card_ready"
-        assert render_body["final_preview_url"].endswith("_content_preview.png")
-
-        final_debug = client.get(f"/api/jobs/{job_id}")
-        assert final_debug.status_code == 200
-        assert final_debug.json()["current_stage"] == "final_card_ready"
-        assert final_debug.json()["final_preview_url"].endswith("_content_preview.png")
+        approve_before_render = client.post(f"/api/jobs/{job_id}/approve-final")
+        assert approve_before_render.status_code == 409
+        assert "approve_final" in approve_before_render.json()["detail"]
+        assert "preview_ready" in approve_before_render.json()["detail"]
 
     main_module.app.dependency_overrides.clear()

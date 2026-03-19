@@ -12,6 +12,7 @@ fi
 ECARD_HOST_BIND="${ECARD_HOST_BIND:-0.0.0.0}"
 ECARD_PORT="${ECARD_PORT:-8080}"
 ECARD_RELOAD="${ECARD_RELOAD:-false}"
+ECARD_ENABLE_LEGACY_FRONTEND="${ECARD_ENABLE_LEGACY_FRONTEND:-true}"
 
 cd "${ROOT_DIR}"
 
@@ -24,25 +25,25 @@ if [[ -d "${ROOT_DIR}/venv" ]]; then
   fi
 fi
 
+CONSOLE_INDEX="${ROOT_DIR}/app/static/console/index.html"
 CONSOLE_BUNDLE="${ROOT_DIR}/app/static/console/app.js"
+CONSOLE_STYLESHEET="${ROOT_DIR}/app/static/console/console.css"
 
-if command -v npm >/dev/null 2>&1; then
-  if [[ ! -d "${ROOT_DIR}/node_modules" ]]; then
-    echo "Installing console frontend dependencies..."
-    (cd "${ROOT_DIR}" && npm install)
+if [[ "${ECARD_ENABLE_LEGACY_FRONTEND}" == "true" ]]; then
+  if [[ -f "${CONSOLE_INDEX}" && -f "${CONSOLE_BUNDLE}" && -f "${CONSOLE_STYLESHEET}" ]]; then
+    echo "Legacy console fallback is available at the backend root."
+    echo "Use 'npm run build:console' only when you intentionally want to refresh the fallback bundle."
+  else
+    echo "Legacy console fallback is enabled but frontend assets are incomplete." >&2
+    echo "Backend APIs will still start. Use the standalone UI from ../content_engine_ui or rebuild the fallback with 'npm run build:console'." >&2
   fi
-
-  echo "Building local console frontend bundle..."
-  (cd "${ROOT_DIR}" && npm run build:console)
-elif [[ ! -f "${CONSOLE_BUNDLE}" ]]; then
-  echo "npm is required to build the local console bundle and no prebuilt bundle was found."
-  echo "Install Node.js/npm, then run: npm install && npm run build:console"
-  exit 1
 else
-  echo "npm not found; using existing prebuilt console bundle: ${CONSOLE_BUNDLE}"
+  echo "Legacy console fallback is disabled (ECARD_ENABLE_LEGACY_FRONTEND=${ECARD_ENABLE_LEGACY_FRONTEND})."
+  echo "Use the standalone UI from ../content_engine_ui."
 fi
 
 export APP_PORT="${ECARD_PORT}"
+export ECARD_ENABLE_LEGACY_FRONTEND
 
 echo "Starting eCardFactory on ${ECARD_HOST_BIND}:${ECARD_PORT} (reload=${ECARD_RELOAD})"
 

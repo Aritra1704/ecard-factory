@@ -68,6 +68,61 @@ Owns:
 
 ---
 
+## Stage 0 Canonical Contract
+
+Authoritative stage field:
+
+- `canonical_stage` is the source of truth for Stage 0 workflow progression.
+- `current_stage` remains a backward-compatible UI label until the old console mappings are removed.
+
+Canonical stage order:
+
+| canonical_stage | owner | meaning |
+|---|---|---|
+| `job_created` | `ecard_factory` | job payload normalized and persisted |
+| `text_candidates_ready` | `human_review` | shortlist exists and text selection is required |
+| `text_selected` | `ecard_factory` | selected text is locked for the current pass |
+| `image_candidates_ready` | `human_review` | ImageForge candidates exist and image selection is required |
+| `image_selected` | `ecard_factory` | selected image is locked for the current pass |
+| `preview_ready` | `human_review` | final preview exists and export approval is required |
+| `export_ready` | `ecard_factory` | final export assets exist |
+| `failed` | `ecard_factory` | rejected, timed-out, or failed terminal state |
+
+Primary Stage 0 path:
+
+1. `POST /api/jobs/start`
+2. `POST /api/jobs/{job_id}/select-text`
+3. `POST /api/jobs/{job_id}/image-assets/generate`
+4. `POST /api/jobs/{job_id}/image-assets/{candidate_id}/select`
+5. `POST /api/jobs/{job_id}/render-final`
+6. `POST /api/jobs/{job_id}/approve-final`
+
+Secondary but supported routes:
+
+- theme-backed start routes
+- shortlist preview routes
+- explicit rerun routes
+- `image-assets/regenerate`
+- debug, list, asset, and event inspection routes
+
+Legacy routes kept only for compatibility:
+
+- `/api/jobs/{job_id}/content-approval`
+- `/api/jobs/{job_id}/image-approval`
+- `/api/jobs/{job_id}/final-approval`
+- `/api/jobs/{job_id}/approve-content`
+- `/api/jobs/{job_id}/generate-image`
+- `/api/jobs/{job_id}/approve-image`
+- `/api/jobs/{job_id}/select-image`
+- `/api/jobs/{job_id}/generate-more-images`
+- `/api/jobs/{job_id}/rerun-stage`
+
+The machine-readable source for this contract is:
+
+- `GET /api/jobs/workflow-contract`
+
+---
+
 ## Final Flow
 
 ### Step 1 — Schedule Trigger
