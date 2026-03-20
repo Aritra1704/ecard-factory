@@ -382,6 +382,9 @@ class ImageGenerationService:
         ]
 
     def _build_image_assets_response(self, job: dict[str, Any]) -> JobImageAssetsResponse:
+        selected_text = None
+        if self._job_has_selected_text(job):
+            selected_text = str(job.get("content_preview") or "") or None
         candidates = [
             ImageAssetCandidateResponse(
                 candidate_id=str(item.get("candidate_id") or ""),
@@ -404,7 +407,7 @@ class ImageGenerationService:
             imageforge_trace_id=str(job.get("imageforge_trace_id") or "") or None,
             image_generation_status=str(job.get("image_generation_status") or "") or None,
             image_generation_stage=str(job.get("image_generation_stage") or "") or None,
-            selected_text=str(job.get("content_preview") or "") or None,
+            selected_text=selected_text,
             selected_image_candidate_id=str(job.get("selected_image_candidate_id") or "") or None,
             selected_image_public_url=str(job.get("selected_image_public_url") or "") or None,
             selected_image_relative_path=str(job.get("selected_image_relative_path") or "") or None,

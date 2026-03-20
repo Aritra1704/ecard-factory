@@ -236,6 +236,70 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         (_assets_dir() / "pdf" / f"{job_id}_final.pdf").unlink(missing_ok=True)
 
 
+def test_workflow_v1_new_job_is_studio_ready_before_manual_text_selection(configured_env: dict[str, str]) -> None:
+    """Fresh jobs should expose candidates and shortlist without auto-selecting text."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start", json=sample_start_payload())
+        assert start_response.status_code == 200
+        job_id = start_response.json()["job_id"]
+
+        job_response = client.get(f"/api/jobs/{job_id}")
+        assert job_response.status_code == 200
+        job_payload = job_response.json()
+        assert job_payload["status"] == "content_pending_approval"
+        assert job_payload["current_stage"] == "content_candidates_ready"
+
+        candidates_response = client.get(f"/api/jobs/{job_id}/candidates")
+        assert candidates_response.status_code == 200
+        candidates_payload = candidates_response.json()
+        assert len(candidates_payload) > 0
+        assert all(candidate["is_selected"] is False for candidate in candidates_payload)
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        shortlist_payload = shortlist_response.json()
+        assert len(shortlist_payload) > 0
+        assert all(entry["is_selected"] is False for entry in shortlist_payload)
+        assert shortlist_payload[0]["rank"] == 1
+        assert shortlist_payload[0]["reason_codes"]
+
+        image_assets_response = client.get(f"/api/jobs/{job_id}/image-assets")
+        assert image_assets_response.status_code == 200
+        image_assets_payload = image_assets_response.json()
+        assert image_assets_payload["selected_text"] is None
+        assert image_assets_payload["candidates"] == []
+
+        chosen_candidate_id = shortlist_payload[0]["candidate_id"]
+        select_response = client.post(
+            f"/api/jobs/{job_id}/select-text",
+            json={"candidate_id": chosen_candidate_id},
+        )
+        assert select_response.status_code == 200
+        select_payload = select_response.json()
+        assert select_payload["status"] == "content_approved"
+        assert select_payload["current_stage"] == "text_selected"
+
+        job_after_select = client.get(f"/api/jobs/{job_id}")
+        assert job_after_select.status_code == 200
+        job_after_select_payload = job_after_select.json()
+        assert job_after_select_payload["current_stage"] == "text_selected"
+        assert job_after_select_payload["status"] == "content_approved"
+
+        shortlist_after_select = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_after_select.status_code == 200
+        shortlist_after_select_payload = shortlist_after_select.json()
+        chosen_entry = next(item for item in shortlist_after_select_payload if item["candidate_id"] == chosen_candidate_id)
+        assert chosen_entry["is_selected"] is True
+
+        image_assets_after_select = client.get(f"/api/jobs/{job_id}/image-assets")
+        assert image_assets_after_select.status_code == 200
+        image_assets_after_select_payload = image_assets_after_select.json()
+        assert image_assets_after_select_payload["selected_text"] == job_after_select_payload["content_preview"]
+
+
 def test_workflow_v1_rejects_out_of_order_approval(configured_env: dict[str, str]) -> None:
     """Image approval should fail with 409 until content approval is submitted."""
 
