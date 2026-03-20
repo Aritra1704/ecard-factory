@@ -137,14 +137,18 @@ class ContentForgeWorkflowClient:
             return None
 
         candidates = self._build_candidate_rows(
-            results=list(body.get("results") or []),
+            body=body,
             target_words=target_words,
         )
-        if len(candidates) < 3:
-            logger.warning("contentforge compare-models returned too few usable candidates: %s", len(candidates))
+        if not candidates:
+            logger.warning("contentforge compare-models returned no usable ranked candidates")
             return None
 
-        shortlist = build_shortlist_seed(candidates, target_words=target_words)
+        shortlist = self._build_shortlist_rows(
+            body=body,
+            candidates=candidates,
+            target_words=target_words,
+        )
         shortlist_signatures = {
             (str(item.get("model") or ""), str(item.get("content_text") or ""))
             for item in shortlist
@@ -183,11 +187,13 @@ class ContentForgeWorkflowClient:
         ]
         why_winner = str(body.get("why_winner") or body.get("judge_reason") or "").strip()
         judge_summary = (
-            f"ContentForge returned {len(candidates)} candidates across {len(successful_results)} successful model runs. "
-            f"Shortlisted top {len(shortlist)} after per-candidate scoring and de-duplication."
+            f"ContentForge returned {len(candidates)} ranked candidates across {len(successful_results)} successful model runs. "
+            f"Shortlisted top {len(shortlist)} from the service-owned ranking."
         )
         if why_winner:
             judge_summary = f"{judge_summary} {why_winner}"
+
+        ranking_summary = body.get("ranking_summary") if isinstance(body.get("ranking_summary"), dict) else {}
 
         return {
             "source": "contentforge",
@@ -212,6 +218,9 @@ class ContentForgeWorkflowClient:
                     }
                     for result in successful_results
                 ],
+                "ranked_candidates": list(body.get("ranked_candidates") or []),
+                "shortlist": shortlist,
+                "ranking_summary": ranking_summary,
             },
             "pairwise_json": {},
             "reason_summary": why_winner or judge_summary,
@@ -280,9 +289,43 @@ class ContentForgeWorkflowClient:
     @staticmethod
     def _build_candidate_rows(
         *,
-        results: list[dict[str, Any]],
+        body: dict[str, Any],
         target_words: int,
     ) -> list[dict[str, Any]]:
+        ranked_candidates = [
+            item
+            for item in list(body.get("ranked_candidates") or [])
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        if ranked_candidates:
+            candidates: list[dict[str, Any]] = []
+            for item in ranked_candidates:
+                text = " ".join(str(item.get("text") or "").strip().split())
+                if not text:
+                    continue
+                score = round(float(item.get("score") or 0.0), 4)
+                model_score = max(0.0, min(1.0, float(item.get("model_score") or 0.0) / 100.0))
+                candidates.append(
+                    {
+                        "model": str(item.get("model") or "unknown"),
+                        "backend": str(item.get("backend") or "ollama"),
+                        "content_text": text,
+                        "text": text,
+                        "raw_score": round(model_score, 4),
+                        "judge_score": score,
+                        "judged_score": score,
+                        "contentforge_rank": int(item.get("rank") or 0) or None,
+                        "reason": str(item.get("reason") or "").strip(),
+                        "reason_codes": [str(code).strip() for code in list(item.get("reason_codes") or []) if str(code).strip()],
+                        "is_winner": False,
+                        "is_shortlisted": False,
+                        "is_selected": False,
+                    }
+                )
+            if candidates:
+                return candidates
+
+        results = list(body.get("results") or [])
         candidates: list[dict[str, Any]] = []
         for result in results:
             if not isinstance(result, dict) or not bool(result.get("ok")):
@@ -316,3 +359,38 @@ class ContentForgeWorkflowClient:
                 candidate["judged_score"] = judged_score
                 candidates.append(candidate)
         return candidates
+
+    @staticmethod
+    def _build_shortlist_rows(
+        *,
+        body: dict[str, Any],
+        candidates: list[dict[str, Any]],
+        target_words: int,
+    ) -> list[dict[str, Any]]:
+        remote_shortlist = [
+            item
+            for item in list(body.get("shortlist") or [])
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        if remote_shortlist:
+            rows: list[dict[str, Any]] = []
+            for index, item in enumerate(remote_shortlist, start=1):
+                text = " ".join(str(item.get("text") or "").strip().split())
+                if not text:
+                    continue
+                rows.append(
+                    {
+                        "rank": int(item.get("rank") or index),
+                        "score": float(item.get("score") or 0.0),
+                        "model": str(item.get("model") or ""),
+                        "backend": str(item.get("backend") or ""),
+                        "content_text": text,
+                        "reason": str(item.get("reason") or "").strip(),
+                        "reason_codes": [str(code).strip() for code in list(item.get("reason_codes") or []) if str(code).strip()],
+                    }
+                )
+            if rows:
+                rows.sort(key=lambda item: int(item.get("rank") or 9999))
+                return rows
+
+        return build_shortlist_seed(candidates, target_words=target_words)

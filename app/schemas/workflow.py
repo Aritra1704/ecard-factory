@@ -248,6 +248,9 @@ class CandidateDebugResponse(BaseModel):
     raw_score: float
     judged_score: float
     judge_score: float
+    contentforge_rank: int | None = None
+    reason: str | None = None
+    reason_codes: list[str] = Field(default_factory=list)
     is_winner: bool
     is_shortlisted: bool = False
     is_selected: bool = False
@@ -264,6 +267,8 @@ class ShortlistEntryResponse(BaseModel):
     model: str
     backend: str
     text: str
+    reason: str | None = None
+    reason_codes: list[str] = Field(default_factory=list)
     is_selected: bool = False
     created_at: datetime | None = None
 

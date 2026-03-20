@@ -61,7 +61,7 @@ The redesign should follow these rules:
 2. One state owner.
 3. One image-generation path.
 4. Final assembly stays in-platform and uses Pillow first.
-5. UI becomes its own app directory.
+5. UI becomes its own sibling repo directory.
 6. Agentic behavior remains bounded and auditable.
 7. Quality scoring happens before autonomy expands.
 
@@ -123,11 +123,11 @@ Responsibilities:
 
 ## 5.2 UI App
 
-The UI moves to a separate root directory.
+The UI lives in a separate sibling repository directory.
 
 Approved target name:
 
-`content_engine_ui/`
+`../content_engine_ui/`
 
 Responsibilities:
 
@@ -208,14 +208,14 @@ Later evolution:
 
 ## 9. UI Extraction Design
 
-Current UI sources:
+Current UI history sources:
 
 - React console in `ecard-factory/app/static/console`
 - legacy server-rendered templates in `ecard-factory/app/templates`
 
-Target direction:
+Current implemented direction:
 
-- move React UI to `content_engine_ui`
+- active React UI lives in `../content_engine_ui`
 - keep `ecard-factory` backend-only
 - serve UI separately in development
 - optionally ship a built frontend artifact later
@@ -270,7 +270,7 @@ High-level estimate for the target flow:
 | Level 0 | workflow stabilization only | `3-5 working days` |
 | Level 1 | text + image stage hardening | `4-6 working days` |
 | Level 2 | Pillow composition redesign | `2-4 working days` |
-| Level 3 | standalone UI extraction | `4-6 working days` |
+| Level 3 | standalone UI extraction | `completed baseline`, additional hardening `1-2 working days` |
 | Level 4 | quality layer and stage scoring | `2-3 working days` |
 | Level 5 | bounded central agent | `3-5 working days` |
 
@@ -282,7 +282,20 @@ Practical total including bounded agentic supervision:
 
 - `15-20 working days`
 
-## 12. Non-Deviation Guardrails
+## 12. Current Stage Note
+
+Stage 5 UI split baseline is already implemented:
+
+- `content_engine_ui` exists as a separate sibling git repo
+- the standalone UI builds independently
+- `ecard-factory` no longer needs to build the frontend during backend startup
+- legacy embedded console remains as a temporary fallback
+
+The next architectural stage after this document update is:
+
+- Stage 1: Content Stage Redesign
+
+## 13. Non-Deviation Guardrails
 
 To avoid drifting away from the proposed architecture:
 
@@ -294,13 +307,13 @@ To avoid drifting away from the proposed architecture:
 - do not allow unbounded auto-regenerate loops
 - do not remove working API contracts without replacement mapping
 
-## 13. Immediate Recommendation
+## 14. Immediate Recommendation
 
 Start with this sequence:
 
 1. finalize HLD and LLD
-2. confirm UI extraction decisions
-3. build separate UI app shell
-4. keep Pillow as the only composition path
-5. stabilize the deterministic workflow
+2. keep `content_engine_ui` as the standalone UI path
+3. keep Pillow as the only composition path
+4. stabilize the deterministic workflow
+5. harden content and image quality
 6. add agentic supervision later

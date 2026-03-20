@@ -150,6 +150,14 @@ class CardContentCandidate(Base):
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     raw_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default=text("0"))
     judge_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default=text("0"))
+    contentforge_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ranking_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason_codes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     is_winner: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -200,6 +208,13 @@ class CardShortlist(Base):
     )
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default=text("0"))
+    reason_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason_codes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

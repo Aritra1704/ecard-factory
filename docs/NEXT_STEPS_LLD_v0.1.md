@@ -11,26 +11,15 @@ This document breaks the next-step platform redesign into low-level implementati
 The sequence in this LLD assumes:
 
 - `Pillow` remains the initial card assembly engine
-- the new UI becomes a separate repo directory
+- the UI lives in a separate sibling repo directory
 - the platform remains deterministic first, agentic later
 
 ## 2. Target Repo Structure
 
-Recommended structure after the UI split:
+Recommended workspace structure after the UI split:
 
 ```text
 content_generation_engine/
-  apps/
-    content_engine_ui/
-      package.json
-      src/
-        app/
-        pages/
-        components/
-        features/
-        lib/
-        styles/
-      public/
   ecard-factory/
     app/
       ...
@@ -42,6 +31,11 @@ content_generation_engine/
     ...
   imageforge/
     ...
+  content_engine_ui/
+    package.json
+    src/
+    scripts/
+    dist/
 ```
 
 ## 3. Stage 0: Workflow Stabilization
@@ -309,7 +303,7 @@ Move all active React UI code out of `ecard-factory`.
 
 ## Target UI app directory
 
-`content_engine_ui/`
+`../content_engine_ui/`
 
 ## Initial migration strategy
 
@@ -349,13 +343,23 @@ Stop bundling the frontend from inside `ecard-factory`.
 
 ## Estimate
 
-- `4-6 working days`
+- baseline split: `completed`
+- remaining hardening: `1-2 working days`
 
 ## Exit criteria
 
 - UI lives in its own directory
 - backend can run without building frontend
 - frontend can run without importing backend code
+
+## Current status
+
+Current implementation status:
+
+- `content_engine_ui` exists as a separate sibling git repo
+- standalone frontend build is working
+- `ecard-factory` startup no longer requires a frontend build
+- legacy embedded console remains as a temporary fallback
 
 ## 9. New UI Component Design
 
@@ -469,14 +473,12 @@ Do the work in this order:
 
 1. HLD approval
 2. LLD approval
-3. UI extraction decisions
-4. Stage 0 stabilization
-5. Stage 1 content redesign
-6. Stage 2 image redesign
-7. Stage 3 Pillow composition redesign
-8. Stage 5 UI split
-9. Stage 4 quality layer
-10. Stage 6 bounded agent runtime
+3. Stage 0 stabilization
+4. Stage 1 content redesign
+5. Stage 2 image redesign
+6. Stage 3 Pillow composition redesign
+7. Stage 4 quality layer
+8. Stage 6 bounded agent runtime
 
 ## 12. Non-Deviation Conditions
 
@@ -490,6 +492,6 @@ Do the work in this order:
 
 These questions should be resolved before the UI move starts:
 
-1. Should the new UI app be independently served in development, or built and embedded back into `ecard-factory` for an interim period?
-2. Should the initial editor support only guided layout controls, or true drag-and-drop placement from V1?
-3. Should the legacy Jinja template pages be removed entirely, or kept temporarily during migration?
+1. Should legacy Jinja/template pages be removed after the standalone UI reaches route parity, or retained longer as a safety fallback?
+2. Should the standalone UI eventually be served through a reverse proxy path in production, or remain independently deployed?
+3. Should `dist/` artifacts stay committed in `content_engine_ui`, or should that repo move to build-artifact-free source control?

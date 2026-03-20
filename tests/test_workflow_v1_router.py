@@ -151,6 +151,7 @@ def test_workflow_v1_happy_path(configured_env: dict[str, str]) -> None:
         shortlist_payload = shortlist_response.json()
         assert len(shortlist_payload) == start_payload["shortlist_count"]
         assert shortlist_payload[0]["rank"] == 1
+        assert "reason_codes" in shortlist_payload[0]
 
         get_after_start = client.get(f"/api/jobs/{job_id}")
         assert get_after_start.status_code == 200

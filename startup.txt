@@ -28,3 +28,7 @@ comfyui
 cd /Volumes/Ari_SSD_01/AI_MODELS/comfyui
 source .venv/bin/activate
 python main.py --force-fp16
+
+
+cd /Users/aritrarpal/Documents/workspace_biz/content_generation_engine/imageforge
+./scripts/run_local.sh

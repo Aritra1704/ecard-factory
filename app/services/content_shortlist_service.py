@@ -32,6 +32,17 @@ ABRUPT_ENDINGS = {
 TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
 MAX_SHORTLIST_CANDIDATES = 5
 MIN_SHORTLIST_CANDIDATES = 3
+_REASON_TEXT = {
+    "judge_preferred_model": "comes from the judge-preferred model run",
+    "top_model_run": "comes from a top-ranked model run",
+    "high_quality_model_run": "comes from a strong model run",
+    "strong_task_fit": "matches the requested theme and tone well",
+    "complete_output": "reads as complete and ready to use",
+    "distinct_phrasing": "uses distinct phrasing",
+    "human_tone": "sounds human and believable",
+    "clear_flow": "reads clearly and smoothly",
+    "overall_quality": "ranked best on overall content quality",
+}
 
 
 def shortlist_content_candidates(
@@ -49,12 +60,12 @@ def shortlist_content_candidates(
 
     primary_pool = sorted(
         [item for item in analyzed if not item["hard_reject"]],
-        key=lambda item: item["quality_score"],
+        key=lambda item: item["sort_key"],
         reverse=True,
     )
     fallback_pool = sorted(
         analyzed,
-        key=lambda item: item["quality_score"],
+        key=lambda item: item["sort_key"],
         reverse=True,
     )
 
@@ -114,6 +125,7 @@ def build_shortlist_seed(
     )
     rows: list[dict[str, Any]] = []
     for rank, candidate in enumerate(shortlisted, start=1):
+        analyzed = _analyze_candidate(candidate, target_words=target_words)
         quality_score = float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0)
         if quality_score <= 0:
             quality_score = score_content_candidate(candidate, target_words=target_words)
@@ -124,6 +136,8 @@ def build_shortlist_seed(
                 "model": str(candidate.get("model") or ""),
                 "backend": str(candidate.get("backend") or ""),
                 "content_text": str(candidate.get("content_text") or candidate.get("text") or ""),
+                "reason": str(candidate.get("reason") or analyzed.get("reason") or ""),
+                "reason_codes": list(candidate.get("reason_codes") or analyzed.get("reason_codes") or []),
             }
         )
     return rows
@@ -142,23 +156,40 @@ def _analyze_candidate(candidate: dict[str, Any], *, target_words: int) -> dict[
     tokens = _tokenize(text)
     word_count = len(tokens)
     min_words = max(6, min(10, max(4, target_words // 2)))
+    explicit_rank = _explicit_rank(candidate)
+    has_remote_ranking = explicit_rank is not None or bool(candidate.get("reason_codes")) or bool(candidate.get("reason"))
 
     incomplete = _is_incomplete_text(text=text, tokens=tokens, min_words=min_words)
-    readability_penalty = _readability_penalty(tokens=tokens, text=text)
+    readability_penalty = 0.0 if has_remote_ranking else _readability_penalty(tokens=tokens, text=text)
     quality_score = float(candidate.get("judged_score") or candidate.get("judge_score") or candidate.get("raw_score") or 0.0)
-    quality_score -= readability_penalty
-    if word_count < min_words:
-        quality_score -= 1.5
-    if incomplete:
-        quality_score -= 3.0
+    if not has_remote_ranking:
+        quality_score -= readability_penalty
+        if word_count < min_words:
+            quality_score -= 1.5
+        if incomplete:
+            quality_score -= 3.0
+    reason_codes = _resolve_reason_codes(
+        candidate,
+        incomplete=incomplete,
+        word_count=word_count,
+        min_words=min_words,
+    )
+    reason = str(candidate.get("reason") or "").strip() or _summarize_reason_codes(reason_codes)
 
     return {
         "candidate": dict(candidate),
         "normalized_text": normalized_text,
         "opening_signature": " ".join(tokens[:3]),
         "word_count": word_count,
-        "hard_reject": not normalized_text or word_count < min_words or incomplete,
+        "hard_reject": not normalized_text or (not has_remote_ranking and (word_count < min_words or incomplete)),
         "quality_score": quality_score,
+        "sort_key": (
+            1 if has_remote_ranking else 0,
+            (-explicit_rank if explicit_rank is not None else quality_score),
+            quality_score,
+        ),
+        "reason": reason,
+        "reason_codes": reason_codes,
     }
 
 
@@ -228,3 +259,44 @@ def _is_near_duplicate(left: str, right: str) -> bool:
             break
         leading_overlap += 1
     return leading_overlap >= 5
+
+
+def _explicit_rank(candidate: dict[str, Any]) -> int | None:
+    raw_value = candidate.get("contentforge_rank")
+    if raw_value is None:
+        raw_value = candidate.get("rank")
+    if raw_value is None:
+        raw_value = candidate.get("shortlist_rank")
+    try:
+        rank = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return rank if rank > 0 else None
+
+
+def _resolve_reason_codes(
+    candidate: dict[str, Any],
+    *,
+    incomplete: bool,
+    word_count: int,
+    min_words: int,
+) -> list[str]:
+    codes = [str(item).strip() for item in list(candidate.get("reason_codes") or []) if str(item).strip()]
+    if codes:
+        return codes
+    if incomplete:
+        return ["incomplete_output"]
+    if word_count < min_words:
+        return ["too_short"]
+    return ["overall_quality"]
+
+
+def _summarize_reason_codes(reason_codes: list[str]) -> str:
+    phrases = [_REASON_TEXT[code] for code in reason_codes if code in _REASON_TEXT]
+    if not phrases:
+        return "Ranked by overall content quality."
+    if len(phrases) == 1:
+        return f"This candidate {phrases[0]}."
+    if len(phrases) == 2:
+        return f"This candidate {phrases[0]} and {phrases[1]}."
+    return f"This candidate {phrases[0]}, {phrases[1]}, and {phrases[2]}."

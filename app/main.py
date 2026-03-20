@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -56,7 +57,9 @@ async def lifespan(app: FastAPI):
     initialize_asset_storage_or_raise()
 
     try:
-        run_migrations()
+        # Alembic's env uses asyncio for online migrations, so run the upgrade
+        # in a worker thread instead of the active event loop.
+        await asyncio.to_thread(run_migrations)
     except Exception:  # noqa: BLE001
         logger.exception("Startup migration failed. Continuing app startup.")
 

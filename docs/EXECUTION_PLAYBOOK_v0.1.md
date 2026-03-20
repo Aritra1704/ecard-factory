@@ -28,7 +28,7 @@ Primary objective:
 
 Secondary objective:
 
-- split UI into `content_engine_ui`
+- keep `content_engine_ui` as the standalone sibling UI repo and finish only remaining hardening work when needed
 
 Tertiary objective:
 
@@ -103,7 +103,8 @@ Main output:
 
 Duration:
 
-- `4-6 working days`
+- baseline split completed
+- remaining hardening `1-2 working days`
 
 Main output:
 
@@ -196,7 +197,7 @@ Close today with:
 Best requests:
 
 - “Implement Stage 0 state machine changes only”
-- “Create the UI shell for content_engine_ui only”
+- “Harden the standalone content_engine_ui integration only”
 - “Refactor Pillow render to layout spec only”
 - “Add tests for text dedupe logic only”
 
@@ -244,9 +245,9 @@ Day 9-11:
 
 - Phase 2 Pillow composition redesign
 
-Day 12-16:
+Day 12-13:
 
-- Phase 3 UI split to `content_engine_ui`
+- Phase 3 UI split hardening for `content_engine_ui`
 
 Day 17-19:
 

@@ -919,6 +919,9 @@ class WorkflowV1Service:
                 "raw_score": float(candidate["raw_score"]),
                 "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
                 "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
+                "contentforge_rank": int(candidate.get("contentforge_rank") or 0) or None,
+                "reason": str(candidate.get("reason") or "").strip() or None,
+                "reason_codes": [str(code).strip() for code in list(candidate.get("reason_codes") or []) if str(code).strip()],
                 "is_winner": bool(candidate["is_winner"]),
                 "is_shortlisted": bool(candidate.get("is_shortlisted")),
                 "is_selected": bool(candidate.get("is_selected")),
@@ -1822,6 +1825,9 @@ class WorkflowV1Service:
                     "raw_score": float(candidate["raw_score"]),
                     "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
                     "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
+                    "contentforge_rank": int(candidate.get("contentforge_rank") or 0) or None,
+                    "reason": str(candidate.get("reason") or "").strip() or None,
+                    "reason_codes": [str(code).strip() for code in list(candidate.get("reason_codes") or []) if str(code).strip()],
                     "is_winner": bool(candidate["is_winner"]),
                     "is_shortlisted": bool(candidate.get("is_shortlisted")),
                     "is_selected": bool(candidate.get("is_selected")),
@@ -2990,6 +2996,8 @@ class WorkflowV1Service:
                     "candidate_id": int(candidate.get("id") or 0),
                     "rank": int(row.get("rank") or 0),
                     "score": float(row.get("score") or 0.0),
+                    "reason": str(row.get("reason") or "").strip() or None,
+                    "reason_codes": [str(code).strip() for code in list(row.get("reason_codes") or []) if str(code).strip()],
                 }
             )
         shortlist_rows.sort(key=lambda item: item["rank"])

@@ -337,6 +337,9 @@ class WorkflowJobRepository:
                         "raw_score": float(candidate.get("raw_score") or 0.0),
                         "judge_score": float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
                         "judged_score": float(candidate.get("judged_score") or candidate.get("judge_score") or 0.0),
+                        "contentforge_rank": int(candidate.get("contentforge_rank") or 0) or None,
+                        "reason": str(candidate.get("reason") or "") or None,
+                        "reason_codes": [str(code).strip() for code in list(candidate.get("reason_codes") or []) if str(code).strip()],
                         "is_winner": bool(candidate.get("is_winner")),
                         "is_shortlisted": bool(candidate.get("is_shortlisted")),
                         "is_selected": bool(candidate.get("is_selected")),
@@ -372,6 +375,9 @@ class WorkflowJobRepository:
                             content_text=str(candidate.get("content_text") or candidate.get("text") or ""),
                             raw_score=float(candidate["raw_score"]),
                             judge_score=float(candidate.get("judge_score") or candidate.get("judged_score") or 0.0),
+                            contentforge_rank=int(candidate.get("contentforge_rank") or 0) or None,
+                            ranking_reason=str(candidate.get("reason") or "") or None,
+                            reason_codes=[str(code).strip() for code in list(candidate.get("reason_codes") or []) if str(code).strip()],
                             is_winner=bool(candidate["is_winner"]),
                             is_shortlisted=bool(candidate.get("is_shortlisted")),
                             is_selected=bool(candidate.get("is_selected")),
@@ -425,6 +431,8 @@ class WorkflowJobRepository:
                         "model": str(candidate.get("model") or ""),
                         "backend": str(candidate.get("backend") or ""),
                         "text": str(candidate.get("content_text") or candidate.get("text") or ""),
+                        "reason": str(row.get("reason") or "") or None,
+                        "reason_codes": [str(code).strip() for code in list(row.get("reason_codes") or []) if str(code).strip()],
                         "is_selected": bool(candidate.get("is_selected")),
                         "created_at": row.get("created_at") or datetime.now(timezone.utc),
                     }
@@ -468,6 +476,8 @@ class WorkflowJobRepository:
                             candidate_id=candidate_id,
                             rank=int(row["rank"]),
                             score=float(row["score"]),
+                            reason_summary=str(row.get("reason") or "") or None,
+                            reason_codes=[str(code).strip() for code in list(row.get("reason_codes") or []) if str(code).strip()],
                         )
                     )
                 await session.commit()
@@ -960,6 +970,9 @@ class WorkflowJobRepository:
                     "raw_score": float(item.raw_score),
                     "judged_score": float(item.judge_score),
                     "judge_score": float(item.judge_score),
+                    "contentforge_rank": item.contentforge_rank,
+                    "reason": item.ranking_reason,
+                    "reason_codes": list(item.reason_codes or []),
                     "is_winner": item.is_winner,
                     "is_shortlisted": item.is_shortlisted,
                     "is_selected": item.is_selected,
@@ -999,6 +1012,8 @@ class WorkflowJobRepository:
                     "model": item.candidate.model if item.candidate is not None else "",
                     "backend": item.candidate.backend if item.candidate is not None else "",
                     "text": item.candidate.content_text if item.candidate is not None else "",
+                    "reason": item.reason_summary,
+                    "reason_codes": list(item.reason_codes or []),
                     "is_selected": bool(item.candidate.is_selected) if item.candidate is not None else False,
                     "created_at": item.created_at,
                 }

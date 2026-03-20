@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.content_shortlist_service import shortlist_content_candidates
+from app.services.content_shortlist_service import build_shortlist_seed, shortlist_content_candidates
 
 
 def _candidate(text: str, score: float, *, model: str = "mistral:7b") -> dict[str, object]:
@@ -45,3 +45,28 @@ def test_shortlist_filters_incomplete_duplicates_and_repeated_openings() -> None
     assert sum(text.startswith("Sending love and color") for text in shortlist_texts) == 1
     assert sum(text.startswith("Sending bright Holi") for text in shortlist_texts) == 1
     assert all(text.endswith((".", "!", "?")) for text in shortlist_texts)
+
+
+def test_build_shortlist_seed_preserves_reason_codes_for_ranked_candidates() -> None:
+    """Structured ranking reasons should survive shortlist seed generation."""
+
+    candidates = [
+        {
+            **_candidate("May your day glow with calm, color, and easy laughter.", 0.91),
+            "contentforge_rank": 1,
+            "reason": "This candidate comes from a top-ranked model run and reads as complete and ready to use.",
+            "reason_codes": ["top_model_run", "complete_output"],
+        },
+        {
+            **_candidate("Let Holi land softly with color, warmth, and togetherness.", 0.89),
+            "contentforge_rank": 2,
+            "reason": "This candidate uses distinct phrasing.",
+            "reason_codes": ["distinct_phrasing"],
+        },
+    ]
+
+    shortlist = build_shortlist_seed(candidates, target_words=14)
+
+    assert shortlist[0]["rank"] == 1
+    assert shortlist[0]["reason_codes"] == ["top_model_run", "complete_output"]
+    assert shortlist[0]["reason"].startswith("This candidate comes from a top-ranked model run")
