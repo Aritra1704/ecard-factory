@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib
 import os
 from pathlib import Path
 import sys
+import time
 
 from fastapi.testclient import TestClient
 
@@ -113,6 +114,54 @@ def override_theme_factory_dependencies(main_module):
 
     main_module.app.dependency_overrides[database_module.get_db] = override_get_db
     main_module.app.dependency_overrides[theme_service_module.get_theme_service] = lambda: StubThemeService()
+
+
+def override_workflow_contentforge(client_obj):
+    """Replace the singleton workflow service ContentForge client for one test."""
+
+    workflow_service_module = importlib.import_module("app.services.workflow_v1_service")
+    service = workflow_service_module.get_workflow_v1_service()
+    service._contentforge = client_obj
+    return service
+
+
+class SlowContentForgeClient:
+    """Deterministic test double that delays before returning stub content."""
+
+    def __init__(self, *, delay_seconds: float = 0.35) -> None:
+        workflow_service_module = importlib.import_module("app.services.workflow_v1_service")
+        self._fallback = workflow_service_module.StubContentForgeClient()
+        self._delay_seconds = delay_seconds
+
+    async def generate_and_judge(self, payload):
+        await asyncio.sleep(self._delay_seconds)
+        return await self._fallback.generate_and_judge(payload)
+
+
+class FailingContentForgeClient:
+    """Deterministic test double that fails after a short delay."""
+
+    def __init__(self, *, delay_seconds: float = 0.05) -> None:
+        self._delay_seconds = delay_seconds
+
+    async def generate_and_judge(self, _payload):
+        await asyncio.sleep(self._delay_seconds)
+        raise RuntimeError("Simulated ContentForge outage")
+
+
+def wait_for_job_snapshot(client: TestClient, job_id: str, predicate, *, timeout_seconds: float = 3.0) -> dict[str, object]:
+    """Poll job detail until one condition is true or the timeout expires."""
+
+    deadline = time.monotonic() + timeout_seconds
+    last_payload: dict[str, object] | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/jobs/{job_id}")
+        assert response.status_code == 200
+        last_payload = response.json()
+        if predicate(last_payload):
+            return last_payload
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for job {job_id}; last payload={last_payload}")
 
 
 def _assets_dir() -> Path:
@@ -269,6 +318,9 @@ def test_workflow_v1_new_job_is_studio_ready_before_manual_text_selection(config
         image_assets_response = client.get(f"/api/jobs/{job_id}/image-assets")
         assert image_assets_response.status_code == 200
         image_assets_payload = image_assets_response.json()
+        assert image_assets_payload["generation_path"] == "imageforge"
+        assert image_assets_payload["can_generate"] is False
+        assert image_assets_payload["blocking_reason"] == "text_selected is required before image generation"
         assert image_assets_payload["selected_text"] is None
         assert image_assets_payload["candidates"] == []
 
@@ -297,7 +349,86 @@ def test_workflow_v1_new_job_is_studio_ready_before_manual_text_selection(config
         image_assets_after_select = client.get(f"/api/jobs/{job_id}/image-assets")
         assert image_assets_after_select.status_code == 200
         image_assets_after_select_payload = image_assets_after_select.json()
+        assert image_assets_after_select_payload["can_generate"] is True
+        assert image_assets_after_select_payload["blocking_reason"] is None
         assert image_assets_after_select_payload["selected_text"] == job_after_select_payload["content_preview"]
+
+
+def test_workflow_v1_async_start_returns_immediately_and_completes_in_background(
+    configured_env: dict[str, str],
+) -> None:
+    """Async kickoff should return quickly and let the worker populate shortlist data afterward."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+    override_workflow_contentforge(SlowContentForgeClient(delay_seconds=0.35))
+
+    with TestClient(main_module.app) as client:
+        started_at = time.monotonic()
+        start_response = client.post("/api/jobs/start-async", json=sample_start_payload())
+        elapsed_seconds = time.monotonic() - started_at
+
+        assert start_response.status_code == 202
+        kickoff_payload = start_response.json()
+        job_id = kickoff_payload["job_id"]
+        assert elapsed_seconds < 0.25
+        assert kickoff_payload["status"] == "content_generation_queued"
+        assert kickoff_payload["canonical_stage"] == "job_created"
+        assert kickoff_payload["current_stage"] == "job_created"
+        assert kickoff_payload["processing_state"] == "queued"
+        assert kickoff_payload["processing_task"] == "content_generation"
+        assert kickoff_payload["processing_message"] == "Content creation queued"
+
+        job_response = client.get(f"/api/jobs/{job_id}")
+        assert job_response.status_code == 200
+        job_payload = job_response.json()
+        assert job_payload["canonical_stage"] == "job_created"
+        assert job_payload["current_stage"] == "job_created"
+        assert job_payload["processing_task"] == "content_generation"
+        assert job_payload["processing_state"] in {"queued", "running"}
+
+        completed_job = wait_for_job_snapshot(
+            client,
+            job_id,
+            lambda payload: payload["current_stage"] == "content_candidates_ready",
+            timeout_seconds=4.0,
+        )
+        assert completed_job["status"] == "content_pending_approval"
+        assert completed_job["processing_state"] == "idle"
+        assert completed_job["processing_task"] == "none"
+        assert completed_job["processing_message"] is None
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        shortlist_payload = shortlist_response.json()
+        assert len(shortlist_payload) > 0
+
+
+def test_workflow_v1_async_start_surfaces_content_generation_failure(configured_env: dict[str, str]) -> None:
+    """Async kickoff should preserve failed background generation state on the job."""
+
+    main_module, _workflow_module = reload_workflow_modules()
+    override_workflow_contentforge(FailingContentForgeClient(delay_seconds=0.05))
+
+    with TestClient(main_module.app) as client:
+        start_response = client.post("/api/jobs/start-async", json=sample_start_payload())
+        assert start_response.status_code == 202
+        job_id = start_response.json()["job_id"]
+
+        failed_job = wait_for_job_snapshot(
+            client,
+            job_id,
+            lambda payload: payload["status"] == "content_generation_failed",
+            timeout_seconds=3.0,
+        )
+        assert failed_job["canonical_stage"] == "failed"
+        assert failed_job["processing_state"] == "failed"
+        assert failed_job["processing_task"] == "content_generation"
+        assert "Content creation failed" in str(failed_job["processing_message"])
+        assert "Simulated ContentForge outage" in str(failed_job["last_error_message"])
+
+        shortlist_response = client.get(f"/api/jobs/{job_id}/shortlist")
+        assert shortlist_response.status_code == 200
+        assert shortlist_response.json() == []
 
 
 def test_workflow_v1_rejects_out_of_order_approval(configured_env: dict[str, str]) -> None:
@@ -839,6 +970,61 @@ def test_theme_service_returns_empty_state_when_database_is_unavailable(configur
     assert today.resolved is False
     assert today.message == "No theme resolved yet"
     assert today.theme is None
+
+
+def test_repository_requeues_stale_running_content_jobs(configured_env: dict[str, str]) -> None:
+    """Expired running content-generation jobs should reset to queued on startup recovery."""
+
+    reload_workflow_modules()
+    repository_module = importlib.import_module("app.repositories.workflow_repository")
+    schemas_module = importlib.import_module("app.schemas.workflow")
+    store_module = importlib.import_module("app.store.job_store")
+    workflow_service_module = importlib.import_module("app.services.workflow_v1_service")
+
+    repository = repository_module.WorkflowJobRepository(
+        memory_store=store_module.InMemoryJobStore(),
+        allow_memory_fallback=True,
+    )
+    repository._memory_mode = True
+    service = workflow_service_module.WorkflowV1Service(repository=repository)
+    payload = schemas_module.StartJobRequest.model_validate(sample_start_payload())
+
+    job_record = asyncio.run(service._create_initial_job_record(payload))
+    job_id = str(job_record["job_id"])
+    stale_started_at = datetime.now(timezone.utc)
+    stale_lease_expires_at = stale_started_at.replace(microsecond=0)
+    asyncio.run(
+        repository.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_generation_in_progress",
+                "processing_state": "running",
+                "processing_task": "content_generation",
+                "processing_message": "Content creation in progress",
+                "processing_owner_token": "worker_stale",
+                "processing_lease_expires_at": stale_lease_expires_at,
+                "processing_started_at": stale_started_at,
+                "processing_finished_at": None,
+            },
+        )
+    )
+
+    reset_count = asyncio.run(
+        repository.reset_stale_content_generation_jobs(
+            now=stale_started_at + timedelta(minutes=16),
+        )
+    )
+    assert reset_count == 1
+
+    recovered_job, backend = asyncio.run(repository.get_job(job_id))
+    assert backend == "memory_fallback"
+    assert recovered_job is not None
+    assert recovered_job["status"] == "content_generation_queued"
+    assert recovered_job["processing_state"] == "queued"
+    assert recovered_job["processing_task"] == "content_generation"
+    assert recovered_job["processing_message"] == "Content creation queued"
+    assert recovered_job["processing_owner_token"] is None
+    assert recovered_job["processing_started_at"] is None
 
 
 def test_repository_recovers_preview_urls_from_asset_rows_for_legacy_jobs(configured_env: dict[str, str]) -> None:

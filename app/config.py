@@ -75,6 +75,25 @@ class Settings(BaseSettings):
         ge=1.0,
         validation_alias="CONTENTFORGE_TIMEOUT_SECONDS",
     )
+    workflow_async_content_worker_enabled: bool = Field(
+        default=True,
+        validation_alias="WORKFLOW_ASYNC_CONTENT_WORKER_ENABLED",
+    )
+    workflow_async_content_busy_poll_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        validation_alias="WORKFLOW_ASYNC_CONTENT_BUSY_POLL_SECONDS",
+    )
+    workflow_async_content_idle_poll_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        validation_alias="WORKFLOW_ASYNC_CONTENT_IDLE_POLL_SECONDS",
+    )
+    workflow_async_content_lease_seconds: int = Field(
+        default=900,
+        ge=30,
+        validation_alias="WORKFLOW_ASYNC_CONTENT_LEASE_SECONDS",
+    )
     contentforge_models: str = Field(
         default="qwen2.5:7b-instruct,llama3.1:8b,mistral:7b",
         validation_alias="CONTENTFORGE_MODELS",

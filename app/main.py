@@ -27,6 +27,7 @@ from app.routers.telegram import router as telegram_router
 from app.routers.theme import router as theme_router
 from app.routers.themes_api import router as themes_api_router
 from app.routers.workflow_v1 import router as workflow_v1_router
+from app.services.async_content_worker import get_async_content_worker
 from app.storage import get_asset_storage, initialize_asset_storage_or_raise
 
 logger = logging.getLogger(__name__)
@@ -69,8 +70,18 @@ async def lifespan(app: FastAPI):
         logger.exception(
             "Database readiness check failed. Continuing startup; workflow endpoints can use in-memory fallback."
         )
+
+    async_content_worker = get_async_content_worker()
+    try:
+        await async_content_worker.start()
+    except Exception:  # noqa: BLE001
+        logger.exception("Async content worker failed to start. Continuing without background processing.")
     yield
 
+    try:
+        await async_content_worker.stop()
+    except Exception:  # noqa: BLE001
+        logger.exception("Async content worker failed to stop cleanly.")
     await close_database()
     logger.info("eCard Factory shut down")
 

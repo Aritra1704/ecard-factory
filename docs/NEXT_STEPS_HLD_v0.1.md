@@ -62,8 +62,9 @@ The redesign should follow these rules:
 3. One image-generation path.
 4. Final assembly stays in-platform and uses Pillow first.
 5. UI becomes its own sibling repo directory.
-6. Agentic behavior remains bounded and auditable.
-7. Quality scoring happens before autonomy expands.
+6. Job creation returns immediately; expensive generation runs in the background.
+7. Agentic behavior remains bounded and auditable.
+8. Quality scoring happens before autonomy expands.
 
 ## 5. Target High-Level Architecture
 
@@ -147,15 +148,22 @@ It should communicate with `ecard-factory` only through HTTP APIs.
 The target workflow is:
 
 1. User starts a card request.
-2. eCardFactory creates a job and normalizes input.
-3. ContentForge generates candidates and returns ranked shortlist metadata.
-4. User accepts or refines text choice.
-5. ImageForge generates image candidates for the chosen text.
-6. User accepts or refines image choice.
-7. Composition layer builds a structured layout spec.
-8. Pillow renders preview and final export.
-9. Quality layer scores the result.
-10. System either accepts, suggests refinement, or triggers a bounded rerun.
+2. eCardFactory creates the job immediately and returns the job id to Studio.
+3. Background content generation begins asynchronously and Studio shows live progress.
+4. ContentForge generates candidates and returns ranked shortlist metadata.
+5. User accepts or refines text choice.
+6. ImageForge generates image candidates for the chosen text.
+7. User accepts or refines image choice.
+8. Composition layer builds a structured layout spec.
+9. Pillow renders preview and final export.
+10. Quality layer scores the result.
+11. System either accepts, suggests refinement, or triggers a bounded rerun.
+
+Async kickoff rule:
+
+- `POST /api/jobs/start-async` returns immediately with `job_id`
+- canonical stage remains `job_created` until shortlist data exists
+- progress is communicated through a separate processing-state layer, not by mutating canonical stages
 
 ## 7. Agentic Direction
 

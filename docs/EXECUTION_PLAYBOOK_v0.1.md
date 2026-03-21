@@ -78,18 +78,40 @@ Main output:
 
 - one canonical start-to-export path
 
-### Phase 1: Content And Image Hardening
+### Phase 1: Content Stage Redesign
 
 Duration:
 
-- `4-6 working days`
+- `2-3 working days`
 
 Main output:
 
 - better shortlist quality
-- cleaner image candidate selection
 
-### Phase 2: Pillow Composition Redesign
+### Phase 2: Image Stage Redesign
+
+Duration:
+
+- `2-3 working days`
+
+Main output:
+
+- cleaner image candidate selection
+- one primary ImageForge path
+
+### Phase 2A: Async Job Kickoff And Background Orchestration
+
+Duration:
+
+- `3-4 working days`
+
+Main output:
+
+- immediate job creation
+- background content-generation worker
+- live Studio progress state
+
+### Phase 3: Pillow Composition Redesign
 
 Duration:
 
@@ -98,17 +120,6 @@ Duration:
 Main output:
 
 - reproducible preview/final render via layout spec
-
-### Phase 3: UI Split To content_engine_ui
-
-Duration:
-
-- baseline split completed
-- remaining hardening `1-2 working days`
-
-Main output:
-
-- standalone frontend app
 
 ### Phase 4: Quality Layer
 
@@ -120,7 +131,18 @@ Main output:
 
 - deterministic accept/refine quality scoring
 
-### Phase 5: Bounded Agent Supervisor
+### Phase 5: UI Split Hardening To content_engine_ui
+
+Duration:
+
+- baseline split completed
+- remaining hardening `1-2 working days`
+
+Main output:
+
+- standalone frontend app
+
+### Phase 6: Bounded Agent Supervisor
 
 Duration:
 
@@ -129,6 +151,11 @@ Duration:
 Main output:
 
 - safe agent-assisted reruns and recommendations
+
+Numbering rule:
+
+- the authoritative stage sequence is `0`, `1`, `2`, `2A`, `3`, `4`, `5`, `6`
+- Phase 5 UI split work is now a hardening track because the baseline split is already completed in the current workspace
 
 ## 5. Daily Working Routine
 
@@ -219,11 +246,13 @@ Recommended pattern:
 Recommended naming:
 
 - `phase-0-workflow-stabilization`
-- `phase-1-content-image-hardening`
-- `phase-2-pillow-composition`
-- `phase-3-content-engine-ui-shell`
+- `phase-1-content-stage-redesign`
+- `phase-2-image-stage-redesign`
+- `phase-2a-async-kickoff`
+- `phase-3-pillow-composition`
 - `phase-4-quality-layer`
-- `phase-5-bounded-agent-supervisor`
+- `phase-5-content-engine-ui-hardening`
+- `phase-6-bounded-agent-supervisor`
 
 ## 9. Recommended Weekly Timetable
 
@@ -239,23 +268,27 @@ Day 2-4:
 
 Day 5-8:
 
-- Phase 1 content and image hardening
+- Phase 1 content redesign plus Phase 2 image redesign
 
 Day 9-11:
 
-- Phase 2 Pillow composition redesign
+- Phase 2A async kickoff hardening and live validation
 
-Day 12-13:
+Day 12-14:
 
-- Phase 3 UI split hardening for `content_engine_ui`
+- Phase 3 Pillow composition redesign
 
-Day 17-19:
+Day 15-16:
 
 - Phase 4 quality layer
 
+Day 17-18:
+
+- Phase 5 UI split hardening for `content_engine_ui`
+
 Day 20+:
 
-- Phase 5 bounded agent supervisor
+- Phase 6 bounded agent supervisor
 
 ## 10. Ugadi Shortcut Plan
 

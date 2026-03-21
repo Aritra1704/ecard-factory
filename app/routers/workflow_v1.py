@@ -13,6 +13,7 @@ from app.schemas.workflow import (
     ContentApprovalRequest,
     ContentApprovalResponse,
     DailyThemeJobResponse,
+    DailyThemeJobKickoffResponse,
     FavoriteCardRequest,
     FinalApprovalResponse,
     GenerateMoreResponse,
@@ -40,11 +41,13 @@ from app.schemas.workflow import (
     StageRerunResponse,
     StartFromThemeRequest,
     StartJobRequest,
+    StartJobKickoffResponse,
     StartJobResponse,
     ThemeJobCreateRequest,
     WorkflowContractResponse,
 )
 from app.schemas.theme_factory import ThemeCatalogResponse, ThemeResolvedPayload
+from app.services.async_content_worker import get_async_content_worker
 from app.services.image_generation_service import ImageGenerationService, get_image_generation_service
 from app.services.theme_service import ThemeService, get_theme_service
 from app.services.workflow_v1_service import WorkflowV1Service, get_workflow_v1_service
@@ -133,6 +136,18 @@ async def start_job(
     return await service.start_job(payload)
 
 
+@router.post("/start-async", response_model=StartJobKickoffResponse, status_code=status.HTTP_202_ACCEPTED)
+async def start_job_async(
+    payload: StartJobRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+) -> StartJobKickoffResponse:
+    """Create a job immediately and queue background content generation."""
+
+    created = await service.start_job_async(payload)
+    get_async_content_worker().wake()
+    return created
+
+
 @router.get("/workflow-contract", response_model=WorkflowContractResponse, status_code=status.HTTP_200_OK)
 async def get_workflow_contract(
     service: WorkflowV1Service = Depends(get_workflow_v1_service),
@@ -175,6 +190,43 @@ async def create_daily_theme_job(
     )
 
 
+@router.post(
+    "/create-daily-theme-job-async",
+    response_model=DailyThemeJobKickoffResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_daily_theme_job_async(
+    payload: ThemeJobCreateRequest | None = Body(default=None),
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+    theme_service: ThemeService = Depends(get_theme_service),
+    db: AsyncSession = Depends(get_db),
+) -> DailyThemeJobKickoffResponse:
+    """Create one job from today's theme and return immediately with queued processing state."""
+
+    payload = payload or ThemeJobCreateRequest()
+    today_theme = await theme_service.get_today_theme(db)
+    theme = today_theme.theme
+    if not today_theme.resolved or theme is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No theme resolved yet")
+    start_payload = _build_theme_start_request(
+        theme=theme,
+        cards_per_theme=payload.cards_per_theme,
+        notes=payload.notes,
+        copy_style=payload.copy_style,
+        target_words=payload.target_words,
+        tone_funny_pct=payload.tone_funny_pct,
+    )
+    created = await service.start_job_async(start_payload)
+    get_async_content_worker().wake()
+    return DailyThemeJobKickoffResponse(
+        **created.model_dump(),
+        theme_name=theme.theme_name,
+        weekday=today_theme.weekday,
+        source=today_theme.source,
+        cards_per_theme=payload.cards_per_theme,
+    )
+
+
 @router.post("/start-from-theme", response_model=StartJobResponse, status_code=status.HTTP_201_CREATED)
 async def start_job_from_theme(
     payload: StartFromThemeRequest,
@@ -194,6 +246,29 @@ async def start_job_from_theme(
         tone_funny_pct=payload.tone_funny_pct,
     )
     return await service.start_job(start_payload)
+
+
+@router.post("/start-from-theme-async", response_model=StartJobKickoffResponse, status_code=status.HTTP_202_ACCEPTED)
+async def start_job_from_theme_async(
+    payload: StartFromThemeRequest,
+    service: WorkflowV1Service = Depends(get_workflow_v1_service),
+    theme_service: ThemeService = Depends(get_theme_service),
+    db: AsyncSession = Depends(get_db),
+) -> StartJobKickoffResponse:
+    """Queue one job from a manually selected Theme Factory entry and return immediately."""
+
+    theme = await theme_service.get_theme_by_key(db, payload.theme_key)
+    start_payload = _build_theme_start_request(
+        theme=theme,
+        cards_per_theme=payload.cards_per_theme,
+        notes=payload.notes,
+        copy_style=payload.copy_style,
+        target_words=payload.target_words,
+        tone_funny_pct=payload.tone_funny_pct,
+    )
+    created = await service.start_job_async(start_payload)
+    get_async_content_worker().wake()
+    return created
 
 
 @router.post("/{job_id}/content-approval", response_model=ContentApprovalResponse, deprecated=True)

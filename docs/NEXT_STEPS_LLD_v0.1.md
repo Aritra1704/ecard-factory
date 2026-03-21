@@ -186,7 +186,86 @@ Make ImageForge the only primary image generation path.
 - no backend ambiguity about image-generation ownership
 - image selection is visible and understandable in UI
 
-## 6. Stage 3: Composition Stage With Pillow
+## Current implementation status
+
+As of `2026-03-21`:
+
+- deterministic `quality_score`, `relevance_score`, `reason_codes`, and `recommended_candidate_id` are implemented in `imageforge`
+- `ecard-factory` persists and mirrors ImageForge rank/recommendation metadata for Studio and final render
+- `content_engine_ui` displays recommendation badges, scores, and reason codes
+- local automated verification is green across `ecard-factory`, `imageforge`, and `content_engine_ui`
+- one live browser validation pass against the running local stack is still required before Stage 3 begins
+- legacy `/generate-image`-style routes still exist for compatibility, but `/image-assets/*` is the canonical image path
+
+## 6. Stage 2A: Async Job Kickoff And Background Orchestration
+
+## Goal
+
+Make job creation immediate and move initial content generation into a background worker.
+
+## Service owner
+
+`ecard-factory`
+
+## Required capabilities
+
+- async kickoff endpoints:
+  - `/api/jobs/start-async`
+  - `/api/jobs/start-from-theme-async`
+  - `/api/jobs/create-daily-theme-job-async`
+- separate processing-state model:
+  - `queued`
+  - `running`
+  - `failed`
+  - `idle`
+- background worker loop started from FastAPI lifespan
+- queued-job claim and stale-job recovery
+- Studio progress banners and faster polling while processing
+
+## Processing-state contract
+
+```json
+{
+  "job_id": "job_001",
+  "status": "content_generation_queued",
+  "canonical_stage": "job_created",
+  "current_stage": "job_created",
+  "processing_state": "queued",
+  "processing_task": "content_generation",
+  "processing_message": "Content creation queued"
+}
+```
+
+## Recovery rules
+
+- queued jobs are claimed oldest-first
+- running jobs use a lease window
+- expired running jobs are requeued on startup
+- canonical stage does not advance until candidates and shortlist actually exist
+
+## Estimate
+
+- `3-4 working days`
+
+## Exit criteria
+
+- job creation returns immediately
+- Studio lands on the job page without waiting for ContentForge
+- Studio shows content-generation queued/running state clearly
+- shortlist appears automatically after background completion
+- existing sync `/start` routes still work
+
+## Current implementation status
+
+As of `2026-03-21`:
+
+- async kickoff endpoints, background worker claim/recovery, and processing-state tracking are implemented
+- the worker is started from FastAPI lifespan and requeues stale content-generation jobs
+- Studio uses async kickoff and polls while content generation is in progress
+- local automated verification is green
+- direct live browser verification against the running local stack is still pending
+
+## 7. Stage 3: Composition Stage With Pillow
 
 ## Goal
 
@@ -247,7 +326,7 @@ The composition layer should render from a layout spec, not from scattered ad ho
 - preview and final export match closely
 - layout is versioned and reproducible
 
-## 7. Stage 4: Quality Stage
+## 8. Stage 4: Quality Stage
 
 ## Goal
 
@@ -290,7 +369,7 @@ This quality result later becomes input to the central eCard agent.
 - quality failures are explicit
 - reruns can target one weak stage only
 
-## 8. Stage 5: UI Split
+## 9. Stage 5: UI Split
 
 ## Goal
 
@@ -361,9 +440,9 @@ Current implementation status:
 - `ecard-factory` startup no longer requires a frontend build
 - legacy embedded console remains as a temporary fallback
 
-## 9. New UI Component Design
+## 10. New UI Component Design
 
-## 9.1 App-level structure
+## 10.1 App-level structure
 
 Pages:
 
@@ -381,7 +460,7 @@ Shell:
 - `TopBar`
 - `RouteStatusBanner`
 
-## 9.2 Studio feature components
+## 10.2 Studio feature components
 
 Workspace:
 
@@ -419,7 +498,7 @@ Export stage:
 - `QualityScoreCard`
 - `ExportPanel`
 
-## 9.3 Shared components
+## 10.3 Shared components
 
 - `StatusBadge`
 - `MetricCard`
@@ -431,7 +510,7 @@ Export stage:
 - `FilterBar`
 - `Modal`
 
-## 10. Stage 6: Central Agent Runtime
+## 11. Stage 6: Central Agent Runtime
 
 ## Goal
 
@@ -467,7 +546,7 @@ Not allowed initially:
 - agent actions are logged and bounded
 - human operator can see why actions happened
 
-## 11. Suggested Implementation Sequence
+## 12. Suggested Implementation Sequence
 
 Do the work in this order:
 
@@ -476,11 +555,17 @@ Do the work in this order:
 3. Stage 0 stabilization
 4. Stage 1 content redesign
 5. Stage 2 image redesign
-6. Stage 3 Pillow composition redesign
-7. Stage 4 quality layer
-8. Stage 6 bounded agent runtime
+6. Stage 2A async kickoff and background orchestration
+7. Stage 3 Pillow composition redesign
+8. Stage 4 quality layer
+9. Stage 5 UI split hardening for `content_engine_ui` when needed
+10. Stage 6 bounded agent runtime
 
-## 12. Non-Deviation Conditions
+Implementation note:
+
+- Stage 5 UI split baseline is already completed in the current workspace, so the remaining work is hardening only and is not a blocker for Stage 0-2 verification
+
+## 13. Non-Deviation Conditions
 
 - no frontend framework rewrite until the UI split is working
 - no drag-and-drop canvas until guided layout editing is stable
@@ -488,7 +573,7 @@ Do the work in this order:
 - no production dependency on manual hidden fallbacks
 - no mixing of urgent festival delivery work with broad architecture changes in the same branch
 
-## 13. Open Design Questions
+## 14. Open Design Questions
 
 These questions should be resolved before the UI move starts:
 

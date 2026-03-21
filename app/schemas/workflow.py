@@ -22,6 +22,24 @@ class WorkflowCanonicalStage(StrEnum):
     FAILED = "failed"
 
 
+class WorkflowProcessingState(StrEnum):
+    """Background-processing state tracked separately from canonical workflow stage."""
+
+    IDLE = "idle"
+    QUEUED = "queued"
+    RUNNING = "running"
+    FAILED = "failed"
+
+
+class WorkflowProcessingTask(StrEnum):
+    """One background task category that may be active for a job."""
+
+    NONE = "none"
+    CONTENT_GENERATION = "content_generation"
+    IMAGE_GENERATION = "image_generation"
+    FINAL_RENDER = "final_render"
+
+
 class WorkflowStageOwner(StrEnum):
     """Actor expected to advance the workflow from the current canonical stage."""
 
@@ -123,11 +141,32 @@ class StartJobResponse(BaseModel):
     shortlist_count: int = 0
 
 
+class StartJobKickoffResponse(BaseModel):
+    """Immediate async kickoff response returned before background content generation completes."""
+
+    job_id: str
+    status: str
+    canonical_stage: WorkflowCanonicalStage
+    current_stage: str
+    processing_state: WorkflowProcessingState
+    processing_task: WorkflowProcessingTask
+    processing_message: str | None = None
+
+
 class DailyThemeJobResponse(BaseModel):
     """Response returned when creating one job from today's resolved Theme Factory theme."""
 
     job_id: str
     status: str
+    theme_name: str
+    weekday: str
+    source: str = "theme_schedule"
+    cards_per_theme: int = 10
+
+
+class DailyThemeJobKickoffResponse(StartJobKickoffResponse):
+    """Immediate async kickoff response for theme-driven job creation."""
+
     theme_name: str
     weekday: str
     source: str = "theme_schedule"
@@ -301,6 +340,11 @@ class ImageCandidateDebugResponse(BaseModel):
     relative_path: str
     width: int | None = None
     height: int | None = None
+    imageforge_rank: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    is_recommended: bool = False
     is_selected: bool = False
     created_at: datetime | None = None
 
@@ -321,6 +365,11 @@ class JobDebugResponse(BaseModel):
     status: str
     canonical_stage: WorkflowCanonicalStage
     current_stage: str
+    processing_state: WorkflowProcessingState = WorkflowProcessingState.IDLE
+    processing_task: WorkflowProcessingTask = WorkflowProcessingTask.NONE
+    processing_message: str | None = None
+    processing_started_at: datetime | None = None
+    processing_finished_at: datetime | None = None
     theme_name: str
     audience: str
     cultural_context: str
@@ -336,6 +385,7 @@ class JobDebugResponse(BaseModel):
     imageforge_trace_id: str | None = None
     image_generation_status: str | None = None
     image_generation_stage: str | None = None
+    recommended_image_candidate_id: str | None = None
     selected_image_candidate_id: str | None = None
     selected_image_public_url: str | None = None
     selected_image_relative_path: str | None = None
@@ -367,6 +417,11 @@ class JobListItemResponse(BaseModel):
     canonical_stage: WorkflowCanonicalStage
     current_stage: str
     status: str
+    processing_state: WorkflowProcessingState = WorkflowProcessingState.IDLE
+    processing_task: WorkflowProcessingTask = WorkflowProcessingTask.NONE
+    processing_message: str | None = None
+    processing_started_at: datetime | None = None
+    processing_finished_at: datetime | None = None
     output_spec: dict[str, Any] = Field(default_factory=dict)
     content_preview: str | None = None
     image_preview_url: str | None = None
@@ -447,14 +502,23 @@ class RegenerateImageAssetsRequest(BaseModel):
 class ImageAssetCandidateResponse(BaseModel):
     """UI-ready image candidate metadata owned by eCardFactory."""
 
+    rank: int = Field(ge=1)
     candidate_id: str
+    imageforge_request_id: str | None = None
+    provider_run_id: str | None = None
     provider: str
     model: str | None = None
     candidate_index: int
     public_url: str
     relative_path: str
+    prompt_used: str | None = None
+    negative_prompt_used: str | None = None
     width: int | None = None
     height: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    is_recommended: bool = False
     is_selected: bool = False
     created_at: datetime | None = None
 
@@ -463,18 +527,24 @@ class JobImageAssetsResponse(BaseModel):
     """Normalized image asset payload returned to Studio."""
 
     job_id: str
+    generation_path: Literal["imageforge"] = "imageforge"
     imageforge_enabled: bool = True
     imageforge_request_id: str | None = None
     imageforge_trace_id: str | None = None
     image_generation_status: str | None = None
     image_generation_stage: str | None = None
+    can_generate: bool = False
+    blocking_reason: str | None = None
     selected_text: str | None = None
+    recommended_candidate_id: str | None = None
     selected_image_candidate_id: str | None = None
     selected_image_public_url: str | None = None
     selected_image_relative_path: str | None = None
     selected_image_provider: str | None = None
     selected_image_model: str | None = None
     image_generated_at: datetime | None = None
+    candidate_count: int = 0
+    selected_candidate: ImageAssetCandidateResponse | None = None
     candidates: list[ImageAssetCandidateResponse] = Field(default_factory=list)
 
 

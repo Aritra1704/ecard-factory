@@ -67,6 +67,7 @@ class CardJob(Base):
     imageforge_trace_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     image_generation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     image_generation_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    recommended_image_candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     selected_image_candidate_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     selected_image_public_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     selected_image_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -82,6 +83,23 @@ class CardJob(Base):
         server_default=text("10"),
     )
     operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_state: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="idle",
+        server_default=text("'idle'"),
+    )
+    processing_task: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="none",
+        server_default=text("'none'"),
+    )
+    processing_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_owner_token: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    processing_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processing_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     retry_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -322,6 +340,21 @@ class CardImageCandidate(Base):
     relative_path: Mapped[str] = mapped_column(Text, nullable=False)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    imageforge_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_codes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    is_recommended: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
     is_selected: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

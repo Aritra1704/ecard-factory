@@ -85,6 +85,7 @@ def build_generation_response(schemas_module, *, request_id: str, trace_id: str,
     candidates = [
         schemas_module.GeneratedCandidate(
             candidate_id=f"cand_{start_index + offset}",
+            request_id=request_id,
             provider_run_id=f"prun_{request_id}_{start_index + offset}",
             provider="comfyui",
             model="sd_xl_base_1.0",
@@ -94,6 +95,17 @@ def build_generation_response(schemas_module, *, request_id: str, trace_id: str,
             is_selected=False,
             width=640,
             height=768,
+            quality_score=round(9.6 - (offset * 0.2), 1),
+            relevance_score=round(9.8 - (offset * 0.2), 1),
+            reason_codes=[
+                "provider_success",
+                "valid_asset",
+                "dimensions_present",
+                "prompt_complete",
+                "selected_text_present",
+                "orientation_match",
+            ],
+            rank=start_index + offset,
             created_at=finished_at,
         )
         for offset in range(count)
@@ -102,6 +114,7 @@ def build_generation_response(schemas_module, *, request_id: str, trace_id: str,
         ok=True,
         request_id=request_id,
         trace_id=trace_id,
+        recommended_candidate_id="cand_1",
         results=[
             schemas_module.ProviderExecution(
                 status="completed",
@@ -134,6 +147,7 @@ def build_select_response(schemas_module, *, request_id: str, candidate_id: str,
     created_at = _utc("2026-03-16T09:00:05Z")
     selected_at = _utc("2026-03-16T09:01:00Z")
     public_url = f"http://127.0.0.1:8090/assets/candidates/{request_id}/{candidate_id}.png"
+    rank = int(candidate_id.split("_")[-1])
     return schemas_module.SelectCandidateResponse(
         ok=True,
         candidate=schemas_module.ImageCandidateRecord(
@@ -153,6 +167,17 @@ def build_select_response(schemas_module, *, request_id: str, candidate_id: str,
             file_size_bytes=2048,
             width=640,
             height=768,
+            quality_score=round(9.6 - ((rank - 1) * 0.2), 1),
+            relevance_score=round(9.8 - ((rank - 1) * 0.2), 1),
+            reason_codes=[
+                "provider_success",
+                "valid_asset",
+                "dimensions_present",
+                "prompt_complete",
+                "selected_text_present",
+                "orientation_match",
+            ],
+            rank=rank,
             is_selected=True,
             selected_at=selected_at,
             created_at=created_at,
@@ -171,6 +196,7 @@ class FakeImageForgeClient:
         self.regenerate_calls = []
         self.select_calls = []
         self.detail_calls = []
+        self.selected_candidate_id: str | None = None
         self.generate_response = build_generation_response(
             schemas_module,
             request_id="ifg_req_001",
@@ -196,6 +222,7 @@ class FakeImageForgeClient:
 
     async def select_candidate(self, candidate_id: str):
         self.select_calls.append(candidate_id)
+        self.selected_candidate_id = candidate_id
         candidate_index = 2 if candidate_id == "cand_2" else 1
         return build_select_response(
             self._schemas,
@@ -206,14 +233,44 @@ class FakeImageForgeClient:
 
     async def get_request_detail(self, request_id: str):
         self.detail_calls.append(request_id)
-        candidates = [
-            build_select_response(
-                self._schemas,
-                request_id=request_id,
-                candidate_id="cand_2",
-                candidate_index=2,
-            ).candidate,
-        ]
+        candidates = []
+        for response in [self.generate_response, *([self.regenerate_response] if self.regenerate_calls else [])]:
+            for candidate in response.results[0].candidates:
+                is_selected = candidate.candidate_id == self.selected_candidate_id
+                selected_asset_relative_path = candidate.relative_path if is_selected else None
+                selected_asset_public_url = candidate.public_url if is_selected else None
+                candidates.append(
+                    self._schemas.ImageCandidateRecord(
+                        candidate_id=candidate.candidate_id,
+                        request_id=candidate.request_id,
+                        provider_run_id=candidate.provider_run_id,
+                        provider=candidate.provider,
+                        model=candidate.model,
+                        candidate_index=candidate.candidate_index,
+                        prompt_used="soft festive reusable backdrop",
+                        negative_prompt_used="readable text, poster, greeting card layout",
+                        relative_path=candidate.relative_path,
+                        public_url=candidate.public_url,
+                        selected_asset_relative_path=selected_asset_relative_path,
+                        selected_asset_public_url=selected_asset_public_url,
+                        storage_backend="filesystem",
+                        file_size_bytes=2048,
+                        width=candidate.width,
+                        height=candidate.height,
+                        quality_score=candidate.quality_score,
+                        relevance_score=candidate.relevance_score,
+                        reason_codes=list(candidate.reason_codes or []),
+                        rank=candidate.rank,
+                        is_selected=is_selected,
+                        selected_at=_utc("2026-03-16T09:01:00Z") if is_selected else None,
+                        created_at=candidate.created_at,
+                    )
+                )
+        candidates.sort(key=lambda candidate: (int(candidate.rank or 10**9), int(candidate.candidate_index or 0)))
+        selected_candidate = next(
+            (candidate for candidate in candidates if candidate.is_selected),
+            None,
+        )
         request = self._schemas.ImageRequestRecord(
             request_id=request_id,
             trace_id="trace_imageforge_001",
@@ -238,8 +295,9 @@ class FakeImageForgeClient:
             },
             tone_style="festive",
             visual_style="festive",
-            candidate_count=3,
+            candidate_count=len(candidates),
             notes=None,
+            recommended_candidate_id="cand_1",
             request_payload_json={},
             status="completed",
             stage="completed",
@@ -253,7 +311,7 @@ class FakeImageForgeClient:
             request=request,
             provider_runs=[],
             candidates=candidates,
-            selected_candidate=candidates[0],
+            selected_candidate=selected_candidate,
         )
 
 
@@ -335,17 +393,49 @@ def test_generate_image_assets_endpoint_with_mocked_imageforge(configured_env: d
         assert generate_response.status_code == 200
         body = generate_response.json()
         assert body["job_id"] == job_id
+        assert body["generation_path"] == "imageforge"
         assert body["imageforge_request_id"] == "ifg_req_001"
         assert body["imageforge_trace_id"] == "trace_imageforge_001"
         assert body["image_generation_status"] == "completed"
         assert body["image_generation_stage"] == "completed"
+        assert body["can_generate"] is True
+        assert body["blocking_reason"] is None
+        assert body["candidate_count"] == 3
+        assert body["recommended_candidate_id"] == "cand_1"
         assert len(body["candidates"]) == 3
+        assert body["candidates"][0]["rank"] == 1
         assert body["candidates"][0]["candidate_id"] == "cand_1"
+        assert body["candidates"][0]["quality_score"] == 9.6
+        assert body["candidates"][0]["relevance_score"] == 9.8
+        assert body["candidates"][0]["reason_codes"] == [
+            "provider_success",
+            "valid_asset",
+            "dimensions_present",
+            "prompt_complete",
+            "selected_text_present",
+            "orientation_match",
+        ]
+        assert body["candidates"][0]["is_recommended"] is True
+        assert body["candidates"][0]["prompt_used"] == "soft festive reusable backdrop"
+        assert body["candidates"][0]["negative_prompt_used"] == "readable text, poster, greeting card layout"
 
         debug_response = client.get(f"/api/jobs/{job_id}")
         debug_payload = debug_response.json()
         assert debug_payload["imageforge_request_id"] == "ifg_req_001"
         assert debug_payload["image_generation_status"] == "completed"
+        assert debug_payload["recommended_image_candidate_id"] == "cand_1"
+        assert debug_payload["image_candidates"][0]["imageforge_rank"] == 1
+        assert debug_payload["image_candidates"][0]["quality_score"] == 9.6
+        assert debug_payload["image_candidates"][0]["relevance_score"] == 9.8
+        assert debug_payload["image_candidates"][0]["reason_codes"] == [
+            "provider_success",
+            "valid_asset",
+            "dimensions_present",
+            "prompt_complete",
+            "selected_text_present",
+            "orientation_match",
+        ]
+        assert debug_payload["image_candidates"][0]["is_recommended"] is True
         assert debug_payload["image_candidates"][0]["prompt_used"] == "soft festive reusable backdrop"
         assert debug_payload["image_candidates"][0]["negative_prompt_used"] == "readable text, poster, greeting card layout"
 
@@ -380,8 +470,11 @@ def test_regenerate_image_assets_endpoint_with_mocked_imageforge(configured_env:
         assert regenerate_response.status_code == 200
         body = regenerate_response.json()
         assert body["imageforge_request_id"] == "ifg_req_001"
+        assert body["candidate_count"] == 5
+        assert body["recommended_candidate_id"] == "cand_1"
         assert len(body["candidates"]) == 5
         assert body["candidates"][-1]["candidate_id"] == "cand_5"
+        assert body["candidates"][-1]["rank"] == 5
 
     main_module.app.dependency_overrides.clear()
     assert len(fake_client.regenerate_calls) == 1
@@ -415,6 +508,8 @@ def test_select_image_asset_endpoint_with_mocked_imageforge(configured_env: dict
         assert body["selected_image_provider"] == "comfyui"
         assert body["selected_image_model"] == "sd_xl_base_1.0"
         assert body["selected_image_public_url"].endswith("/cand_2.png")
+        assert body["selected_candidate"]["candidate_id"] == "cand_2"
+        assert body["selected_candidate"]["is_selected"] is True
 
         debug_payload = client.get(f"/api/jobs/{job_id}").json()
         assert debug_payload["image_preview_url"].endswith("/cand_2.png")
@@ -457,6 +552,18 @@ def test_image_candidate_metadata_persists_locally(configured_env: dict[str, str
         assert stored["negative_prompt_used"] == "readable text, poster, greeting card layout"
         assert stored["width"] == 640
         assert stored["height"] == 768
+        assert stored["imageforge_rank"] == 1
+        assert stored["quality_score"] == 9.6
+        assert stored["relevance_score"] == 9.8
+        assert stored["reason_codes"] == [
+            "provider_success",
+            "valid_asset",
+            "dimensions_present",
+            "prompt_complete",
+            "selected_text_present",
+            "orientation_match",
+        ]
+        assert stored["is_recommended"] is True
         assert stored["public_url"].endswith("/cand_1.png")
         assert stored["relative_path"].endswith("/cand_1.png")
 
@@ -488,14 +595,31 @@ def test_get_image_assets_endpoint_returns_ui_ready_structure(configured_env: di
         assert response.status_code == 200
         body = response.json()
         assert body["job_id"] == job_id
+        assert body["generation_path"] == "imageforge"
         assert body["selected_text"]
+        assert body["candidate_count"] == 3
+        assert body["recommended_candidate_id"] == "cand_1"
         assert body["selected_image_candidate_id"] == "cand_2"
         assert body["selected_image_public_url"].endswith("/cand_2.png")
+        assert body["selected_candidate"]["candidate_id"] == "cand_2"
         assert body["candidates"][1]["candidate_id"] == "cand_2"
+        assert body["candidates"][1]["rank"] == 2
         assert body["candidates"][1]["provider"] == "comfyui"
         assert body["candidates"][1]["model"] == "sd_xl_base_1.0"
+        assert body["candidates"][1]["provider_run_id"].startswith("prun_ifg_req_001")
+        assert body["candidates"][1]["prompt_used"] == "soft festive reusable backdrop"
         assert body["candidates"][1]["width"] == 640
         assert body["candidates"][1]["height"] == 768
+        assert body["candidates"][1]["quality_score"] == 9.4
+        assert body["candidates"][1]["relevance_score"] == 9.6
+        assert body["candidates"][1]["reason_codes"] == [
+            "provider_success",
+            "valid_asset",
+            "dimensions_present",
+            "prompt_complete",
+            "selected_text_present",
+            "orientation_match",
+        ]
         assert body["candidates"][1]["is_selected"] is True
 
     main_module.app.dependency_overrides.clear()

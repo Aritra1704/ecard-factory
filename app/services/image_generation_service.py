@@ -144,7 +144,6 @@ class ImageGenerationService:
         response: GenerationResponse,
         replace_existing: bool,
     ) -> None:
-        candidate_rows = self._build_candidate_rows(response)
         now = datetime.now(timezone.utc)
         updates: dict[str, Any] = {
             "imageforge_request_id": response.request_id,
@@ -152,6 +151,7 @@ class ImageGenerationService:
             "image_generation_status": response.status,
             "image_generation_stage": response.stage,
             "image_generated_at": response.finished_at or now,
+            "recommended_image_candidate_id": str(response.recommended_candidate_id or "") or None,
             "last_stage_started_at": response.started_at or now,
             "last_stage_finished_at": response.finished_at or now,
             "last_error_message": None,
@@ -163,7 +163,8 @@ class ImageGenerationService:
             "status": response.status,
             "stage": response.stage,
             "providers_succeeded": sum(1 for result in response.results if result.ok),
-            "candidate_count": len(candidate_rows),
+            "candidate_count": sum(len(result.candidates) for result in response.results),
+            "recommended_candidate_id": str(response.recommended_candidate_id or "") or None,
         }
 
         if replace_existing:
@@ -172,13 +173,12 @@ class ImageGenerationService:
             if request_payload is not None:
                 audit_payload["request"] = request_payload.model_dump(mode="json", exclude_none=True)
 
-        await self._repository.save_image_candidates(
-            job_id,
-            candidate_rows,
-            replace_existing=replace_existing,
-            stage="image_generation",
-        )
         await self._repository.update_job_status(job_id=job_id, updates=updates)
+        await self._sync_request_detail(
+            job_id=job_id,
+            request_id=response.request_id,
+            replace_existing=True,
+        )
         await self._repository.append_audit_event(
             job_id,
             event_type=event_type,
@@ -200,6 +200,7 @@ class ImageGenerationService:
 
         await self._repository.update_image_candidate_selection(
             job_id,
+            selected_candidate_id=selected.candidate_id,
             selected_relative_path=relative_path,
         )
         await self._repository.update_job_status(
@@ -261,15 +262,27 @@ class ImageGenerationService:
                 "prompt": candidate.prompt_used,
                 "prompt_used": candidate.prompt_used,
                 "negative_prompt_used": candidate.negative_prompt_used,
-                "candidate_index": candidate.candidate_index,
+                "candidate_index": self._normalize_candidate_index(
+                    candidate.candidate_index,
+                    fallback_index=index,
+                ),
                 "public_url": candidate.public_url,
                 "relative_path": candidate.relative_path,
                 "width": candidate.width,
                 "height": candidate.height,
+                "imageforge_rank": candidate.rank,
+                "quality_score": candidate.quality_score,
+                "relevance_score": candidate.relevance_score,
+                "reason_codes": list(candidate.reason_codes or []),
+                "is_recommended": (
+                    str(candidate.candidate_id or "").strip()
+                    == str(detail.request.recommended_candidate_id or "").strip()
+                )
+                or int(candidate.rank or 0) == 1,
                 "is_selected": candidate.is_selected,
                 "created_at": candidate.created_at,
             }
-            for candidate in detail.candidates
+            for index, candidate in enumerate(detail.candidates, start=1)
         ]
         await self._repository.save_image_candidates(
             job_id,
@@ -283,6 +296,7 @@ class ImageGenerationService:
             "imageforge_trace_id": detail.request.trace_id,
             "image_generation_status": detail.request.status,
             "image_generation_stage": detail.request.stage,
+            "recommended_image_candidate_id": str(detail.request.recommended_candidate_id or "") or None,
             "image_generated_at": detail.request.finished_at or detail.request.created_at,
         }
         if selected is not None:
@@ -300,7 +314,11 @@ class ImageGenerationService:
                 }
             )
             job = await self._load_job(job_id)
-            await self._repository.update_image_candidate_selection(job_id, selected_relative_path=relative_path)
+            await self._repository.update_image_candidate_selection(
+                job_id,
+                selected_candidate_id=selected.candidate_id,
+                selected_relative_path=relative_path,
+            )
             updates["output_spec"] = self._with_selected_image(
                 job,
                 selected_url=selected_url,
@@ -347,33 +365,6 @@ class ImageGenerationService:
             )
 
     @staticmethod
-    def _build_candidate_rows(response: GenerationResponse) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for result in response.results:
-            for candidate in result.candidates:
-                rows.append(
-                    {
-                        "stage": "image_generation",
-                        "imageforge_request_id": response.request_id,
-                        "candidate_id": candidate.candidate_id,
-                        "provider_run_id": candidate.provider_run_id,
-                        "provider": candidate.provider,
-                        "model": candidate.model or result.model,
-                        "prompt": result.prompt_used,
-                        "prompt_used": result.prompt_used,
-                        "negative_prompt_used": result.negative_prompt_used,
-                        "candidate_index": candidate.candidate_index,
-                        "public_url": candidate.public_url,
-                        "relative_path": candidate.relative_path,
-                        "width": candidate.width,
-                        "height": candidate.height,
-                        "is_selected": candidate.is_selected,
-                        "created_at": candidate.created_at,
-                    }
-                )
-        return rows
-
-    @staticmethod
     def _local_imageforge_candidates(job: dict[str, Any]) -> list[dict[str, Any]]:
         return [
             item
@@ -381,39 +372,102 @@ class ImageGenerationService:
             if str(item.get("candidate_id") or "").strip()
         ]
 
-    def _build_image_assets_response(self, job: dict[str, Any]) -> JobImageAssetsResponse:
-        selected_text = None
-        if self._job_has_selected_text(job):
-            selected_text = str(job.get("content_preview") or "") or None
-        candidates = [
-            ImageAssetCandidateResponse(
-                candidate_id=str(item.get("candidate_id") or ""),
-                provider=str(item.get("provider") or ""),
-                model=str(item.get("model") or "") or None,
-                candidate_index=int(item.get("candidate_index") or 0),
-                public_url=str(item.get("public_url") or ""),
-                relative_path=str(item.get("relative_path") or ""),
-                width=int(item["width"]) if item.get("width") is not None else None,
-                height=int(item["height"]) if item.get("height") is not None else None,
-                is_selected=bool(item.get("is_selected")),
-                created_at=self._coerce_datetime(item.get("created_at")),
+    @staticmethod
+    def _normalize_candidate_index(value: Any, *, fallback_index: int) -> int:
+        try:
+            candidate_index = int(value)
+        except (TypeError, ValueError):
+            candidate_index = 0
+        if candidate_index >= 1:
+            return candidate_index
+        return max(1, int(fallback_index))
+
+    @classmethod
+    def _ordered_local_imageforge_candidates(cls, job: dict[str, Any]) -> list[dict[str, Any]]:
+        candidates = list(cls._local_imageforge_candidates(job))
+        indexed_candidates = list(enumerate(candidates, start=1))
+        indexed_candidates.sort(
+            key=lambda pair: (
+                cls._normalize_optional_rank(pair[1].get("imageforge_rank")) is None,
+                cls._normalize_optional_rank(pair[1].get("imageforge_rank")) or 10**9,
+                0 if int(pair[1].get("id") or 0) > 0 else 1,
+                int(pair[1].get("id") or 0) if int(pair[1].get("id") or 0) > 0 else pair[0],
             )
-            for item in self._local_imageforge_candidates(job)
-        ]
+        )
+        return [item for _position, item in indexed_candidates]
+
+    def _build_image_assets_response(self, job: dict[str, Any]) -> JobImageAssetsResponse:
+        can_generate = self._job_has_selected_text(job)
+        selected_text = None
+        if can_generate:
+            selected_text = str(job.get("content_preview") or "").strip() or None
+        selected_candidate_id = str(job.get("selected_image_candidate_id") or "").strip()
+        selected_relative_path = str(job.get("selected_image_relative_path") or "").strip()
+        recommended_candidate_id = str(job.get("recommended_image_candidate_id") or "").strip()
+
+        candidates: list[ImageAssetCandidateResponse] = []
+        for fallback_rank, item in enumerate(self._ordered_local_imageforge_candidates(job), start=1):
+            candidate_id = str(item.get("candidate_id") or "").strip()
+            relative_path = str(item.get("relative_path") or "")
+            is_selected = bool(item.get("is_selected"))
+            if selected_candidate_id and candidate_id == selected_candidate_id:
+                is_selected = True
+            elif selected_relative_path and relative_path == selected_relative_path:
+                is_selected = True
+            imageforge_rank = self._normalize_optional_rank(item.get("imageforge_rank")) or fallback_rank
+            is_recommended = bool(item.get("is_recommended"))
+            if recommended_candidate_id and candidate_id == recommended_candidate_id:
+                is_recommended = True
+
+            candidates.append(
+                ImageAssetCandidateResponse(
+                    rank=imageforge_rank,
+                    candidate_id=candidate_id,
+                    imageforge_request_id=str(item.get("imageforge_request_id") or "") or None,
+                    provider_run_id=str(item.get("provider_run_id") or "") or None,
+                    provider=str(item.get("provider") or ""),
+                    model=str(item.get("model") or "") or None,
+                    candidate_index=self._normalize_candidate_index(item.get("candidate_index"), fallback_index=fallback_rank),
+                    public_url=str(item.get("public_url") or ""),
+                    relative_path=relative_path,
+                    prompt_used=str(item.get("prompt_used") or item.get("prompt") or "") or None,
+                    negative_prompt_used=str(item.get("negative_prompt_used") or "") or None,
+                    width=int(item["width"]) if item.get("width") is not None else None,
+                    height=int(item["height"]) if item.get("height") is not None else None,
+                    quality_score=float(item["quality_score"]) if item.get("quality_score") is not None else None,
+                    relevance_score=float(item["relevance_score"]) if item.get("relevance_score") is not None else None,
+                    reason_codes=[
+                        str(code).strip()
+                        for code in list(item.get("reason_codes") or [])
+                        if str(code).strip()
+                    ],
+                    is_recommended=is_recommended,
+                    is_selected=is_selected,
+                    created_at=self._coerce_datetime(item.get("created_at")),
+                )
+            )
+
+        selected_candidate = next((candidate for candidate in candidates if candidate.is_selected), None)
         return JobImageAssetsResponse(
             job_id=str(job.get("job_id") or ""),
+            generation_path="imageforge",
             imageforge_enabled=bool(settings.imageforge_enabled),
             imageforge_request_id=str(job.get("imageforge_request_id") or "") or None,
             imageforge_trace_id=str(job.get("imageforge_trace_id") or "") or None,
             image_generation_status=str(job.get("image_generation_status") or "") or None,
             image_generation_stage=str(job.get("image_generation_stage") or "") or None,
+            can_generate=can_generate,
+            blocking_reason=None if can_generate else "text_selected is required before image generation",
             selected_text=selected_text,
+            recommended_candidate_id=recommended_candidate_id or None,
             selected_image_candidate_id=str(job.get("selected_image_candidate_id") or "") or None,
             selected_image_public_url=str(job.get("selected_image_public_url") or "") or None,
             selected_image_relative_path=str(job.get("selected_image_relative_path") or "") or None,
             selected_image_provider=str(job.get("selected_image_provider") or "") or None,
             selected_image_model=str(job.get("selected_image_model") or "") or None,
             image_generated_at=self._coerce_datetime(job.get("image_generated_at")),
+            candidate_count=len(candidates),
+            selected_candidate=selected_candidate,
             candidates=candidates,
         )
 
@@ -485,6 +539,14 @@ class ImageGenerationService:
             except ValueError:
                 return None
         return None
+
+    @staticmethod
+    def _normalize_optional_rank(value: Any) -> int | None:
+        try:
+            rank = int(value)
+        except (TypeError, ValueError):
+            return None
+        return rank if rank >= 1 else None
 
     def _require_enabled(self) -> None:
         if not settings.imageforge_enabled:

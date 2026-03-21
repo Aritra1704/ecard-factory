@@ -77,6 +77,7 @@ class WorkflowJobRepository:
                         imageforge_trace_id=job.get("imageforge_trace_id"),
                         image_generation_status=job.get("image_generation_status"),
                         image_generation_stage=job.get("image_generation_stage"),
+                        recommended_image_candidate_id=job.get("recommended_image_candidate_id"),
                         selected_image_candidate_id=job.get("selected_image_candidate_id"),
                         selected_image_public_url=job.get("selected_image_public_url"),
                         selected_image_relative_path=job.get("selected_image_relative_path"),
@@ -87,6 +88,13 @@ class WorkflowJobRepository:
                         final_asset_urls=job["final_asset_urls"],
                         cards_per_theme=int(job.get("cards_per_theme") or 10),
                         operator_notes=str(job.get("operator_notes") or "") or None,
+                        processing_state=str(job.get("processing_state") or "idle"),
+                        processing_task=str(job.get("processing_task") or "none"),
+                        processing_message=str(job.get("processing_message") or "") or None,
+                        processing_owner_token=str(job.get("processing_owner_token") or "") or None,
+                        processing_lease_expires_at=job.get("processing_lease_expires_at"),
+                        processing_started_at=job.get("processing_started_at"),
+                        processing_finished_at=job.get("processing_finished_at"),
                         retry_count=int(job.get("retry_count") or 0),
                         last_stage_started_at=job.get("last_stage_started_at"),
                         last_stage_finished_at=job.get("last_stage_finished_at"),
@@ -179,6 +187,11 @@ class WorkflowJobRepository:
                     "job_id": item.job_id,
                     "theme_name": item.theme_name,
                     "status": item.status,
+                    "processing_state": item.processing_state,
+                    "processing_task": item.processing_task,
+                    "processing_message": item.processing_message,
+                    "processing_started_at": item.processing_started_at,
+                    "processing_finished_at": item.processing_finished_at,
                     "output_spec": item.output_spec or {},
                     "content_preview": item.content_preview,
                     "image_preview_url": image_preview_url,
@@ -203,6 +216,198 @@ class WorkflowJobRepository:
             )
 
         return response_rows, "postgres"
+
+    async def enqueue_content_generation(self, job_id: str, *, message: str = "Content creation queued") -> None:
+        """Mark one job as queued for background content generation."""
+
+        queued_at = datetime.now(timezone.utc)
+        if self._use_memory_backend():
+            await self._memory.enqueue_content_generation(job_id=job_id, message=message, queued_at=queued_at)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                db_job = await session.get(CardJob, job_id)
+                if db_job is None:
+                    return
+                db_job.status = "content_generation_queued"
+                db_job.processing_state = "queued"
+                db_job.processing_task = "content_generation"
+                db_job.processing_message = message
+                db_job.processing_owner_token = None
+                db_job.processing_lease_expires_at = None
+                db_job.processing_started_at = None
+                db_job.processing_finished_at = queued_at
+                db_job.last_stage_started_at = queued_at
+                db_job.last_stage_finished_at = None
+                db_job.last_error_message = None
+                db_job.updated_at = queued_at
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="enqueue_content_generation",
+                error=exc,
+                memory_action=lambda: self._memory.enqueue_content_generation(
+                    job_id=job_id,
+                    message=message,
+                    queued_at=queued_at,
+                ),
+            )
+
+    async def claim_next_content_generation_job(
+        self,
+        *,
+        owner_token: str,
+        lease_seconds: int,
+    ) -> dict[str, Any] | None:
+        """Atomically claim the oldest queued content-generation job and mark it running."""
+
+        started_at = datetime.now(timezone.utc)
+        lease_expires_at = started_at.timestamp() + max(lease_seconds, 30)
+        lease_expiry = datetime.fromtimestamp(lease_expires_at, tz=timezone.utc)
+
+        if self._use_memory_backend():
+            return await self._memory.claim_next_content_generation_job(
+                owner_token=owner_token,
+                lease_expires_at=lease_expiry,
+                started_at=started_at,
+            )
+
+        try:
+            async with async_session_factory() as session:
+                statement = (
+                    select(CardJob)
+                    .where(
+                        CardJob.status == "content_generation_queued",
+                        CardJob.processing_state == "queued",
+                        CardJob.processing_task == "content_generation",
+                    )
+                    .order_by(CardJob.created_at.asc(), CardJob.job_id.asc())
+                    .with_for_update(skip_locked=True)
+                    .limit(1)
+                )
+                result = await session.execute(statement)
+                db_job = result.scalar_one_or_none()
+                if db_job is None:
+                    return None
+                db_job.status = "content_generation_in_progress"
+                db_job.processing_state = "running"
+                db_job.processing_task = "content_generation"
+                db_job.processing_message = "Content creation in progress"
+                db_job.processing_owner_token = owner_token
+                db_job.processing_lease_expires_at = lease_expiry
+                db_job.processing_started_at = started_at
+                db_job.processing_finished_at = None
+                db_job.last_stage_started_at = started_at
+                db_job.last_stage_finished_at = None
+                db_job.last_error_message = None
+                db_job.updated_at = started_at
+                await session.commit()
+                return {
+                    "job_id": db_job.job_id,
+                    "status": db_job.status,
+                    "processing_state": db_job.processing_state,
+                    "processing_task": db_job.processing_task,
+                    "processing_message": db_job.processing_message,
+                    "processing_owner_token": db_job.processing_owner_token,
+                    "processing_lease_expires_at": db_job.processing_lease_expires_at,
+                    "processing_started_at": db_job.processing_started_at,
+                }
+        except (SQLAlchemyError, OSError) as exc:
+            return await self._handle_db_failure_and_maybe_fallback(
+                op_name="claim_next_content_generation_job",
+                error=exc,
+                memory_action=lambda: self._memory.claim_next_content_generation_job(
+                    owner_token=owner_token,
+                    lease_expires_at=lease_expiry,
+                    started_at=started_at,
+                ),
+            )
+
+    async def reset_stale_content_generation_jobs(self, *, now: datetime | None = None) -> int:
+        """Requeue expired running content-generation jobs on startup."""
+
+        current_time = now or datetime.now(timezone.utc)
+        if self._use_memory_backend():
+            return await self._memory.reset_stale_content_generation_jobs(now=current_time)
+
+        try:
+            async with async_session_factory() as session:
+                statement = (
+                    select(CardJob)
+                    .where(
+                        CardJob.processing_state == "running",
+                        CardJob.processing_task == "content_generation",
+                        CardJob.processing_lease_expires_at.is_not(None),
+                        CardJob.processing_lease_expires_at <= current_time,
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+                result = await session.execute(statement)
+                rows = list(result.scalars().all())
+                if not rows:
+                    return 0
+                for db_job in rows:
+                    db_job.status = "content_generation_queued"
+                    db_job.processing_state = "queued"
+                    db_job.processing_task = "content_generation"
+                    db_job.processing_message = "Content creation queued"
+                    db_job.processing_owner_token = None
+                    db_job.processing_lease_expires_at = None
+                    db_job.processing_started_at = None
+                    db_job.processing_finished_at = current_time
+                    db_job.updated_at = current_time
+                await session.commit()
+                return len(rows)
+        except (SQLAlchemyError, OSError) as exc:
+            return await self._handle_db_failure_and_maybe_fallback(
+                op_name="reset_stale_content_generation_jobs",
+                error=exc,
+                memory_action=lambda: self._memory.reset_stale_content_generation_jobs(now=current_time),
+            )
+
+    async def mark_content_generation_completed(
+        self,
+        job_id: str,
+        *,
+        updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Persist successful content-generation completion and clear processing state."""
+
+        completed_updates = {
+            **updates,
+            "processing_state": "idle",
+            "processing_task": "none",
+            "processing_message": None,
+            "processing_owner_token": None,
+            "processing_lease_expires_at": None,
+        }
+        return await self.update_job_status(job_id=job_id, updates=completed_updates)
+
+    async def mark_content_generation_failed(
+        self,
+        job_id: str,
+        *,
+        error_message: str,
+        finished_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Persist a terminal content-generation failure and keep the failure visible to the UI."""
+
+        failure_time = finished_at or datetime.now(timezone.utc)
+        return await self.update_job_status(
+            job_id=job_id,
+            updates={
+                "status": "content_generation_failed",
+                "processing_state": "failed",
+                "processing_task": "content_generation",
+                "processing_message": error_message,
+                "processing_owner_token": None,
+                "processing_lease_expires_at": None,
+                "processing_finished_at": failure_time,
+                "last_stage_finished_at": failure_time,
+                "last_error_message": error_message,
+            },
+        )
 
     async def update_job_status(
         self,
@@ -722,6 +927,15 @@ class WorkflowJobRepository:
                         "relative_path": str(candidate.get("relative_path") or ""),
                         "width": int(candidate["width"]) if candidate.get("width") is not None else None,
                         "height": int(candidate["height"]) if candidate.get("height") is not None else None,
+                        "imageforge_rank": int(candidate["imageforge_rank"]) if candidate.get("imageforge_rank") is not None else None,
+                        "quality_score": float(candidate["quality_score"]) if candidate.get("quality_score") is not None else None,
+                        "relevance_score": float(candidate["relevance_score"]) if candidate.get("relevance_score") is not None else None,
+                        "reason_codes": [
+                            str(code).strip()
+                            for code in list(candidate.get("reason_codes") or [])
+                            if str(code).strip()
+                        ],
+                        "is_recommended": bool(candidate.get("is_recommended")),
                         "is_selected": bool(candidate.get("is_selected")),
                         "created_at": candidate.get("created_at") or datetime.now(timezone.utc),
                     }
@@ -759,6 +973,15 @@ class WorkflowJobRepository:
                             relative_path=str(candidate.get("relative_path") or ""),
                             width=int(candidate["width"]) if candidate.get("width") is not None else None,
                             height=int(candidate["height"]) if candidate.get("height") is not None else None,
+                            imageforge_rank=int(candidate["imageforge_rank"]) if candidate.get("imageforge_rank") is not None else None,
+                            quality_score=float(candidate["quality_score"]) if candidate.get("quality_score") is not None else None,
+                            relevance_score=float(candidate["relevance_score"]) if candidate.get("relevance_score") is not None else None,
+                            reason_codes=[
+                                str(code).strip()
+                                for code in list(candidate.get("reason_codes") or [])
+                                if str(code).strip()
+                            ],
+                            is_recommended=bool(candidate.get("is_recommended")),
                             is_selected=bool(candidate.get("is_selected")),
                             created_at=candidate.get("created_at") or datetime.now(timezone.utc),
                         )
@@ -776,10 +999,17 @@ class WorkflowJobRepository:
                 ),
             )
 
-    async def update_image_candidate_selection(self, job_id: str, *, selected_relative_path: str) -> None:
+    async def update_image_candidate_selection(
+        self,
+        job_id: str,
+        *,
+        selected_relative_path: str | None = None,
+        selected_candidate_id: str | None = None,
+    ) -> None:
         """Persist which image candidate is currently selected."""
 
         normalized_path = str(selected_relative_path or "").strip()
+        normalized_candidate_id = str(selected_candidate_id or "").strip()
         if self._use_memory_backend():
             job = await self._memory.get_job(job_id)
             if job is None:
@@ -787,7 +1017,10 @@ class WorkflowJobRepository:
             next_candidates = []
             for candidate in list(job.get("image_candidates") or []):
                 updated = dict(candidate)
-                updated["is_selected"] = str(updated.get("relative_path") or "").strip() == normalized_path
+                if normalized_candidate_id:
+                    updated["is_selected"] = str(updated.get("candidate_id") or "").strip() == normalized_candidate_id
+                else:
+                    updated["is_selected"] = str(updated.get("relative_path") or "").strip() == normalized_path
                 next_candidates.append(updated)
             job["image_candidates"] = next_candidates
             await self._memory.merge_snapshot(job)
@@ -799,7 +1032,10 @@ class WorkflowJobRepository:
                     select(CardImageCandidate).where(CardImageCandidate.job_id == job_id)
                 )
                 for candidate in result.scalars().all():
-                    candidate.is_selected = str(candidate.relative_path or "").strip() == normalized_path
+                    if normalized_candidate_id:
+                        candidate.is_selected = str(candidate.candidate_id or "").strip() == normalized_candidate_id
+                    else:
+                        candidate.is_selected = str(candidate.relative_path or "").strip() == normalized_path
                 await session.commit()
         except (SQLAlchemyError, OSError) as exc:
             await self._handle_db_failure_and_maybe_fallback(
@@ -808,6 +1044,7 @@ class WorkflowJobRepository:
                 memory_action=lambda: self.update_image_candidate_selection(
                     job_id,
                     selected_relative_path=normalized_path,
+                    selected_candidate_id=normalized_candidate_id,
                 ),
             )
 
@@ -864,12 +1101,43 @@ class WorkflowJobRepository:
     async def append_audit_events(self, job_id: str, events: list[dict[str, Any]]) -> None:
         """Persist a list of audit events."""
 
-        for event in events:
-            await self.append_audit_event(
-                job_id,
-                event_type=str(event["event_type"]),
-                payload=dict(event["event_payload_json"]),
-                created_at=event["created_at"],
+        if not events:
+            return
+
+        if self._use_memory_backend():
+            job = await self._memory.get_job(job_id)
+            if job is None:
+                return
+            audit = list(job.get("audit_log") or [])
+            for event in events:
+                audit.append(
+                    {
+                        "event_type": str(event["event_type"]),
+                        "event_payload_json": dict(event["event_payload_json"]),
+                        "created_at": event["created_at"],
+                    }
+                )
+            job["audit_log"] = audit
+            await self._memory.merge_snapshot(job)
+            return
+
+        try:
+            async with async_session_factory() as session:
+                for event in events:
+                    session.add(
+                        CardAuditLog(
+                            job_id=job_id,
+                            event_type=str(event["event_type"]),
+                            event_payload_json=dict(event["event_payload_json"]),
+                            created_at=event["created_at"],
+                        )
+                    )
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            await self._handle_db_failure_and_maybe_fallback(
+                op_name="append_audit_events",
+                error=exc,
+                memory_action=lambda: self.append_audit_events(job_id, events),
             )
 
     async def _handle_db_failure_and_maybe_fallback(
@@ -909,7 +1177,14 @@ class WorkflowJobRepository:
         shortlists = sorted(job.shortlists, key=lambda item: (item.rank, item.id or 0))
         approvals = sorted(job.approvals, key=lambda item: item.id or 0)
         assets = sorted(job.assets, key=lambda item: item.id or 0)
-        image_candidates = sorted(job.image_candidates, key=lambda item: item.id or 0)
+        image_candidates = sorted(
+            job.image_candidates,
+            key=lambda item: (
+                item.imageforge_rank is None,
+                item.imageforge_rank if item.imageforge_rank is not None else 10**9,
+                item.id or 0,
+            ),
+        )
         judge_results = sorted(job.judge_results, key=lambda item: item.id or 0)
         audit_events = sorted(job.audit_events, key=lambda item: item.id or 0)
         shortlist_rank_by_candidate = {
@@ -924,6 +1199,13 @@ class WorkflowJobRepository:
             "job_id": job.job_id,
             "trace_id": job.trace_id,
             "status": job.status,
+            "processing_state": job.processing_state,
+            "processing_task": job.processing_task,
+            "processing_message": job.processing_message,
+            "processing_owner_token": job.processing_owner_token,
+            "processing_lease_expires_at": job.processing_lease_expires_at,
+            "processing_started_at": job.processing_started_at,
+            "processing_finished_at": job.processing_finished_at,
             "theme_name": job.theme_name,
             "tone_funny_pct": job.tone_funny_pct,
             "tone_emotion_pct": job.tone_emotion_pct,
@@ -944,6 +1226,7 @@ class WorkflowJobRepository:
             "imageforge_trace_id": job.imageforge_trace_id,
             "image_generation_status": job.image_generation_status,
             "image_generation_stage": job.image_generation_stage,
+            "recommended_image_candidate_id": job.recommended_image_candidate_id,
             "selected_image_candidate_id": job.selected_image_candidate_id,
             "selected_image_public_url": job.selected_image_public_url,
             "selected_image_relative_path": job.selected_image_relative_path,
@@ -998,6 +1281,11 @@ class WorkflowJobRepository:
                     "relative_path": item.relative_path,
                     "width": item.width,
                     "height": item.height,
+                    "imageforge_rank": item.imageforge_rank,
+                    "quality_score": float(item.quality_score) if item.quality_score is not None else None,
+                    "relevance_score": float(item.relevance_score) if item.relevance_score is not None else None,
+                    "reason_codes": list(item.reason_codes or []),
+                    "is_recommended": item.is_recommended,
                     "is_selected": item.is_selected,
                     "created_at": item.created_at,
                 }

@@ -75,6 +75,7 @@ class GeneratedCandidate(BaseModel):
     """One generated image candidate returned by ImageForge."""
 
     candidate_id: str
+    request_id: str
     provider_run_id: str
     provider: str
     model: str | None = None
@@ -84,6 +85,10 @@ class GeneratedCandidate(BaseModel):
     is_selected: bool
     width: int | None = None
     height: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    rank: int | None = None
     created_at: datetime
 
 
@@ -124,6 +129,7 @@ class GenerationResponse(BaseModel):
     ok: bool
     request_id: str
     trace_id: str | None = None
+    recommended_candidate_id: str | None = None
     results: list[ProviderExecution] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -147,6 +153,7 @@ class ImageRequestRecord(BaseModel):
     visual_style: str | None = None
     candidate_count: int | None = None
     notes: str | None = None
+    recommended_candidate_id: str | None = None
     request_payload_json: dict[str, Any] = Field(default_factory=dict)
     status: str
     stage: str
@@ -175,6 +182,10 @@ class ImageCandidateRecord(BaseModel):
     file_size_bytes: int | None = None
     width: int | None = None
     height: int | None = None
+    quality_score: float | None = None
+    relevance_score: float | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    rank: int | None = None
     is_selected: bool
     selected_at: datetime | None = None
     created_at: datetime

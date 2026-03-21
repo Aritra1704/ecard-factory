@@ -36,6 +36,8 @@ from app.schemas.workflow import (
     WorkflowContractResponse,
     WorkflowEndpointDefinition,
     WorkflowEndpointRole,
+    WorkflowProcessingState,
+    WorkflowProcessingTask,
     WorkflowStageDefinition,
     WorkflowStageOwner,
     JobListItemResponse,
@@ -50,6 +52,7 @@ from app.schemas.workflow import (
     StageRerunRequest,
     StageRerunResponse,
     StartJobRequest,
+    StartJobKickoffResponse,
     StartJobResponse,
     WORKFLOW_COMPATIBILITY_STAGE_LABELS,
 )
@@ -63,6 +66,9 @@ from app.services.workflow_card_renderer import (
 from app.storage import AssetStorage, get_asset_storage
 
 logger = logging.getLogger(__name__)
+
+CONTENT_GENERATION_QUEUED_MESSAGE = "Content creation queued"
+CONTENT_GENERATION_RUNNING_MESSAGE = "Content creation in progress"
 
 
 WORKFLOW_STAGE_DEFINITIONS: tuple[WorkflowStageDefinition, ...] = (
@@ -126,6 +132,12 @@ WORKFLOW_PRIMARY_ENDPOINTS: tuple[WorkflowEndpointDefinition, ...] = (
     ),
     WorkflowEndpointDefinition(
         method="POST",
+        path="/api/jobs/start-async",
+        role=WorkflowEndpointRole.PRIMARY,
+        summary="Create a job immediately and queue background content generation.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
         path="/api/jobs/{job_id}/select-text",
         role=WorkflowEndpointRole.PRIMARY,
         summary="Choose the text that owns the next image-generation step.",
@@ -166,9 +178,21 @@ WORKFLOW_SECONDARY_ENDPOINTS: tuple[WorkflowEndpointDefinition, ...] = (
     ),
     WorkflowEndpointDefinition(
         method="POST",
+        path="/api/jobs/create-daily-theme-job-async",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Queue a theme-scheduled job and return immediately for Studio progress tracking.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
         path="/api/jobs/start-from-theme",
         role=WorkflowEndpointRole.SECONDARY,
         summary="Start the same workflow from a manually selected Theme Factory entry.",
+    ),
+    WorkflowEndpointDefinition(
+        method="POST",
+        path="/api/jobs/start-from-theme-async",
+        role=WorkflowEndpointRole.SECONDARY,
+        summary="Queue a manually selected Theme Factory job and return immediately.",
     ),
     WorkflowEndpointDefinition(
         method="GET",
@@ -848,21 +872,64 @@ class WorkflowV1Service:
         self._assert_primary_workflow_action(job, action="select_image_asset")
 
     async def start_job(self, payload: StartJobRequest) -> StartJobResponse:
-        """Create a job, run stub generation/judging, persist state, and return approval payload."""
+        """Create a job and run content generation inline for compatibility."""
+
+        job_record = await self._create_initial_job_record(payload)
+        await self._repository.append_audit_events(
+            str(job_record["job_id"]),
+            self._build_audit_events(
+                job_id=str(job_record["job_id"]),
+                events=[
+                    ("api_start_called", {"endpoint": "/api/jobs/start"}),
+                    ("job_created", {"status": "job_created"}),
+                ],
+            ),
+        )
+        response = await self._run_content_generation_for_existing_job(
+            str(job_record["job_id"]),
+            raise_on_failure=True,
+        )
+        assert response is not None
+        return response
+
+    async def start_job_async(self, payload: StartJobRequest) -> StartJobKickoffResponse:
+        """Create a job immediately and queue background content generation."""
+
+        job_record = await self._create_initial_job_record(
+            payload,
+            status="content_generation_queued",
+            processing_state="queued",
+            processing_task="content_generation",
+            processing_message=CONTENT_GENERATION_QUEUED_MESSAGE,
+        )
+        job_id = str(job_record["job_id"])
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    ("api_start_async_called", {"endpoint": "/api/jobs/start-async"}),
+                    ("job_created", {"status": "job_created"}),
+                    ("content_generation_queued", {"processing_message": CONTENT_GENERATION_QUEUED_MESSAGE}),
+                ],
+            ),
+        )
+        return self._build_start_job_kickoff_response(job_id=job_id, status="content_generation_queued")
+
+    async def _create_initial_job_record(
+        self,
+        payload: StartJobRequest,
+        *,
+        status: str = "job_created",
+        processing_state: str = "idle",
+        processing_task: str = "none",
+        processing_message: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist the base job row before any expensive content work begins."""
 
         job_id = f"job_{uuid4().hex[:10]}"
         trace_id = f"trace_{uuid4().hex[:12]}"
         now = datetime.now(timezone.utc)
-
-        generation = await self._contentforge.generate_and_judge(payload)
-        winner = generation["winner"]
-        content_preview = str(winner["content_text"])
-        winner_model = str(winner["model"])
-        shortlist_seed = list(generation.get("shortlist") or [])
-        approval_message = (
-            f"Content approval required for {job_id}. Winner model: {winner_model}. "
-            "Review the message text shown on the job detail page, then approve or regenerate."
-        )
         output_spec = payload.output_spec.model_dump()
         output_spec["rendering"] = payload.rendering.model_dump()
         if payload.notes:
@@ -871,7 +938,7 @@ class WorkflowV1Service:
         job_record: dict[str, Any] = {
             "job_id": job_id,
             "trace_id": trace_id,
-            "status": "content_pending_approval",
+            "status": status,
             "theme_name": payload.theme_name,
             "tone_funny_pct": payload.tone_funny_pct,
             "tone_emotion_pct": payload.tone_emotion_pct,
@@ -881,8 +948,8 @@ class WorkflowV1Service:
             "cultural_context": payload.cultural_context,
             "output_spec": output_spec,
             "avoid_cliches": payload.avoid_cliches,
-            "content_preview": content_preview,
-            "winner_model": winner_model,
+            "content_preview": None,
+            "winner_model": None,
             "content_approval_status": "pending",
             "image_approval_status": "pending",
             "final_approval_status": "pending",
@@ -892,6 +959,7 @@ class WorkflowV1Service:
             "imageforge_trace_id": None,
             "image_generation_status": None,
             "image_generation_stage": None,
+            "recommended_image_candidate_id": None,
             "selected_image_candidate_id": None,
             "selected_image_public_url": None,
             "selected_image_relative_path": None,
@@ -902,15 +970,246 @@ class WorkflowV1Service:
             "final_asset_urls": None,
             "cards_per_theme": int(payload.cards_per_theme),
             "operator_notes": str(payload.notes or "").strip() or None,
+            "processing_state": processing_state,
+            "processing_task": processing_task,
+            "processing_message": processing_message,
+            "processing_owner_token": None,
+            "processing_lease_expires_at": None,
+            "processing_started_at": None,
+            "processing_finished_at": now if processing_state == "queued" else None,
             "retry_count": 0,
             "last_stage_started_at": now,
-            "last_stage_finished_at": now,
+            "last_stage_finished_at": None if processing_state == "queued" else now,
             "last_error_message": None,
             "created_at": now,
             "updated_at": now,
         }
 
-        candidate_records = [
+        creation_backend = await self._repository.create_job(job_record)
+        logger.info("workflow job created job_id=%s backend=%s", job_id, creation_backend)
+        return job_record
+
+    async def _run_content_generation_for_existing_job(
+        self,
+        job_id: str,
+        *,
+        raise_on_failure: bool = False,
+        already_running: bool = False,
+    ) -> StartJobResponse | None:
+        """Generate and persist content candidates/shortlist for one existing job."""
+
+        job = await self._load_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        started_at = datetime.now(timezone.utc)
+        if already_running and job.get("processing_started_at"):
+            started_at = self._coerce_datetime(job.get("processing_started_at"))
+        else:
+            updated = await self._repository.update_job_status(
+                job_id=job_id,
+                updates={
+                    "status": "content_generation_in_progress",
+                    "processing_state": "running",
+                    "processing_task": "content_generation",
+                    "processing_message": CONTENT_GENERATION_RUNNING_MESSAGE,
+                    "processing_started_at": started_at,
+                    "processing_finished_at": None,
+                    "last_stage_started_at": started_at,
+                    "last_stage_finished_at": None,
+                    "last_error_message": None,
+                },
+            )
+            if updated is not None:
+                job = updated
+
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("content_generation_started", {"processing_message": CONTENT_GENERATION_RUNNING_MESSAGE})],
+            ),
+        )
+
+        try:
+            payload = self._build_start_payload_from_job(job)
+            generation = await self._contentforge.generate_and_judge(payload)
+        except Exception as exc:  # noqa: BLE001
+            await self._finalize_content_generation_failure(job_id=job_id, started_at=started_at, error=exc)
+            if raise_on_failure:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Content generation failed for {job_id}: {exc}",
+                ) from exc
+            return None
+
+        return await self._finalize_content_generation_success(
+            job_id=job_id,
+            started_at=started_at,
+            generation=generation,
+        )
+
+    async def claim_and_process_next_content_job(self) -> bool:
+        """Claim one queued content job, process it, and return whether work was found."""
+
+        owner_token = f"content_worker_{uuid4().hex[:10]}"
+        claimed = await self._repository.claim_next_content_generation_job(
+            owner_token=owner_token,
+            lease_seconds=int(settings.workflow_async_content_lease_seconds),
+        )
+        if claimed is None:
+            return False
+        await self._run_content_generation_for_existing_job(
+            str(claimed["job_id"]),
+            already_running=True,
+            raise_on_failure=False,
+        )
+        return True
+
+    async def recover_stale_content_generation_jobs(self) -> int:
+        """Requeue stale running content-generation jobs on startup."""
+
+        reset_count = await self._repository.reset_stale_content_generation_jobs()
+        if reset_count > 0:
+            logger.warning("workflow content-generation jobs requeued stale_count=%s", reset_count)
+        return reset_count
+
+    async def _finalize_content_generation_success(
+        self,
+        *,
+        job_id: str,
+        started_at: datetime,
+        generation: dict[str, Any],
+    ) -> StartJobResponse:
+        """Persist successful content-generation output and return the sync response payload."""
+
+        winner = generation["winner"]
+        winner_model = str(winner["model"])
+        content_preview = str(winner["content_text"])
+        candidate_records = self._build_content_candidate_records(generation)
+        shortlist_seed = list(generation.get("shortlist") or [])
+        approval_message = (
+            f"Content approval required for {job_id}. Winner model: {winner_model}. "
+            "Review the message text shown on the job detail page, then approve or regenerate."
+        )
+
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[("contentforge_request_sent", {"stub": bool(generation.get("used_stub", True))})],
+            ),
+        )
+        await self._repository.save_content_candidates(job_id, candidate_records, replace_existing=True)
+        persisted_job = await self._load_job(job_id)
+        shortlist_rows = self._build_shortlist_rows(
+            persisted_candidates=list(persisted_job.get("candidates") or []) if persisted_job else [],
+            shortlist_seed=shortlist_seed,
+        )
+        await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
+        await self._repository.save_judge_results(
+            job_id,
+            self._build_judge_result_payload(
+                generation=generation,
+                candidate_records=candidate_records,
+                winner_model=winner_model,
+            ),
+        )
+
+        finished_at = datetime.now(timezone.utc)
+        updated = await self._repository.mark_content_generation_completed(
+            job_id,
+            updates={
+                "status": "content_pending_approval",
+                "content_preview": content_preview,
+                "winner_model": winner_model,
+                "content_approval_status": "pending",
+                "image_approval_status": "pending",
+                "final_approval_status": "pending",
+                "processing_finished_at": finished_at,
+                "last_stage_started_at": started_at,
+                "last_stage_finished_at": finished_at,
+                "last_error_message": None,
+            },
+        )
+        assert updated is not None
+
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    (
+                        "contentforge_response_received",
+                        {
+                            "candidate_count": len(candidate_records),
+                            "source": str(generation.get("source") or "contentforge_stub"),
+                        },
+                    ),
+                    ("shortlist_created", {"shortlist_count": len(shortlist_seed)}),
+                    ("winner_selected", {"winner_model": winner_model}),
+                    (
+                        "content_generation_completed",
+                        {
+                            "candidate_count": len(candidate_records),
+                            "shortlist_count": len(shortlist_seed),
+                            "winner_model": winner_model,
+                        },
+                    ),
+                    ("content_approval_requested", {"approval_message": approval_message}),
+                ],
+            ),
+        )
+
+        return StartJobResponse(
+            job_id=job_id,
+            status="content_pending_approval",
+            canonical_stage=WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
+            content_preview=content_preview,
+            winner_model=winner_model,
+            approval_message=approval_message,
+            candidate_pool_count=len(candidate_records),
+            shortlist_count=len(shortlist_seed),
+        )
+
+    async def _finalize_content_generation_failure(
+        self,
+        *,
+        job_id: str,
+        started_at: datetime,
+        error: Exception,
+    ) -> None:
+        """Persist content-generation failure so the UI can surface it immediately."""
+
+        error_message = f"Content creation failed: {error}"
+        finished_at = datetime.now(timezone.utc)
+        await self._repository.mark_content_generation_failed(
+            job_id,
+            error_message=error_message,
+            finished_at=finished_at,
+        )
+        await self._repository.append_audit_events(
+            job_id,
+            self._build_audit_events(
+                job_id=job_id,
+                events=[
+                    (
+                        "content_generation_failed",
+                        {
+                            "error": str(error),
+                            "started_at": started_at.isoformat(),
+                            "finished_at": finished_at.isoformat(),
+                        },
+                    ),
+                ],
+            ),
+        )
+
+    @staticmethod
+    def _build_content_candidate_records(generation: dict[str, Any]) -> list[dict[str, Any]]:
+        """Normalize ContentForge candidates into persistence rows."""
+
+        return [
             {
                 "model": str(candidate["model"]),
                 "backend": str(candidate["backend"]),
@@ -929,60 +1228,40 @@ class WorkflowV1Service:
             for candidate in generation["candidates"]
         ]
 
-        audit_events = self._build_audit_events(
-            job_id=job_id,
-            events=[
-                ("api_start_called", {"endpoint": "/api/jobs/start"}),
-                ("job_created", {"status": "content_pending_approval"}),
-                ("contentforge_request_sent", {"stub": bool(generation.get("used_stub", True))}),
-                (
-                    "contentforge_response_received",
-                    {
-                        "candidate_count": len(candidate_records),
-                        "source": str(generation.get("source") or "contentforge_stub"),
-                    },
-                ),
-                ("shortlist_created", {"shortlist_count": len(shortlist_seed)}),
-                ("winner_selected", {"winner_model": winner_model}),
-                ("content_approval_requested", {"approval_message": approval_message}),
-            ],
-        )
+    @staticmethod
+    def _build_judge_result_payload(
+        *,
+        generation: dict[str, Any],
+        candidate_records: list[dict[str, Any]],
+        winner_model: str,
+    ) -> dict[str, Any]:
+        """Build judge metadata payload for repository persistence."""
 
-        creation_backend = await self._repository.create_job(job_record)
-        await self._repository.save_content_candidates(job_id, candidate_records, replace_existing=True)
-        persisted_job = await self._load_job(job_id)
-        shortlist_rows = self._build_shortlist_rows(
-            persisted_candidates=list(persisted_job.get("candidates") or []) if persisted_job else [],
-            shortlist_seed=shortlist_seed,
-        )
-        await self._repository.save_shortlist(job_id, shortlist_rows, replace_existing=True)
-        await self._repository.save_judge_results(
-            job_id,
-            {
-                "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
-                "judge_model": str(generation.get("judge_model") or "stub-judge"),
-                "winner_model": winner_model,
-                "leaderboard_json": generation.get("leaderboard_json")
-                or {
-                    "models": [item["model"] for item in candidate_records],
-                    "shortlist": shortlist_seed,
-                },
-                "pairwise_json": generation.get("pairwise_json") or {},
-                "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
+        return {
+            "judge_provider": str(generation.get("judge_provider") or "contentforge_stub"),
+            "judge_model": str(generation.get("judge_model") or "stub-judge"),
+            "winner_model": winner_model,
+            "leaderboard_json": generation.get("leaderboard_json")
+            or {
+                "models": [item["model"] for item in candidate_records],
+                "shortlist": generation.get("shortlist") or [],
             },
-        )
-        await self._repository.append_audit_events(job_id, audit_events)
-        logger.info("workflow job created job_id=%s backend=%s", job_id, creation_backend)
+            "pairwise_json": generation.get("pairwise_json") or {},
+            "reason_summary": str(generation.get("reason_summary") or generation["judge_summary"]),
+        }
 
-        return StartJobResponse(
+    @staticmethod
+    def _build_start_job_kickoff_response(*, job_id: str, status: str) -> StartJobKickoffResponse:
+        """Return the public async kickoff payload after the job is enqueued."""
+
+        return StartJobKickoffResponse(
             job_id=job_id,
-            status="content_pending_approval",
-            canonical_stage=WorkflowCanonicalStage.TEXT_CANDIDATES_READY,
-            content_preview=content_preview,
-            winner_model=winner_model,
-            approval_message=approval_message,
-            candidate_pool_count=len(candidate_records),
-            shortlist_count=len(shortlist_seed),
+            status=status,
+            canonical_stage=WorkflowCanonicalStage.JOB_CREATED,
+            current_stage=WORKFLOW_COMPATIBILITY_STAGE_LABELS[WorkflowCanonicalStage.JOB_CREATED],
+            processing_state=WorkflowProcessingState.QUEUED,
+            processing_task=WorkflowProcessingTask.CONTENT_GENERATION,
+            processing_message=CONTENT_GENERATION_QUEUED_MESSAGE,
         )
 
     async def approve_content(self, job_id: str) -> StageActionResponse:
@@ -1866,6 +2145,13 @@ class WorkflowV1Service:
                     "content_approval_status": "pending",
                     "image_approval_status": "pending",
                     "final_approval_status": "pending",
+                    "processing_state": "idle",
+                    "processing_task": "none",
+                    "processing_message": None,
+                    "processing_owner_token": None,
+                    "processing_lease_expires_at": None,
+                    "processing_started_at": started_at,
+                    "processing_finished_at": finished_at,
                     "image_prompt": None,
                     "image_preview_url": None,
                     "imageforge_request_id": None,
@@ -2457,6 +2743,15 @@ class WorkflowV1Service:
                     canonical_stage=self._resolve_canonical_stage(row),
                     current_stage=self._resolve_current_stage(row),
                     status=status_value,
+                    processing_state=str(row.get("processing_state") or "idle"),
+                    processing_task=str(row.get("processing_task") or "none"),
+                    processing_message=str(row.get("processing_message") or "") or None,
+                    processing_started_at=self._coerce_datetime(row.get("processing_started_at"), fallback=None)
+                    if row.get("processing_started_at")
+                    else None,
+                    processing_finished_at=self._coerce_datetime(row.get("processing_finished_at"), fallback=None)
+                    if row.get("processing_finished_at")
+                    else None,
                     output_spec=row.get("output_spec") if isinstance(row.get("output_spec"), dict) else {},
                     content_preview=str(row.get("content_preview") or "") or None,
                     image_preview_url=str(row.get("image_preview_url") or "") or None,
