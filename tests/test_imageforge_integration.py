@@ -126,9 +126,9 @@ def build_generation_response(schemas_module, *, request_id: str, trace_id: str,
                 model="sd_xl_base_1.0",
                 ok=True,
                 latency_ms=42,
-                prompt_used="soft festive reusable backdrop",
+                prompt_used="festive reusable spot illustration",
                 negative_prompt_used="readable text, poster, greeting card layout",
-                workflow_name="ecard_sdxl_basic.json",
+                workflow_name="ecard_spot_illustration_v1.json",
                 candidates=candidates,
             )
         ],
@@ -157,7 +157,7 @@ def build_select_response(schemas_module, *, request_id: str, candidate_id: str,
             provider="comfyui",
             model="sd_xl_base_1.0",
             candidate_index=candidate_index,
-            prompt_used="soft festive reusable backdrop",
+            prompt_used="festive reusable spot illustration",
             negative_prompt_used="readable text, poster, greeting card layout",
             relative_path=f"candidates/{request_id}/{candidate_id}.png",
             public_url=public_url,
@@ -247,7 +247,7 @@ class FakeImageForgeClient:
                         provider=candidate.provider,
                         model=candidate.model,
                         candidate_index=candidate.candidate_index,
-                        prompt_used="soft festive reusable backdrop",
+                        prompt_used="festive reusable spot illustration",
                         negative_prompt_used="readable text, poster, greeting card layout",
                         relative_path=candidate.relative_path,
                         public_url=candidate.public_url,
@@ -278,17 +278,18 @@ class FakeImageForgeClient:
             theme_bucket="occasion",
             cultural_context="indian",
             selected_text="Warm Holi wishes.",
-            workflow_type="ecard_background",
-            asset_type="background_full",
+            workflow_type="ecard_spot_illustration_v1",
+            asset_role="spot_illustration",
+            asset_type="hero_illustration",
             style_profile="soft_color_illustration",
             scene_spec={
-                "subject": "Holi-inspired celebratory backdrop",
-                "composition": "full-bleed reusable background",
-                "background_intent": "bright Indian celebration mood with room for readable overlay text",
+                "subject": "Holi-inspired color celebration illustration",
+                "composition": "single focal subject with generous negative space",
+                "background_intent": "bright Indian celebration mood with soft surrounding space for card copy",
             },
             render_spec={"width": 640, "height": 768, "orientation": "portrait", "quality_profile": "draft"},
             creative_direction={
-                "motif_hint": "festive reusable backdrop with cultural ornament and layered celebration energy",
+                "motif_hint": "festive reusable spot illustration with cultural ornament and clean layout space",
                 "subject_hint": "festive color burst with rangoli-inspired ornament",
                 "visual_keywords": ["powder color bloom", "joyful movement", "Indian festive detail"],
                 "avoid_keywords": ["readable text", "embedded typography"],
@@ -350,8 +351,9 @@ def test_imageforge_mapper_builds_expected_payload(configured_env: dict[str, str
         candidate_count=4,
     )
 
-    assert payload.workflow_type == "ecard_background"
-    assert payload.asset_type == "background_full"
+    assert payload.workflow_type == "ecard_spot_illustration_v1"
+    assert payload.asset_role == "spot_illustration"
+    assert payload.asset_type == "hero_illustration"
     assert payload.style_profile == "soft_color_illustration"
     assert payload.theme_bucket == "occasion"
     assert payload.selected_text == "Warm Holi wishes and colorful joy."
@@ -360,7 +362,7 @@ def test_imageforge_mapper_builds_expected_payload(configured_env: dict[str, str
     assert payload.creative_direction.motif_hint
     assert payload.creative_direction.subject_hint
     assert "readable text" in payload.creative_direction.avoid_keywords
-    assert payload.scene_spec.subject == "Holi-inspired celebratory backdrop"
+    assert payload.scene_spec.subject == "Holi-inspired color celebration illustration"
     assert payload.render_spec.orientation == "portrait"
     assert payload.render_spec.width == 640
     assert payload.render_spec.height == 768
@@ -400,11 +402,13 @@ def test_generate_image_assets_endpoint_with_mocked_imageforge(configured_env: d
         assert body["image_generation_stage"] == "completed"
         assert body["can_generate"] is True
         assert body["blocking_reason"] is None
+        assert body["asset_role"] == "spot_illustration"
         assert body["candidate_count"] == 3
         assert body["recommended_candidate_id"] == "cand_1"
         assert len(body["candidates"]) == 3
         assert body["candidates"][0]["rank"] == 1
         assert body["candidates"][0]["candidate_id"] == "cand_1"
+        assert body["candidates"][0]["asset_role"] == "spot_illustration"
         assert body["candidates"][0]["quality_score"] == 9.6
         assert body["candidates"][0]["relevance_score"] == 9.8
         assert body["candidates"][0]["reason_codes"] == [
@@ -416,7 +420,7 @@ def test_generate_image_assets_endpoint_with_mocked_imageforge(configured_env: d
             "orientation_match",
         ]
         assert body["candidates"][0]["is_recommended"] is True
-        assert body["candidates"][0]["prompt_used"] == "soft festive reusable backdrop"
+        assert body["candidates"][0]["prompt_used"] == "festive reusable spot illustration"
         assert body["candidates"][0]["negative_prompt_used"] == "readable text, poster, greeting card layout"
 
         debug_response = client.get(f"/api/jobs/{job_id}")
@@ -436,7 +440,7 @@ def test_generate_image_assets_endpoint_with_mocked_imageforge(configured_env: d
             "orientation_match",
         ]
         assert debug_payload["image_candidates"][0]["is_recommended"] is True
-        assert debug_payload["image_candidates"][0]["prompt_used"] == "soft festive reusable backdrop"
+        assert debug_payload["image_candidates"][0]["prompt_used"] == "festive reusable spot illustration"
         assert debug_payload["image_candidates"][0]["negative_prompt_used"] == "readable text, poster, greeting card layout"
 
     main_module.app.dependency_overrides.clear()
@@ -548,7 +552,7 @@ def test_image_candidate_metadata_persists_locally(configured_env: dict[str, str
         assert stored["provider_run_id"].startswith("prun_ifg_req_001")
         assert stored["provider"] == "comfyui"
         assert stored["model"] == "sd_xl_base_1.0"
-        assert stored["prompt_used"] == "soft festive reusable backdrop"
+        assert stored["prompt_used"] == "festive reusable spot illustration"
         assert stored["negative_prompt_used"] == "readable text, poster, greeting card layout"
         assert stored["width"] == 640
         assert stored["height"] == 768
@@ -600,14 +604,16 @@ def test_get_image_assets_endpoint_returns_ui_ready_structure(configured_env: di
         assert body["candidate_count"] == 3
         assert body["recommended_candidate_id"] == "cand_1"
         assert body["selected_image_candidate_id"] == "cand_2"
+        assert body["asset_role"] == "spot_illustration"
         assert body["selected_image_public_url"].endswith("/cand_2.png")
         assert body["selected_candidate"]["candidate_id"] == "cand_2"
         assert body["candidates"][1]["candidate_id"] == "cand_2"
+        assert body["candidates"][1]["asset_role"] == "spot_illustration"
         assert body["candidates"][1]["rank"] == 2
         assert body["candidates"][1]["provider"] == "comfyui"
         assert body["candidates"][1]["model"] == "sd_xl_base_1.0"
         assert body["candidates"][1]["provider_run_id"].startswith("prun_ifg_req_001")
-        assert body["candidates"][1]["prompt_used"] == "soft festive reusable backdrop"
+        assert body["candidates"][1]["prompt_used"] == "festive reusable spot illustration"
         assert body["candidates"][1]["width"] == 640
         assert body["candidates"][1]["height"] == 768
         assert body["candidates"][1]["quality_score"] == 9.4
@@ -686,12 +692,34 @@ def test_canonical_stage0_flow_runs_start_select_generate_select_render_export(
         assert render_body["current_stage"] == "final_card_ready"
         assert render_body["final_preview_url"].endswith("_content_preview.png")
 
+        render_assets = client.get(f"/api/jobs/{job_id}/assets")
+        assert render_assets.status_code == 200
+        render_assets_by_type = {
+            asset["asset_type"]: asset
+            for asset in render_assets.json()
+            if asset["asset_type"] in {"final_preview"}
+        }
+        assert render_assets_by_type["final_preview"]["version"] == "illustration_top_text_bottom"
+
         approve_final_response = client.post(f"/api/jobs/{job_id}/approve-final")
         assert approve_final_response.status_code == 200
         approve_final_body = approve_final_response.json()
         assert approve_final_body["canonical_stage"] == "export_ready"
         assert approve_final_body["final_asset_urls"]["png"].endswith(f"/{job_id}_final.png")
         assert approve_final_body["final_asset_urls"]["pdf"].endswith(f"/{job_id}_final.pdf")
+
+        exported_assets = client.get(f"/api/jobs/{job_id}/assets")
+        assert exported_assets.status_code == 200
+        exported_versions = {
+            asset["asset_type"]: asset["version"]
+            for asset in exported_assets.json()
+            if asset["asset_type"] in {"final_preview", "final_png", "final_pdf"}
+        }
+        assert exported_versions == {
+            "final_preview": "illustration_top_text_bottom",
+            "final_png": "illustration_top_text_bottom",
+            "final_pdf": "illustration_top_text_bottom",
+        }
 
         final_debug = client.get(f"/api/jobs/{job_id}")
         assert final_debug.status_code == 200

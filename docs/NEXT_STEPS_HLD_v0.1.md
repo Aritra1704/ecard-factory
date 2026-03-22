@@ -1,19 +1,22 @@
-# Next Steps HLD: eCardFactory Agentic Creative Platform
+# Next Steps HLD: eCard MVP First Local Creative Platform
 
 Document Version: `v0.1`
-Updated: `2026-03-18`
-Status: `Draft`
+Updated: `2026-03-22`
+Status: `Working Snapshot`
 
 ## 1. Purpose
 
 This document defines the high-level design for the next transformation stage of the platform.
 
-The near-term goal is not a fully autonomous multi-agent system. The near-term goal is:
+The near-term goal is not a fully autonomous multi-agent system or a broad multi-app shell. The near-term goal is:
 
+- keep `ecard-factory` as the first product app and stabilize its 1-job flow
+- treat `contentforge` and `imageforge` as shared creative engines for future sibling apps
 - stabilize the current 1-job flow
 - move UI into a separate repo directory
 - keep final card assembly inside the platform using Pillow
 - prepare the system for a controlled agentic supervisor later
+- stay local-first until revenue justifies paid providers
 
 Initial assembly decision:
 
@@ -25,6 +28,8 @@ Initial assembly decision:
 In scope:
 
 - canonical workflow for text, image, composition, and export
+- local-first runtime using Ollama plus ImageForge/ComfyUI as the primary path
+- illustration-first asset generation for eCards
 - UI extraction out of `ecard-factory`
 - platform boundaries for agentic evolution
 - phase-based delivery plan
@@ -36,6 +41,7 @@ Out of scope for the initial redesign:
 - free-form infinite canvas editor
 - multi-agent autonomous runtime as the production default
 - moving final composition to an external design tool
+- building StoryFactory or ThoughtFactory inside `ecard-factory`
 
 ## 3. Current Problem Summary
 
@@ -49,6 +55,8 @@ Current issues:
 
 - multiple workflow styles coexist
 - image generation is split between old internal paths and ImageForge-backed paths
+- image outputs skew toward full-card backdrops instead of reusable spot illustrations
+- local mode still drifts toward paid-provider assumptions in some settings/contracts
 - UI is embedded inside `ecard-factory`
 - preview/export quality is coupled to backend internals
 - the system is not yet structured for a safe agentic loop
@@ -65,6 +73,8 @@ The redesign should follow these rules:
 6. Job creation returns immediately; expensive generation runs in the background.
 7. Agentic behavior remains bounded and auditable.
 8. Quality scoring happens before autonomy expands.
+9. `contentforge` and `imageforge` are shared engines; future StoryFactory/ThoughtFactory apps should be sibling orchestrators, not extra flows inside `ecard-factory`.
+10. eCard assets are illustration-first by default; soft backgrounds remain opt-in.
 
 ## 5. Target High-Level Architecture
 
@@ -81,7 +91,7 @@ Responsibilities:
 - audit log, retries, and stage status
 - agent runtime later
 
-### ContentForge v2
+### ContentForge Shared Engine
 
 Responsibilities:
 
@@ -89,8 +99,11 @@ Responsibilities:
 - dedupe and incompleteness filtering
 - ranking and shortlist scoring
 - structured candidate output
+- thin shared contract for `app_id`, `content_type`, and `creative_brief`
+- prompt-pack routing across local models
+- fixed golden-set evaluation briefs for regression tracking
 
-### ImageForge v2
+### ImageForge Shared Engine
 
 Responsibilities:
 
@@ -98,6 +111,8 @@ Responsibilities:
 - image candidate filtering and ranking
 - image relevance metadata
 - selected asset persistence
+- asset roles for `spot_illustration`, `background`, and `motif`
+- preset workflows for `ecard_spot_illustration_v1` and `ecard_soft_background_v1`
 
 ### Composition Layer
 
@@ -201,10 +216,12 @@ Pillow is the correct initial choice because it is:
 
 Initial composition model:
 
-- template-driven backgrounds
-- selected image used as background or panel asset
+- template-driven gradients plus optional soft backgrounds
+- selected image used as a reusable illustration asset by default
 - structured text blocks
-- fixed layout zones with editable alignment
+- two deterministic eCard layouts:
+  - `illustration_top_text_bottom`
+  - `text_left_illustration_right`
 - deterministic font and spacing rules
 - export parity between preview and final asset
 
@@ -273,14 +290,16 @@ Core shared components:
 
 High-level estimate for the target flow:
 
-| Level | Scope | Estimate |
+| Stage | Scope | Estimate |
 | --- | --- | --- |
-| Level 0 | workflow stabilization only | `3-5 working days` |
-| Level 1 | text + image stage hardening | `4-6 working days` |
-| Level 2 | Pillow composition redesign | `2-4 working days` |
-| Level 3 | standalone UI extraction | `completed baseline`, additional hardening `1-2 working days` |
-| Level 4 | quality layer and stage scoring | `2-3 working days` |
-| Level 5 | bounded central agent | `3-5 working days` |
+| Stage 0 | workflow stabilization only | `3-5 working days` |
+| Stage 1 | content redesign | `2-3 working days` |
+| Stage 2 | image redesign | `2-3 working days` |
+| Stage 2A | async kickoff and background orchestration | `3-4 working days` |
+| Stage 3 | Pillow composition redesign | `2-4 working days` |
+| Stage 4 | quality layer and stage scoring | `2-3 working days` |
+| Stage 5 | standalone UI extraction | `completed baseline`, additional hardening `1-2 working days` |
+| Stage 6 | bounded central agent | `3-5 working days` |
 
 Practical total for a stable target flow without the central agent:
 
@@ -290,7 +309,7 @@ Practical total including bounded agentic supervision:
 
 - `15-20 working days`
 
-## 12. Current Stage Note
+## 12. Current Execution Snapshot
 
 Stage 5 UI split baseline is already implemented:
 
@@ -299,9 +318,29 @@ Stage 5 UI split baseline is already implemented:
 - `ecard-factory` no longer needs to build the frontend during backend startup
 - legacy embedded console remains as a temporary fallback
 
-The next architectural stage after this document update is:
+Current verified state:
 
-- Stage 1: Content Stage Redesign
+- Stage 0 complete
+- Stage 1 mechanically complete, but quality hardening is still required for prompt packs, tone diversity, and shortlist usefulness
+- Stage 2 mechanically complete, but quality hardening is still required for illustration fit and negative-space safety
+- Stage 2A implemented in code, regression-tested, and validated against the live local stack on `2026-03-22`
+- Stage 3 composition redesign started on `2026-03-22`
+  - first slice implemented: explicit layout spec inside the Pillow renderer
+  - final preview and final export now render from the same layout-spec path
+  - deterministic final layouts are now `illustration_top_text_bottom` and `text_left_illustration_right`
+  - selected image is now treated as an illustration block instead of an implicit full-card background
+  - final preview/PNG/PDF asset rows now carry the layout version id
+  - targeted regression slice is green after the refactor
+
+Next execution gate before Stage 3:
+
+- closed on `2026-03-22` through a live local-stack runtime pass
+- confirmed `POST /api/jobs/start-async` returns the immediate queued payload
+- confirmed shortlist data arrives asynchronously and text is not auto-selected
+- confirmed `/api/jobs/{job_id}/image-assets/generate` returns ranked candidates with recommendation metadata and no auto-selected image
+- confirmed manual image selection, `render-final`, and `approve-final` complete the canonical flow through `export_ready`
+
+Stage 3 composition work is now unblocked.
 
 ## 13. Non-Deviation Guardrails
 
@@ -314,14 +353,14 @@ To avoid drifting away from the proposed architecture:
 - do not mix UI framework migration with broad backend refactors in the same step
 - do not allow unbounded auto-regenerate loops
 - do not remove working API contracts without replacement mapping
+- keep legacy image routes frozen as compatibility-only; remove them only in a dedicated cleanup pass after Stage 3 stabilizes and the canonical `/image-assets/*` path is the only confirmed caller path
 
 ## 14. Immediate Recommendation
 
 Start with this sequence:
 
-1. finalize HLD and LLD
-2. keep `content_engine_ui` as the standalone UI path
-3. keep Pillow as the only composition path
-4. stabilize the deterministic workflow
-5. harden content and image quality
-6. add agentic supervision later
+1. use `docs/NEXT_CHAT_HANDOFF_v0.1.md` as the execution snapshot in the next session
+2. keep the next execution window focused on eCard quality hardening only
+3. preserve the already-validated async kickoff and canonical ImageForge path while tuning prompt/image quality
+4. defer StoryFactory and ThoughtFactory until the eCard MVP is commercially credible
+5. keep quality-layer and bounded-agent work for later stages

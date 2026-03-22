@@ -23,19 +23,23 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # External service credentials are required because the application cannot
-    # operate correctly without them.
+    # Paid-provider integrations are optional in local-first mode and can be
+    # enabled later without changing the rest of the stack.
     database_url: str = Field(..., validation_alias="DATABASE_URL")
     railway_database_url: str | None = Field(
         default=None,
         validation_alias="RAILWAY_DATABASE_URL",
     )
-    openai_api_key: str = Field(..., validation_alias="OPENAI_API_KEY")
-    groq_api_key: str = Field(..., validation_alias="GROQ_API_KEY")
-    telegram_bot_token: str = Field(..., validation_alias="TELEGRAM_BOT_TOKEN")
-    telegram_chat_id: str = Field(..., validation_alias="TELEGRAM_CHAT_ID")
-    canva_client_id: str = Field(..., validation_alias="CANVA_CLIENT_ID")
-    canva_client_secret: str = Field(..., validation_alias="CANVA_CLIENT_SECRET")
+    openai_enabled: bool = Field(default=False, validation_alias="OPENAI_ENABLED")
+    groq_enabled: bool = Field(default=False, validation_alias="GROQ_ENABLED")
+    telegram_enabled: bool = Field(default=False, validation_alias="TELEGRAM_ENABLED")
+    canva_enabled: bool = Field(default=False, validation_alias="CANVA_ENABLED")
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
+    groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+    telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", validation_alias="TELEGRAM_CHAT_ID")
+    canva_client_id: str = Field(default="", validation_alias="CANVA_CLIENT_ID")
+    canva_client_secret: str = Field(default="", validation_alias="CANVA_CLIENT_SECRET")
 
     # Operational settings keep sane defaults for local development while
     # remaining fully configurable in production.
@@ -153,6 +157,18 @@ class Settings(BaseSettings):
         if not normalized:
             raise ValueError("CONTENTFORGE_BASE_URL cannot be empty")
         return normalized
+
+    @field_validator(
+        "openai_api_key",
+        "groq_api_key",
+        "telegram_bot_token",
+        "telegram_chat_id",
+        "canva_client_id",
+        "canva_client_secret",
+    )
+    @classmethod
+    def _strip_optional_secrets(cls, value: str) -> str:
+        return value.strip()
 
     @property
     def active_db_url(self) -> str:

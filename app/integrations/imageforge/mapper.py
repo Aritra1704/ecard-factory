@@ -24,37 +24,40 @@ _TEXT_AVOID_KEYWORDS = [
 
 _BUCKET_PROFILES: dict[str, dict[str, Any]] = {
     "everyday": {
-        "workflow_type": "ecard_background",
-        "asset_type": "background_full",
+        "workflow_type": "ecard_spot_illustration_v1",
+        "asset_role": "spot_illustration",
+        "asset_type": "hero_illustration",
         "style_profile": "soft_color_illustration",
-        "motif_hint": "soft reusable greeting-card backdrop with subtle decorative accents",
-        "subject_hint": "single symbolic focal element",
-        "visual_keywords": ["gentle depth", "clean negative space", "soft lighting"],
-        "scene_subject": "stylized celebratory backdrop",
-        "scene_composition": "full-bleed reusable background",
-        "scene_background_intent": "warm everyday greeting-card atmosphere",
+        "motif_hint": "reusable ecard spot illustration with soft atmosphere and clear copy space",
+        "subject_hint": "single symbolic focal subject",
+        "visual_keywords": ["gentle depth", "clear negative space", "soft lighting", "illustration safe composition"],
+        "scene_subject": "stylized symbolic illustration subject",
+        "scene_composition": "centered subject with generous negative space",
+        "scene_background_intent": "soft supporting backdrop, not a full card design",
     },
     "occasion": {
-        "workflow_type": "ecard_background",
-        "asset_type": "background_full",
+        "workflow_type": "ecard_spot_illustration_v1",
+        "asset_role": "spot_illustration",
+        "asset_type": "hero_illustration",
         "style_profile": "soft_color_illustration",
-        "motif_hint": "festive reusable backdrop with cultural ornament and layered celebration energy",
-        "subject_hint": "symbolic festive centerpiece",
-        "visual_keywords": ["celebratory accents", "ornamental details", "warm ambient glow"],
-        "scene_subject": "festive decorative backdrop",
-        "scene_composition": "full-bleed reusable background",
-        "scene_background_intent": "culturally aware celebration setting without embedded text",
+        "motif_hint": "festive reusable spot illustration with cultural ornament and clean layout space",
+        "subject_hint": "symbolic festive centerpiece illustration",
+        "visual_keywords": ["celebratory accents", "ornamental details", "warm ambient glow", "clear copy space"],
+        "scene_subject": "festive symbolic illustration",
+        "scene_composition": "single focal subject with generous negative space",
+        "scene_background_intent": "culturally aware soft backdrop without poster layout or embedded text",
     },
     "current_event": {
-        "workflow_type": "supporting_scene",
+        "workflow_type": "ecard_spot_illustration_v1",
+        "asset_role": "spot_illustration",
         "asset_type": "hero_illustration",
         "style_profile": "flat_illustration",
-        "motif_hint": "editorial-style symbolic visual asset without text or poster layout",
+        "motif_hint": "editorial-style symbolic spot illustration without text or poster layout",
         "subject_hint": "single symbolic subject",
-        "visual_keywords": ["clean silhouette", "focused subject", "non-textual storytelling"],
-        "scene_subject": "editorial symbolic scene",
-        "scene_composition": "supporting scene",
-        "scene_background_intent": "contextual atmosphere without headlines or layout chrome",
+        "visual_keywords": ["clean silhouette", "focused subject", "non-textual storytelling", "negative space"],
+        "scene_subject": "editorial symbolic illustration",
+        "scene_composition": "single subject with breathing room",
+        "scene_background_intent": "contextual atmosphere without headlines, layout chrome, or full-card framing",
     },
 }
 
@@ -62,38 +65,38 @@ _THEME_KEY_OVERRIDES: dict[str, dict[str, Any]] = {
     "holi-week": {
         "subject_hint": "festive color burst with rangoli-inspired ornament",
         "visual_keywords": ["powder color bloom", "joyful movement", "Indian festive detail"],
-        "scene_subject": "Holi-inspired celebratory backdrop",
-        "scene_background_intent": "bright Indian celebration mood with room for readable overlay text",
+        "scene_subject": "Holi-inspired color celebration illustration",
+        "scene_background_intent": "bright Indian celebration mood with soft surrounding space for card copy",
     },
     "diwali-week": {
         "subject_hint": "diya-lit decorative glow scene",
         "visual_keywords": ["lamp glow", "warm gold light", "festive ornament"],
-        "scene_subject": "Diwali-inspired luminous backdrop",
-        "scene_background_intent": "warm festival-of-lights atmosphere with open composition",
+        "scene_subject": "Diwali-inspired luminous illustration",
+        "scene_background_intent": "warm festival-of-lights atmosphere with open negative space",
     },
     "ramadan-month": {
         "subject_hint": "crescent and lantern-inspired reflective centerpiece",
         "visual_keywords": ["soft lantern glow", "quiet elegance", "respectful ornament"],
-        "scene_subject": "Ramadan-inspired reflective backdrop",
-        "scene_background_intent": "calm spiritual atmosphere with restrained ornament",
+        "scene_subject": "Ramadan-inspired reflective illustration",
+        "scene_background_intent": "calm spiritual atmosphere with restrained ornament and quiet empty space",
     },
     "eid-celebration": {
         "subject_hint": "crescent and lantern celebration scene",
         "visual_keywords": ["festive lanterns", "warm celebration light", "ornamental detail"],
-        "scene_subject": "Eid celebration backdrop",
-        "scene_background_intent": "bright but respectful celebration setting",
+        "scene_subject": "Eid celebration illustration",
+        "scene_background_intent": "bright but respectful celebration setting with open copy space",
     },
     "valentines-week": {
         "subject_hint": "romantic floral centerpiece with soft light",
         "visual_keywords": ["rose tones", "soft glow", "gentle romance"],
-        "scene_subject": "romantic greeting-card backdrop",
-        "scene_background_intent": "intimate celebratory atmosphere with clean composition",
+        "scene_subject": "romantic illustration centerpiece",
+        "scene_background_intent": "intimate celebratory atmosphere with clean composition and negative space",
     },
     "friendship-day": {
         "subject_hint": "playful shared-moment illustration cue",
         "visual_keywords": ["lighthearted energy", "warm palette", "friendly atmosphere"],
-        "scene_subject": "friendship celebration backdrop",
-        "scene_background_intent": "supportive and upbeat shared-moment mood",
+        "scene_subject": "friendship celebration illustration",
+        "scene_background_intent": "supportive and upbeat shared-moment mood with open composition",
     },
 }
 
@@ -129,6 +132,7 @@ def build_imageforge_generate_request(
         base_profile.update(_THEME_KEY_OVERRIDES[theme_key])
 
     workflow_type = str(imageforge_meta.get("workflow_type") or base_profile["workflow_type"]).strip()
+    asset_role = str(imageforge_meta.get("asset_role") or base_profile["asset_role"]).strip()
     asset_type = str(imageforge_meta.get("asset_type") or base_profile["asset_type"]).strip()
     style_profile = str(
         imageforge_meta.get("style_profile")
@@ -155,6 +159,7 @@ def build_imageforge_generate_request(
         cultural_context=str(job.get("cultural_context") or "").strip() or None,
         selected_text=str(job.get("content_preview") or "").strip() or None,
         workflow_type=workflow_type,
+        asset_role=asset_role,
         asset_type=asset_type,
         style_profile=style_profile,
         scene_spec=scene_spec,

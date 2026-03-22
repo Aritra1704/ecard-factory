@@ -108,6 +108,10 @@ class RenderConfig(BaseModel):
     signoff: str | None = None
     theme_style: Literal["minimal", "festive", "elegant", "playful"] = "minimal"
     background_image_url: str | None = None
+    illustration_image_url: str | None = None
+    layout_id: Literal["illustration_top_text_bottom", "text_left_illustration_right"] = (
+        "illustration_top_text_bottom"
+    )
     text_alignment: Literal["left", "center", "right"] = "center"
     export_size: str = "1080x1350"
 
@@ -508,6 +512,7 @@ class ImageAssetCandidateResponse(BaseModel):
     provider_run_id: str | None = None
     provider: str
     model: str | None = None
+    asset_role: Literal["spot_illustration", "background", "motif"] | None = None
     candidate_index: int
     public_url: str
     relative_path: str
@@ -535,6 +540,7 @@ class JobImageAssetsResponse(BaseModel):
     image_generation_stage: str | None = None
     can_generate: bool = False
     blocking_reason: str | None = None
+    asset_role: Literal["spot_illustration", "background", "motif"] | None = None
     selected_text: str | None = None
     recommended_candidate_id: str | None = None
     selected_image_candidate_id: str | None = None

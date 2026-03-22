@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 TemplateName = Literal["minimal", "festive", "elegant", "playful"]
 TextAlignment = Literal["left", "center", "right"]
+ShapeLayer = Literal["background", "content"]
+ShapeType = Literal["rounded_rect", "ellipse"]
+TextRole = Literal["title", "body", "signoff", "metadata_title", "metadata_line"]
+ImageFitMode = Literal["contain", "cover"]
 
 
 @dataclass(slots=True)
@@ -28,6 +32,8 @@ class PreviewCardRenderInput:
     background_image_url: str | None
     text_alignment: TextAlignment
     export_size: str = "1080x1350"
+    illustration_image_url: str | None = None
+    layout_id: str | None = None
     theme_name: str = ""
     job_id: str = ""
     status: str = ""
@@ -45,6 +51,64 @@ class FinalCardRenderInput:
     background_image_url: str | None
     text_alignment: TextAlignment
     export_size: str = "1080x1350"
+    illustration_image_url: str | None = None
+    layout_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCardShapeSpec:
+    """Explicit geometric shape placement for one layout."""
+
+    shape_type: ShapeType
+    layer: ShapeLayer
+    box: tuple[int, int, int, int]
+    fill: tuple[int, int, int, int]
+    radius: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCardTextBlockSpec:
+    """Explicit resolved text placement for one layout."""
+
+    block_id: str
+    role: TextRole
+    lines: tuple[str, ...]
+    x_left: int
+    x_right: int
+    y: int
+    font_size: int
+    spacing: int
+    fill: tuple[int, int, int, int]
+    alignment: TextAlignment
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCardImageBlockSpec:
+    """Explicit image placement for one remote asset inside a layout."""
+
+    block_id: str
+    layer: ShapeLayer
+    image_url: str
+    box: tuple[int, int, int, int]
+    fit: ImageFitMode = "contain"
+    corner_radius: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCardLayoutSpec:
+    """Versioned composition spec rendered by Pillow."""
+
+    layout_id: str
+    canvas_width: int
+    canvas_height: int
+    theme_style: TemplateName
+    background_image_url: str | None
+    gradient_top_color: tuple[int, int, int]
+    gradient_bottom_color: tuple[int, int, int]
+    background_blend_alpha: float
+    shapes: tuple[WorkflowCardShapeSpec, ...]
+    image_blocks: tuple[WorkflowCardImageBlockSpec, ...] = ()
+    text_blocks: tuple[WorkflowCardTextBlockSpec, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,33 +168,38 @@ class WorkflowCardRenderer:
     def render_preview_png(self, payload: PreviewCardRenderInput) -> bytes:
         """Render internal preview card with workflow/debug metadata."""
 
+        return self.render_layout_png(self.build_preview_layout_spec(payload))
+
+    def render_final_png(self, payload: FinalCardRenderInput) -> bytes:
+        """Render polished user-facing greeting card without workflow metadata."""
+
+        return self.render_layout_png(self.build_final_layout_spec(payload))
+
+    def build_preview_layout_spec(self, payload: PreviewCardRenderInput) -> WorkflowCardLayoutSpec:
+        """Resolve a versioned preview layout spec from preview payload inputs."""
+
         width, height = self._parse_export_size(payload.export_size)
-        style = self._resolve_template_style(payload.theme_style)
-        canvas = self._create_base_canvas(
-            width=width,
-            height=height,
-            style=style,
-            background_image_url=payload.background_image_url,
-        )
-        draw = ImageDraw.Draw(canvas, "RGBA")
+        theme_style = self._resolve_template_name(payload.theme_style)
+        style = self._resolve_template_style(theme_style)
         padding = int(width * 0.075)
 
-        self._draw_metadata_header(
-            draw=draw,
+        shapes = list(self._build_template_shapes(width, height, style))
+        text_blocks: list[WorkflowCardTextBlockSpec] = []
+
+        header_shape, header_blocks = self._build_metadata_layout(
             width=width,
             height=height,
             payload=payload,
             style=style,
             padding=padding,
         )
+        shapes.append(header_shape)
+        text_blocks.extend(header_blocks)
 
-        body_top = int(height * 0.26)
-        body_height = int(height * 0.60)
-        self._draw_message_block(
-            draw=draw,
+        body_shapes, body_blocks = self._build_message_panel_layout(
             width=width,
-            top=body_top,
-            height=body_height,
+            top=int(height * 0.26),
+            height=int(height * 0.60),
             title="Internal Preview",
             message=payload.message,
             signoff=payload.signoff,
@@ -138,34 +207,121 @@ class WorkflowCardRenderer:
             style=style,
             padding=padding,
         )
-        return self._encode_png(canvas)
+        shapes.extend(body_shapes)
+        text_blocks.extend(body_blocks)
 
-    def render_final_png(self, payload: FinalCardRenderInput) -> bytes:
-        """Render polished user-facing greeting card without workflow metadata."""
+        return WorkflowCardLayoutSpec(
+            layout_id=self._resolve_layout_id(
+                requested_layout_id=payload.layout_id,
+                theme_style=theme_style,
+                mode="preview",
+            ),
+            canvas_width=width,
+            canvas_height=height,
+            theme_style=theme_style,
+            background_image_url=payload.background_image_url,
+            gradient_top_color=style.top_color,
+            gradient_bottom_color=style.bottom_color,
+            background_blend_alpha=0.45,
+            shapes=tuple(shapes),
+            image_blocks=(),
+            text_blocks=tuple(text_blocks),
+        )
+
+    def build_final_layout_spec(self, payload: FinalCardRenderInput) -> WorkflowCardLayoutSpec:
+        """Resolve a versioned final-card layout spec from final render inputs."""
 
         width, height = self._parse_export_size(payload.export_size)
-        style = self._resolve_template_style(payload.theme_style)
-        canvas = self._create_base_canvas(
-            width=width,
-            height=height,
-            style=style,
+        theme_style = self._resolve_template_name(payload.theme_style)
+        style = self._resolve_template_style(theme_style)
+        padding = int(width * 0.08)
+        layout_id = self._resolve_layout_id(
+            requested_layout_id=payload.layout_id,
+            theme_style=theme_style,
+            mode="final",
+        )
+
+        shapes = list(self._build_template_shapes(width, height, style))
+        image_blocks: list[WorkflowCardImageBlockSpec] = []
+        text_blocks: list[WorkflowCardTextBlockSpec] = []
+        if layout_id == "text_left_illustration_right":
+            panel_shapes, panel_images, panel_blocks = self._build_side_by_side_final_layout(
+                width=width,
+                height=height,
+                title=(payload.title or "").strip() or None,
+                message=payload.message,
+                signoff=payload.signoff,
+                alignment=payload.text_alignment,
+                illustration_image_url=payload.illustration_image_url,
+                style=style,
+                padding=padding,
+            )
+        else:
+            panel_shapes, panel_images, panel_blocks = self._build_top_illustration_final_layout(
+                width=width,
+                height=height,
+                title=(payload.title or "").strip() or None,
+                message=payload.message,
+                signoff=payload.signoff,
+                alignment=payload.text_alignment,
+                illustration_image_url=payload.illustration_image_url,
+                style=style,
+                padding=padding,
+            )
+        shapes.extend(panel_shapes)
+        image_blocks.extend(panel_images)
+        text_blocks.extend(panel_blocks)
+
+        return WorkflowCardLayoutSpec(
+            layout_id=layout_id,
+            canvas_width=width,
+            canvas_height=height,
+            theme_style=theme_style,
             background_image_url=payload.background_image_url,
+            gradient_top_color=style.top_color,
+            gradient_bottom_color=style.bottom_color,
+            background_blend_alpha=0.45,
+            shapes=tuple(shapes),
+            image_blocks=tuple(image_blocks),
+            text_blocks=tuple(text_blocks),
+        )
+
+    def render_layout_png(self, layout: WorkflowCardLayoutSpec) -> bytes:
+        """Render PNG bytes from an explicit versioned layout spec."""
+
+        canvas = self._create_base_canvas(
+            width=layout.canvas_width,
+            height=layout.canvas_height,
+            top_color=layout.gradient_top_color,
+            bottom_color=layout.gradient_bottom_color,
+            background_image_url=layout.background_image_url,
+            background_blend_alpha=layout.background_blend_alpha,
         )
         draw = ImageDraw.Draw(canvas, "RGBA")
-        padding = int(width * 0.08)
 
-        self._draw_message_block(
-            draw=draw,
-            width=width,
-            top=int(height * 0.16),
-            height=int(height * 0.72),
-            title=(payload.title or "").strip() or None,
-            message=payload.message,
-            signoff=payload.signoff,
-            alignment=payload.text_alignment,
-            style=style,
-            padding=padding,
-        )
+        for layer in ("background", "content"):
+            for shape in layout.shapes:
+                if shape.layer != layer:
+                    continue
+                self._draw_shape(draw=draw, shape=shape)
+            for image_block in layout.image_blocks:
+                if image_block.layer != layer:
+                    continue
+                self._draw_image_block(canvas=canvas, image_block=image_block)
+
+        for text_block in layout.text_blocks:
+            font = self._load_font(size=text_block.font_size)
+            self._draw_multiline(
+                draw=draw,
+                lines=list(text_block.lines),
+                x_left=text_block.x_left,
+                x_right=text_block.x_right,
+                y=text_block.y,
+                font=font,
+                spacing=text_block.spacing,
+                fill=text_block.fill,
+                alignment=text_block.alignment,
+            )
         return self._encode_png(canvas)
 
     def render_pdf_from_png(self, png_bytes: bytes) -> bytes:
@@ -181,56 +337,90 @@ class WorkflowCardRenderer:
         *,
         width: int,
         height: int,
-        style: _TemplateStyle,
+        top_color: tuple[int, int, int],
+        bottom_color: tuple[int, int, int],
         background_image_url: str | None,
+        background_blend_alpha: float,
     ) -> Image.Image:
         """Build a stylized base canvas with optional background image."""
 
-        canvas = self._build_vertical_gradient(width, height, style.top_color, style.bottom_color)
+        canvas = self._build_vertical_gradient(width, height, top_color, bottom_color)
         background = self._download_background(background_image_url, width, height)
         if background is not None:
-            canvas = Image.blend(background, canvas, alpha=0.45)
-        if style.add_shapes:
-            self._draw_template_shapes(canvas, style)
+            canvas = Image.blend(background, canvas, alpha=background_blend_alpha)
         return canvas.convert("RGBA")
 
-    def _draw_metadata_header(
+    def _build_metadata_layout(
         self,
         *,
-        draw: ImageDraw.ImageDraw,
         width: int,
         height: int,
         payload: PreviewCardRenderInput,
         style: _TemplateStyle,
         padding: int,
-    ) -> None:
-        """Draw top metadata panel for internal preview mode."""
+    ) -> tuple[WorkflowCardShapeSpec, list[WorkflowCardTextBlockSpec]]:
+        """Build explicit preview-header shapes and text blocks."""
 
         header_height = int(height * 0.18)
-        header_box = [(padding, padding), (width - padding, padding + header_height)]
-        draw.rounded_rectangle(header_box, radius=28, fill=style.panel_fill)
-        title_font = self._load_font(size=int(width * 0.043))
-        meta_font = self._load_font(size=int(width * 0.024))
-        small_font = self._load_font(size=int(width * 0.019))
-
+        header_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(padding, padding, width - padding, padding + header_height),
+            fill=style.panel_fill,
+            radius=28,
+        )
+        blocks: list[WorkflowCardTextBlockSpec] = []
         x = padding + int(width * 0.03)
         y = padding + int(height * 0.022)
-        draw.text((x, y), payload.title.strip() or "Approval Preview", fill=style.title_color, font=title_font)
+
+        title_size = int(width * 0.043)
+        blocks.append(
+            WorkflowCardTextBlockSpec(
+                block_id="preview_header_title",
+                role="metadata_title",
+                lines=((payload.title.strip() or "Approval Preview"),),
+                x_left=x,
+                x_right=width - padding - int(width * 0.03),
+                y=y,
+                font_size=title_size,
+                spacing=0,
+                fill=style.title_color,
+                alignment="left",
+            )
+        )
         y += int(height * 0.05)
-        draw.text((x, y), f"Theme: {payload.theme_name}", fill=style.body_color, font=meta_font)
-        y += int(height * 0.031)
-        draw.text((x, y), f"Job ID: {payload.job_id} | Status: {payload.status}", fill=style.body_color, font=meta_font)
 
-        metadata = payload.metadata_lines[:3]
-        y += int(height * 0.03)
-        for item in metadata:
-            draw.text((x, y), f"- {item}", fill=style.body_color, font=small_font)
-            y += int(height * 0.024)
+        meta_size = int(width * 0.024)
+        metadata_lines = [
+            f"Theme: {payload.theme_name}",
+            f"Job ID: {payload.job_id} | Status: {payload.status}",
+        ]
+        metadata_lines.extend([f"- {item}" for item in payload.metadata_lines[:3]])
+        step_map = [int(height * 0.031), int(height * 0.03), int(height * 0.024), int(height * 0.024), int(height * 0.024)]
 
-    def _draw_message_block(
+        for index, line in enumerate(metadata_lines):
+            size = meta_size if index < 2 else int(width * 0.019)
+            blocks.append(
+                WorkflowCardTextBlockSpec(
+                    block_id=f"preview_header_line_{index + 1}",
+                    role="metadata_line",
+                    lines=(line,),
+                    x_left=x,
+                    x_right=width - padding - int(width * 0.03),
+                    y=y,
+                    font_size=size,
+                    spacing=0,
+                    fill=style.body_color,
+                    alignment="left",
+                )
+            )
+            y += step_map[min(index, len(step_map) - 1)]
+
+        return header_shape, blocks
+
+    def _build_message_panel_layout(
         self,
         *,
-        draw: ImageDraw.ImageDraw,
         width: int,
         top: int,
         height: int,
@@ -240,13 +430,20 @@ class WorkflowCardRenderer:
         alignment: TextAlignment,
         style: _TemplateStyle,
         padding: int,
-    ) -> None:
-        """Draw centered card content panel with hierarchy and safe margins."""
+        left: int | None = None,
+        right: int | None = None,
+    ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardTextBlockSpec]]:
+        """Build one text panel as explicit shapes and positioned text blocks."""
 
-        left = padding
-        right = width - padding
-        panel_box = [(left, top), (right, top + height)]
-        draw.rounded_rectangle(panel_box, radius=34, fill=style.panel_fill)
+        left = padding if left is None else left
+        right = width - padding if right is None else right
+        panel_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(left, top, right, top + height),
+            fill=style.panel_fill,
+            radius=34,
+        )
 
         inner_left = left + int(width * 0.055)
         inner_right = right - int(width * 0.055)
@@ -255,27 +452,39 @@ class WorkflowCardRenderer:
         content_width = inner_right - inner_left
         vertical_space = inner_bottom - inner_top
 
+        scratch = Image.new("RGBA", (width, max(top + height, 1)))
+        draw = ImageDraw.Draw(scratch, "RGBA")
+
+        blocks: list[WorkflowCardTextBlockSpec] = []
         cursor_y = inner_top
-        if title:
-            title_font = self._load_font(size=int(width * 0.06))
-            title_lines = self._wrap_lines(draw, title, title_font, content_width, max_lines=2)
-            title_spacing = max(10, int(title_font.size * 0.25))
+
+        title_text = (title or "").strip()
+        if title_text:
+            initial_title_size = int(width * 0.06)
+            title_font = self._load_font(size=initial_title_size)
+            title_lines = self._wrap_lines(draw, title_text, title_font, content_width, max_lines=2)
+            title_font_size = getattr(title_font, "size", initial_title_size)
+            title_spacing = max(10, int(title_font_size * 0.25))
             title_height = self._measure_multiline_height(draw, title_lines, title_font, title_spacing)
-            self._draw_multiline(
-                draw=draw,
-                lines=title_lines,
-                x_left=inner_left,
-                x_right=inner_right,
-                y=cursor_y,
-                font=title_font,
-                spacing=title_spacing,
-                fill=style.title_color,
-                alignment=alignment,
+            blocks.append(
+                WorkflowCardTextBlockSpec(
+                    block_id="title",
+                    role="title",
+                    lines=tuple(title_lines),
+                    x_left=inner_left,
+                    x_right=inner_right,
+                    y=cursor_y,
+                    font_size=title_font_size,
+                    spacing=title_spacing,
+                    fill=style.title_color,
+                    alignment=alignment,
+                )
             )
             cursor_y += title_height + int(height * 0.04)
 
+        signoff_text = (signoff or "").strip()
         body_max_height = vertical_space - (cursor_y - inner_top)
-        if signoff:
+        if signoff_text:
             body_max_height -= int(height * 0.12)
         body_font, body_lines, body_spacing = self._fit_body_text(
             draw=draw,
@@ -284,35 +493,163 @@ class WorkflowCardRenderer:
             max_height=max(body_max_height, 150),
             width=width,
         )
+        body_font_size = getattr(body_font, "size", max(28, int(width * 0.04)))
         body_height = self._measure_multiline_height(draw, body_lines, body_font, body_spacing)
-        self._draw_multiline(
-            draw=draw,
-            lines=body_lines,
-            x_left=inner_left,
-            x_right=inner_right,
-            y=cursor_y,
-            font=body_font,
-            spacing=body_spacing,
-            fill=style.body_color,
-            alignment=alignment,
+        blocks.append(
+            WorkflowCardTextBlockSpec(
+                block_id="body",
+                role="body",
+                lines=tuple(body_lines),
+                x_left=inner_left,
+                x_right=inner_right,
+                y=cursor_y,
+                font_size=body_font_size,
+                spacing=body_spacing,
+                fill=style.body_color,
+                alignment=alignment,
+            )
         )
         cursor_y += body_height + int(height * 0.05)
 
-        if signoff:
-            signoff_font = self._load_font(size=max(24, int(width * 0.028)))
-            signoff_text = signoff.strip()
-            if signoff_text:
-                self._draw_multiline(
-                    draw=draw,
-                    lines=[signoff_text],
+        if signoff_text:
+            signoff_size = max(24, int(width * 0.028))
+            blocks.append(
+                WorkflowCardTextBlockSpec(
+                    block_id="signoff",
+                    role="signoff",
+                    lines=(signoff_text,),
                     x_left=inner_left,
                     x_right=inner_right,
                     y=min(cursor_y, inner_bottom - int(height * 0.08)),
-                    font=signoff_font,
+                    font_size=signoff_size,
                     spacing=0,
                     fill=style.accent_color,
                     alignment=alignment,
                 )
+            )
+
+        return [panel_shape], blocks
+
+    def _build_top_illustration_final_layout(
+        self,
+        *,
+        width: int,
+        height: int,
+        title: str | None,
+        message: str,
+        signoff: str | None,
+        alignment: TextAlignment,
+        illustration_image_url: str | None,
+        style: _TemplateStyle,
+        padding: int,
+    ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
+        """Build the canonical illustration-top, text-bottom final layout."""
+
+        top = int(height * 0.08)
+        illustration_bottom = int(height * 0.48)
+        frame_box = (padding, top, width - padding, illustration_bottom)
+        image_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=frame_box,
+            fill=(255, 255, 255, 170),
+            radius=34,
+        )
+        image_blocks: list[WorkflowCardImageBlockSpec] = []
+        if illustration_image_url:
+            image_blocks.append(
+                WorkflowCardImageBlockSpec(
+                    block_id="hero_illustration",
+                    layer="content",
+                    image_url=illustration_image_url,
+                    box=(
+                        frame_box[0] + int(width * 0.035),
+                        frame_box[1] + int(height * 0.03),
+                        frame_box[2] - int(width * 0.035),
+                        frame_box[3] - int(height * 0.03),
+                    ),
+                    fit="contain",
+                    corner_radius=28,
+                )
+            )
+
+        panel_top = illustration_bottom + int(height * 0.04)
+        panel_height = max(int(height * 0.28), height - panel_top - padding)
+        panel_shapes, panel_blocks = self._build_message_panel_layout(
+            width=width,
+            top=panel_top,
+            height=panel_height,
+            title=title,
+            message=message,
+            signoff=signoff,
+            alignment=alignment,
+            style=style,
+            padding=padding,
+        )
+        return [image_shape, *panel_shapes], image_blocks, panel_blocks
+
+    def _build_side_by_side_final_layout(
+        self,
+        *,
+        width: int,
+        height: int,
+        title: str | None,
+        message: str,
+        signoff: str | None,
+        alignment: TextAlignment,
+        illustration_image_url: str | None,
+        style: _TemplateStyle,
+        padding: int,
+    ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
+        """Build the alternate text-left, illustration-right final layout."""
+
+        top = int(height * 0.16)
+        bottom = int(height * 0.82)
+        gutter = int(width * 0.035)
+        text_left = padding
+        text_right = int(width * 0.52)
+        image_left = text_right + gutter
+        image_right = width - padding
+
+        image_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(image_left, top, image_right, bottom),
+            fill=(255, 255, 255, 168),
+            radius=34,
+        )
+        image_blocks: list[WorkflowCardImageBlockSpec] = []
+        if illustration_image_url:
+            image_blocks.append(
+                WorkflowCardImageBlockSpec(
+                    block_id="side_illustration",
+                    layer="content",
+                    image_url=illustration_image_url,
+                    box=(
+                        image_left + int(width * 0.022),
+                        top + int(height * 0.025),
+                        image_right - int(width * 0.022),
+                        bottom - int(height * 0.025),
+                    ),
+                    fit="contain",
+                    corner_radius=28,
+                )
+            )
+
+        panel_shapes, panel_blocks = self._build_message_panel_layout(
+            width=width,
+            top=top,
+            height=bottom - top,
+            title=title,
+            message=message,
+            signoff=signoff,
+            alignment=alignment,
+            style=style,
+            padding=padding,
+            left=text_left,
+            right=text_right,
+        )
+        return [*panel_shapes, image_shape], image_blocks, panel_blocks
 
     def _fit_body_text(
         self,
@@ -386,6 +723,58 @@ class WorkflowCardRenderer:
             clipped[-1] = self._ellipsis_line(draw=draw, line=clipped[-1], font=font, max_width=max_width)
         return clipped
 
+    def _draw_shape(self, *, draw: ImageDraw.ImageDraw, shape: WorkflowCardShapeSpec) -> None:
+        """Render one geometric shape from the explicit layout spec."""
+
+        if shape.shape_type == "ellipse":
+            draw.ellipse(shape.box, fill=shape.fill)
+            return
+        draw.rounded_rectangle(shape.box, radius=shape.radius, fill=shape.fill)
+
+    def _draw_image_block(
+        self,
+        *,
+        canvas: Image.Image,
+        image_block: WorkflowCardImageBlockSpec,
+    ) -> None:
+        """Render one remote illustration asset into its resolved layout box."""
+
+        image = self._download_remote_image(image_block.image_url)
+        if image is None:
+            return
+
+        block_width = max(1, image_block.box[2] - image_block.box[0])
+        block_height = max(1, image_block.box[3] - image_block.box[1])
+        if image_block.fit == "cover":
+            rendered = ImageOps.fit(
+                image,
+                (block_width, block_height),
+                method=Image.Resampling.LANCZOS,
+            )
+        else:
+            contained = ImageOps.contain(
+                image,
+                (block_width, block_height),
+                method=Image.Resampling.LANCZOS,
+            )
+            rendered = Image.new("RGBA", (block_width, block_height), (255, 255, 255, 0))
+            offset = (
+                (block_width - contained.width) // 2,
+                (block_height - contained.height) // 2,
+            )
+            rendered.alpha_composite(contained, dest=offset)
+
+        if image_block.corner_radius > 0:
+            mask = Image.new("L", (block_width, block_height), 0)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                (0, 0, block_width, block_height),
+                radius=image_block.corner_radius,
+                fill=255,
+            )
+            rendered.putalpha(mask)
+
+        canvas.alpha_composite(rendered, dest=(image_block.box[0], image_block.box[1]))
+
     def _draw_multiline(
         self,
         *,
@@ -452,23 +841,99 @@ class WorkflowCardRenderer:
     def _download_background(self, url: str | None, width: int, height: int) -> Image.Image | None:
         """Fetch optional background image and resize to canvas."""
 
+        image = self._download_remote_image(url)
+        if image is None:
+            return None
+        return ImageOps.fit(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS)
+
+    def _download_remote_image(self, url: str | None) -> Image.Image | None:
+        """Fetch one remote image as RGBA, logging failures instead of raising."""
+
         if not url:
             return None
         try:
             with httpx.Client(timeout=8.0, follow_redirects=True) as client:
                 response = client.get(url)
                 response.raise_for_status()
-            image = Image.open(BytesIO(response.content)).convert("RGB")
-            return ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS)
+            return Image.open(BytesIO(response.content)).convert("RGBA")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("background image download failed url=%s error=%s", url, exc)
+            logger.warning("image download failed url=%s error=%s", url, exc)
             return None
+
+    @classmethod
+    def _resolve_template_name(cls, template_name: str) -> TemplateName:
+        """Normalize one template name to the supported set."""
+
+        normalized = str(template_name or "").strip().lower()
+        if normalized in cls._TEMPLATES:
+            return normalized  # type: ignore[return-value]
+        return "minimal"
 
     @classmethod
     def _resolve_template_style(cls, template_name: str) -> _TemplateStyle:
         """Resolve style config for one supported template."""
 
-        return cls._TEMPLATES.get(template_name.strip().lower(), cls._TEMPLATES["minimal"])
+        return cls._TEMPLATES[cls._resolve_template_name(template_name)]
+
+    @classmethod
+    def _resolve_layout_id(
+        cls,
+        *,
+        requested_layout_id: str | None,
+        theme_style: TemplateName,
+        mode: Literal["preview", "final"],
+    ) -> str:
+        """Normalize the layout id or derive the first versioned default."""
+
+        normalized = cls._normalize_layout_id(requested_layout_id)
+        if mode == "preview" and normalized:
+            return normalized
+        if mode == "final" and normalized in {
+            "illustration_top_text_bottom",
+            "text_left_illustration_right",
+        }:
+            return normalized
+        if mode == "preview":
+            return f"preview_{theme_style}_v1"
+        return "illustration_top_text_bottom"
+
+    @staticmethod
+    def _normalize_layout_id(value: str | None) -> str | None:
+        """Return a safe layout identifier suitable for asset metadata and tests."""
+
+        raw = str(value or "").strip().lower()
+        if not raw:
+            return None
+        cleaned = "".join(char for char in raw if char.isalnum() or char in {"_", "-"}).strip("_-")
+        return cleaned or None
+
+    @staticmethod
+    def _build_template_shapes(width: int, height: int, style: _TemplateStyle) -> tuple[WorkflowCardShapeSpec, ...]:
+        """Return decorative background circles for festive/playful templates."""
+
+        if not style.add_shapes:
+            return ()
+        accent = style.accent_color
+        return (
+            WorkflowCardShapeSpec(
+                shape_type="ellipse",
+                layer="background",
+                box=(int(width * 0.03), int(height * 0.05), int(width * 0.21), int(height * 0.20)),
+                fill=(accent[0], accent[1], accent[2], 65),
+            ),
+            WorkflowCardShapeSpec(
+                shape_type="ellipse",
+                layer="background",
+                box=(int(width * 0.78), int(height * 0.12), int(width * 0.96), int(height * 0.27)),
+                fill=(accent[0], accent[1], accent[2], 58),
+            ),
+            WorkflowCardShapeSpec(
+                shape_type="ellipse",
+                layer="background",
+                box=(int(width * 0.82), int(height * 0.78), int(width * 0.98), int(height * 0.94)),
+                fill=(accent[0], accent[1], accent[2], 46),
+            ),
+        )
 
     @staticmethod
     def _build_vertical_gradient(
@@ -489,26 +954,6 @@ class WorkflowCardRenderer:
             for x in range(width):
                 pixels[x, y] = (r, g, b)
         return base
-
-    @staticmethod
-    def _draw_template_shapes(canvas: Image.Image, style: _TemplateStyle) -> None:
-        """Add a few decorative circles for festive/playful templates."""
-
-        draw = ImageDraw.Draw(canvas, "RGBA")
-        width, height = canvas.size
-        accent = style.accent_color
-        draw.ellipse(
-            (int(width * 0.03), int(height * 0.05), int(width * 0.21), int(height * 0.20)),
-            fill=(accent[0], accent[1], accent[2], 65),
-        )
-        draw.ellipse(
-            (int(width * 0.78), int(height * 0.12), int(width * 0.96), int(height * 0.27)),
-            fill=(accent[0], accent[1], accent[2], 58),
-        )
-        draw.ellipse(
-            (int(width * 0.82), int(height * 0.78), int(width * 0.98), int(height * 0.94)),
-            fill=(accent[0], accent[1], accent[2], 46),
-        )
 
     @classmethod
     def _parse_export_size(cls, export_size: str) -> tuple[int, int]:

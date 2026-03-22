@@ -28,6 +28,10 @@ def test_settings_loads_from_environment(configured_env: dict[str, str]) -> None
 
     assert settings.database_url == configured_env["DATABASE_URL"]
     assert settings.railway_database_url == configured_env["RAILWAY_DATABASE_URL"]
+    assert settings.openai_enabled is False
+    assert settings.groq_enabled is False
+    assert settings.telegram_enabled is False
+    assert settings.canva_enabled is False
     assert settings.openai_api_key == configured_env["OPENAI_API_KEY"]
     assert settings.groq_api_key == configured_env["GROQ_API_KEY"]
     assert settings.telegram_bot_token == configured_env["TELEGRAM_BOT_TOKEN"]
@@ -48,6 +52,34 @@ def test_settings_loads_from_environment(configured_env: dict[str, str]) -> None
     assert settings.imageforge_default_provider == configured_env["IMAGEFORGE_DEFAULT_PROVIDER"]
     assert settings.imageforge_default_model == configured_env["IMAGEFORGE_DEFAULT_MODEL"]
     assert settings.imageforge_default_candidate_count == 3
+
+
+def test_settings_allow_local_only_mode_without_paid_credentials(
+    configured_env: dict[str, str],
+    monkeypatch,
+) -> None:
+    """Local-only mode should boot even when paid-provider secrets are absent."""
+
+    for env_name in (
+        "OPENAI_API_KEY",
+        "GROQ_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "CANVA_CLIENT_ID",
+        "CANVA_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+
+    config_module, _ = reload_config_and_database()
+    settings = config_module.settings
+
+    assert settings.database_url == configured_env["DATABASE_URL"]
+    assert settings.openai_api_key == ""
+    assert settings.groq_api_key == ""
+    assert settings.telegram_bot_token == ""
+    assert settings.telegram_chat_id == ""
+    assert settings.canva_client_id == ""
+    assert settings.canva_client_secret == ""
 
 
 def test_active_db_url_uses_database_url_outside_production(

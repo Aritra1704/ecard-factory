@@ -61,6 +61,7 @@ from app.services.image_provider import ImageCandidateResult, ImageGenerationReq
 from app.services.workflow_card_renderer import (
     FinalCardRenderInput,
     PreviewCardRenderInput,
+    WorkflowCardLayoutSpec,
     WorkflowCardRenderer,
 )
 from app.storage import AssetStorage, get_asset_storage
@@ -1555,7 +1556,8 @@ class WorkflowV1Service:
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render", increment_retry=False)
         try:
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview_url = final_preview["public_url"]
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -1580,7 +1582,7 @@ class WorkflowV1Service:
                 public_url=final_preview_url,
                 absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
                 file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
-                version="v1",
+                version=final_preview["layout_id"],
                 approved=False,
             )
             await self._repository.append_audit_events(
@@ -1811,7 +1813,8 @@ class WorkflowV1Service:
         transition_time = datetime.now(timezone.utc)
         if normalized_decision == "approved":
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview_url = final_preview["public_url"]
             selected_image_updates = self._build_selected_image_updates(job)
             updates = {
                 "status": "final_pending_approval",
@@ -1900,7 +1903,7 @@ class WorkflowV1Service:
                 public_url=str(updated.get("final_preview_url") or ""),
                 absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
                 file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
-                version="v1",
+                version=final_preview["layout_id"],
                 approved=False,
             )
         logger.info(
@@ -2027,7 +2030,7 @@ class WorkflowV1Service:
                     public_url=png_meta["public_url"],
                     absolute_path=png_meta["absolute_path"],
                     file_size_bytes=png_meta["file_size_bytes"],
-                    version="v1",
+                    version=str(generated_assets["layout_id"]),
                     approved=True,
                 )
             if pdf_meta["public_url"]:
@@ -2041,7 +2044,7 @@ class WorkflowV1Service:
                     public_url=pdf_meta["public_url"],
                     absolute_path=pdf_meta["absolute_path"],
                     file_size_bytes=pdf_meta["file_size_bytes"],
-                    version="v1",
+                    version=str(generated_assets["layout_id"]),
                     approved=True,
                 )
         logger.info(
@@ -2134,6 +2137,7 @@ class WorkflowV1Service:
             )
             rerendering = dict(updated_output_spec.get("rendering") or {})
             rerendering.pop("background_image_url", None)
+            rerendering.pop("illustration_image_url", None)
             updated_output_spec["rendering"] = rerendering
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
@@ -2292,7 +2296,8 @@ class WorkflowV1Service:
         started_at = await self._mark_stage_started(job_id=job_id, job=job, stage="final_render")
         try:
             final_preview_relative_path = self._build_final_preview_relative_path(job_id)
-            final_preview_url = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview = self._render_final_preview_asset(job_id=job_id, job=job)
+            final_preview_url = final_preview["public_url"]
             finished_at = datetime.now(timezone.utc)
             updated = await self._repository.update_job_status(
                 job_id=job_id,
@@ -2317,7 +2322,7 @@ class WorkflowV1Service:
                 public_url=final_preview_url,
                 absolute_path=self._asset_storage.get_absolute_path(final_preview_relative_path),
                 file_size_bytes=self._read_file_size_bytes(final_preview_relative_path),
-                version="v1",
+                version=final_preview["layout_id"],
                 approved=False,
             )
             await self._repository.append_audit_events(
@@ -2465,6 +2470,7 @@ class WorkflowV1Service:
         )
         rendering = dict(updated_output_spec.get("rendering") or {})
         rendering.pop("background_image_url", None)
+        rendering.pop("illustration_image_url", None)
         updated_output_spec["rendering"] = rendering
         updated = await self._repository.update_job_status(
             job_id=job_id,
@@ -3695,42 +3701,45 @@ class WorkflowV1Service:
             "pdf": f"pdf/{job_id}_final.pdf",
         }
 
-    def _render_final_preview_asset(self, *, job_id: str, job: dict[str, Any]) -> str:
-        """Render a real final-card preview PNG using the current text and image selections."""
+    def _build_final_layout_spec(self, job: dict[str, Any]) -> WorkflowCardLayoutSpec:
+        """Build one explicit layout spec for final preview and export."""
 
-        relative_path = self._build_final_preview_relative_path(job_id)
-        preview_payload = FinalCardRenderInput(
+        payload = FinalCardRenderInput(
             title=self._resolve_final_title(job),
             message=self._resolve_final_message(job),
             signoff=self._resolve_final_signoff(job),
             theme_style=self._resolve_theme_style(job),
             background_image_url=self._resolve_background_image_url(job),
+            illustration_image_url=self._resolve_illustration_image_url(job),
             text_alignment=self._resolve_text_alignment(job),
             export_size=self._resolve_export_size(job),
+            layout_id=self._resolve_layout_id(job),
         )
-        png_bytes = self._card_renderer.render_final_png(preview_payload)
+        return self._card_renderer.build_final_layout_spec(payload)
+
+    def _render_final_preview_asset(self, *, job_id: str, job: dict[str, Any]) -> dict[str, str]:
+        """Render a real final-card preview PNG using the current text and image selections."""
+
+        relative_path = self._build_final_preview_relative_path(job_id)
+        layout_spec = self._build_final_layout_spec(job)
+        png_bytes = self._card_renderer.render_layout_png(layout_spec)
         self._asset_storage.save_bytes(relative_path, png_bytes)
         if not self._asset_storage.file_exists(relative_path):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to generate final card preview",
             )
-        return self._asset_storage.get_public_url(relative_path)
+        return {
+            "public_url": self._asset_storage.get_public_url(relative_path),
+            "layout_id": layout_spec.layout_id,
+        }
 
-    def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _generate_final_assets(self, *, job_id: str, job: dict[str, Any]) -> dict[str, Any]:
         """Render polished final card assets and ensure files exist."""
 
         relative_paths = self._build_final_asset_relative_paths(job_id)
-        final_payload = FinalCardRenderInput(
-            title=self._resolve_final_title(job),
-            message=self._resolve_final_message(job),
-            signoff=self._resolve_final_signoff(job),
-            theme_style=self._resolve_theme_style(job),
-            background_image_url=self._resolve_background_image_url(job),
-            text_alignment=self._resolve_text_alignment(job),
-            export_size=self._resolve_export_size(job),
-        )
-        png_bytes = self._card_renderer.render_final_png(final_payload)
+        layout_spec = self._build_final_layout_spec(job)
+        png_bytes = self._card_renderer.render_layout_png(layout_spec)
         pdf_bytes = self._card_renderer.render_pdf_from_png(png_bytes)
 
         self._asset_storage.save_bytes(relative_paths["png"], png_bytes)
@@ -3748,6 +3757,7 @@ class WorkflowV1Service:
             )
         storage_root = self._asset_storage.get_absolute_path("")
         return {
+            "layout_id": layout_spec.layout_id,
             "png": {
                 "storage_backend": self._asset_storage.backend,
                 "storage_root": storage_root,
@@ -3802,6 +3812,16 @@ class WorkflowV1Service:
             return {}
         rendering = output_spec.get("rendering")
         return rendering if isinstance(rendering, dict) else {}
+
+    def _resolve_layout_id(self, job: dict[str, Any]) -> str:
+        """Resolve one supported deterministic layout id."""
+
+        options = self._resolve_rendering_options(job)
+        raw_layout_id = str(options.get("layout_id") or "").strip().lower()
+        sanitized = "".join(char for char in raw_layout_id if char.isalnum() or char in {"_", "-"}).strip("_-")
+        if sanitized in {"illustration_top_text_bottom", "text_left_illustration_right"}:
+            return sanitized
+        return "illustration_top_text_bottom"
 
     def _resolve_theme_style(self, job: dict[str, Any]) -> str:
         """Map theme/visual hints to one supported final card template."""
@@ -3875,12 +3895,21 @@ class WorkflowV1Service:
         }
 
     def _resolve_background_image_url(self, job: dict[str, Any]) -> str | None:
-        """Resolve optional background image URL from rendering options."""
+        """Resolve optional soft background image URL from rendering options only."""
 
         options = self._resolve_rendering_options(job)
         background_url = str(options.get("background_image_url") or "").strip()
         if background_url:
             return background_url
+        return None
+
+    def _resolve_illustration_image_url(self, job: dict[str, Any]) -> str | None:
+        """Resolve selected illustration image URL for final-card composition."""
+
+        options = self._resolve_rendering_options(job)
+        explicit = str(options.get("illustration_image_url") or "").strip()
+        if explicit:
+            return explicit
 
         selected_url = str(job.get("selected_image_public_url") or "").strip()
         if selected_url:

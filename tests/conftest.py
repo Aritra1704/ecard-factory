@@ -12,6 +12,10 @@ TEST_ASSET_ROOT = str((Path(tempfile.gettempdir()) / "ecardfactory-test-assets")
 TEST_ENV_VARS = {
     "DATABASE_URL": "postgresql://local_user:local_pass@localhost:5432/ecard_factory",
     "RAILWAY_DATABASE_URL": "postgresql://railway_user:railway_pass@railway.internal:5432/ecard_factory",
+    "OPENAI_ENABLED": "false",
+    "GROQ_ENABLED": "false",
+    "TELEGRAM_ENABLED": "false",
+    "CANVA_ENABLED": "false",
     "OPENAI_API_KEY": "test-openai-key",
     "GROQ_API_KEY": "test-groq-key",
     "TELEGRAM_BOT_TOKEN": "test-telegram-token",

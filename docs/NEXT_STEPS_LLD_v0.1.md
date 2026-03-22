@@ -1,8 +1,8 @@
 # Next Steps LLD: Stage-Wise Implementation Design
 
 Document Version: `v0.1`
-Updated: `2026-03-18`
-Status: `Draft`
+Updated: `2026-03-22`
+Status: `Working Snapshot`
 
 ## 1. Purpose
 
@@ -13,6 +13,8 @@ The sequence in this LLD assumes:
 - `Pillow` remains the initial card assembly engine
 - the UI lives in a separate sibling repo directory
 - the platform remains deterministic first, agentic later
+- the eCard MVP stays the only active product app until quality is commercially usable
+- local models remain the default runtime for both text and image generation
 
 ## 2. Target Repo Structure
 
@@ -98,6 +100,14 @@ Make text output reliable enough to trust downstream automation.
 - incomplete-output rejection
 - structured ranking score
 - shortlist reasons
+- shared request fields for `app_id`, `content_type`, and `creative_brief`
+- prompt-pack routing for:
+  - `romantic_witty`
+  - `festival_warm`
+  - `festival_respectful`
+  - `playful_modern`
+  - `minimal_heartfelt`
+- golden-set regression briefs for quality tuning
 
 ## Proposed response contract
 
@@ -134,6 +144,7 @@ Make text output reliable enough to trust downstream automation.
 - no incomplete text shown in Studio
 - duplicate rate becomes measurably low
 - shortlist reasons are visible in UI
+- tone pack and model source are visible in debug metadata
 
 ## 5. Stage 2: Image Stage Redesign
 
@@ -152,12 +163,17 @@ Make ImageForge the only primary image generation path.
 - low-quality output filtering
 - ranking of candidates
 - selected image persistence
+- illustration-first asset contract with `asset_role`
+- preset workflows:
+  - `ecard_spot_illustration_v1`
+  - `ecard_soft_background_v1`
 
 ## Proposed response contract
 
 ```json
 {
   "request_id": "img_req_001",
+  "asset_role": "spot_illustration",
   "candidates": [
     {
       "candidate_id": "img_01",
@@ -176,6 +192,7 @@ Make ImageForge the only primary image generation path.
 - mirror only the metadata needed for Studio and final render
 - treat ImageForge as the image generation source of truth
 - store selected image separately from transient candidates
+- default eCard requests to `spot_illustration`, not `background_full`
 
 ## Estimate
 
@@ -188,14 +205,22 @@ Make ImageForge the only primary image generation path.
 
 ## Current implementation status
 
-As of `2026-03-21`:
+As of `2026-03-22`:
 
 - deterministic `quality_score`, `relevance_score`, `reason_codes`, and `recommended_candidate_id` are implemented in `imageforge`
 - `ecard-factory` persists and mirrors ImageForge rank/recommendation metadata for Studio and final render
 - `content_engine_ui` displays recommendation badges, scores, and reason codes
+- illustration-first request mapping is implemented with `asset_role=spot_illustration`
+- `ecard_spot_illustration_v1` is the canonical eCard preset and `ecard_soft_background_v1` exists as the soft-background fallback
 - local automated verification is green across `ecard-factory`, `imageforge`, and `content_engine_ui`
-- one live browser validation pass against the running local stack is still required before Stage 3 begins
+- live local-stack validation passed on `2026-03-22`:
+  - async kickoff returned the expected queued payload
+  - shortlist remained manually selectable
+  - `/image-assets/generate` returned ranked candidates with `recommended_candidate_id`, `quality_score`, `relevance_score`, and `reason_codes`
+  - no image was auto-selected
+  - select image -> render final -> approve final completed successfully through `export_ready`
 - legacy `/generate-image`-style routes still exist for compatibility, but `/image-assets/*` is the canonical image path
+- Stage 2 should be treated as mechanically working, not creatively finished
 
 ## 6. Stage 2A: Async Job Kickoff And Background Orchestration
 
@@ -257,13 +282,68 @@ Make job creation immediate and move initial content generation into a backgroun
 
 ## Current implementation status
 
-As of `2026-03-21`:
+As of `2026-03-22`:
 
 - async kickoff endpoints, background worker claim/recovery, and processing-state tracking are implemented
 - the worker is started from FastAPI lifespan and requeues stale content-generation jobs
 - Studio uses async kickoff and polls while content generation is in progress
 - local automated verification is green
-- direct live browser verification against the running local stack is still pending
+- live local-stack validation passed on `2026-03-22`:
+  - `POST /api/jobs/start-async` returned immediately with queued processing metadata
+  - shortlist data appeared asynchronously after background completion
+  - manual text selection remained required before image generation
+
+## 6A. Execution Gate Before Stage 3
+
+## Goal
+
+Use one fresh session to verify the live UI and local running stack before composition work begins.
+
+## Why this gate existed
+
+- Stage 2 and Stage 2A needed one live validation pass from the real running stack in this workspace
+- Stage 3 should not begin if the live app is still using stale routes, stale bundles, or stale backend processes
+
+## Exact deliverable
+
+- verify live job creation uses `POST /api/jobs/start-async`
+- verify Studio lands on `/studio/{job_id}` immediately
+- verify shortlist appears asynchronously without auto-selecting text
+- verify image generation uses `POST /api/jobs/{job_id}/image-assets/generate`
+- verify Studio shows recommended image metadata:
+  - recommended badge
+  - `quality`
+  - `relevance`
+  - `reason_codes`
+- verify no image is auto-selected
+- verify final render still requires manual image selection
+
+## Required evidence
+
+- one short written result in the next handoff:
+  - pass OR fail
+  - exact failing step if any
+  - exact route observed in DevTools if any mismatch exists
+
+## Exit criteria
+
+- live async kickoff is confirmed healthy
+- live canonical image path is confirmed healthy
+- Stage 3 is explicitly either unblocked or held behind a concrete blocker
+
+## Gate result
+
+As of `2026-03-22`, this gate is closed at runtime/API level:
+
+- live async kickoff is healthy
+- live canonical image path is healthy
+- manual text selection and manual image selection are both still required
+- Stage 3 is unblocked
+
+Residual note:
+
+- direct browser DevTools capture from Studio was not recorded in this workspace; do that only if explicit browser-network evidence is still required
+- legacy `/generate-image`-style routes are now frozen as compatibility-only and should be removed only in a later dedicated cleanup pass after Stage 3 stabilizes
 
 ## 7. Stage 3: Composition Stage With Pillow
 
@@ -283,15 +363,19 @@ The composition layer should render from a layout spec, not from scattered ad ho
 
 ```json
 {
-  "layout_id": "layout_minimal_v1",
+  "layout_id": "illustration_top_text_bottom",
   "canvas": {
     "width": 1080,
     "height": 1350
   },
-  "background": {
-    "image_url": "http://...",
-    "mode": "cover"
-  },
+  "background_image_url": "http://...",
+  "image_blocks": [
+    {
+      "block_id": "hero_illustration",
+      "image_url": "http://...",
+      "fit": "contain"
+    }
+  ],
   "text_blocks": [
     {
       "type": "message",
@@ -325,6 +409,29 @@ The composition layer should render from a layout spec, not from scattered ad ho
 
 - preview and final export match closely
 - layout is versioned and reproducible
+
+## Current implementation status
+
+As of `2026-03-22`, the first Stage 3 slice is implemented:
+
+- `WorkflowCardRenderer` now builds an explicit `WorkflowCardLayoutSpec`
+- final preview and final PNG/PDF export in `workflow_v1_service.py` render from the same layout spec
+- the selected image is placed as an illustration block instead of becoming the implicit card background
+- the supported deterministic final layouts are:
+  - `illustration_top_text_bottom`
+  - `text_left_illustration_right`
+- final preview, final PNG, and final PDF asset rows now persist the layout version id
+- targeted regressions passed:
+  - `tests/test_workflow_card_renderer.py`
+  - `tests/test_imageforge_integration.py`
+  - `tests/test_workflow_v1_router.py`
+
+## Next Stage 3 slice
+
+- keep the layout-spec path as the only composition path
+- extend the spec only in ways that preserve the already-validated async kickoff and canonical `/image-assets/*` path
+- improve composition flexibility before starting Stage 4 quality scoring
+- preserve preview/final parity while tuning illustration framing and text overflow behavior
 
 ## 8. Stage 4: Quality Stage
 
@@ -556,14 +663,16 @@ Do the work in this order:
 4. Stage 1 content redesign
 5. Stage 2 image redesign
 6. Stage 2A async kickoff and background orchestration
-7. Stage 3 Pillow composition redesign
-8. Stage 4 quality layer
-9. Stage 5 UI split hardening for `content_engine_ui` when needed
-10. Stage 6 bounded agent runtime
+7. Stage 2/2A live validation gate in the running UI
+8. Stage 3 Pillow composition redesign
+9. Stage 4 quality layer
+10. Stage 5 UI split hardening for `content_engine_ui` when needed
+11. Stage 6 bounded agent runtime
 
 Implementation note:
 
 - Stage 5 UI split baseline is already completed in the current workspace, so the remaining work is hardening only and is not a blocker for Stage 0-2 verification
+- the next new session should execute Step 7 only unless that validation uncovers a blocker requiring a narrow fix
 
 ## 13. Non-Deviation Conditions
 

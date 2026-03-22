@@ -156,6 +156,8 @@ class ImageGenerationService:
             "last_stage_finished_at": response.finished_at or now,
             "last_error_message": None,
         }
+        if request_payload is not None:
+            updates["output_spec"] = self._with_imageforge_request(job, request_payload)
 
         event_type = "imageforge_regenerate_completed"
         audit_payload: dict[str, Any] = {
@@ -401,6 +403,7 @@ class ImageGenerationService:
         selected_text = None
         if can_generate:
             selected_text = str(job.get("content_preview") or "").strip() or None
+        asset_role = self._resolve_image_asset_role(job)
         selected_candidate_id = str(job.get("selected_image_candidate_id") or "").strip()
         selected_relative_path = str(job.get("selected_image_relative_path") or "").strip()
         recommended_candidate_id = str(job.get("recommended_image_candidate_id") or "").strip()
@@ -427,6 +430,7 @@ class ImageGenerationService:
                     provider_run_id=str(item.get("provider_run_id") or "") or None,
                     provider=str(item.get("provider") or ""),
                     model=str(item.get("model") or "") or None,
+                    asset_role=asset_role,
                     candidate_index=self._normalize_candidate_index(item.get("candidate_index"), fallback_index=fallback_rank),
                     public_url=str(item.get("public_url") or ""),
                     relative_path=relative_path,
@@ -458,6 +462,7 @@ class ImageGenerationService:
             image_generation_stage=str(job.get("image_generation_stage") or "") or None,
             can_generate=can_generate,
             blocking_reason=None if can_generate else "text_selected is required before image generation",
+            asset_role=asset_role,
             selected_text=selected_text,
             recommended_candidate_id=recommended_candidate_id or None,
             selected_image_candidate_id=str(job.get("selected_image_candidate_id") or "") or None,
@@ -501,9 +506,65 @@ class ImageGenerationService:
             selected_image_url=selected_url,
         )
         rendering = dict(output_spec.get("rendering") or {})
-        rendering["background_image_url"] = selected_url
+        rendering["illustration_image_url"] = selected_url
         output_spec["rendering"] = rendering
         return output_spec
+
+    def _with_imageforge_request(self, job: dict[str, Any], request_payload: GenerateImageRequest) -> dict[str, Any]:
+        """Persist the resolved ImageForge contract into output metadata for Studio/debug consumers."""
+
+        output_spec = self._resolve_output_spec(job)
+        metadata = dict(output_spec.get("metadata") or {})
+        imageforge_meta = dict(metadata.get("imageforge") or {})
+        imageforge_meta.update(
+            request_payload.model_dump(
+                mode="json",
+                exclude_none=True,
+                include={
+                    "workflow_type",
+                    "asset_role",
+                    "asset_type",
+                    "style_profile",
+                    "render_spec",
+                    "scene_spec",
+                    "creative_direction",
+                    "visual_style",
+                },
+            )
+        )
+        metadata["imageforge"] = imageforge_meta
+        output_spec["metadata"] = metadata
+        return output_spec
+
+    def _resolve_image_asset_role(self, job: dict[str, Any]) -> str | None:
+        """Resolve the current ImageForge asset role from stored output metadata."""
+
+        output_spec = self._resolve_output_spec(job)
+        metadata = output_spec.get("metadata") if isinstance(output_spec.get("metadata"), dict) else {}
+        imageforge_meta = metadata.get("imageforge") if isinstance(metadata.get("imageforge"), dict) else {}
+        asset_role = str(imageforge_meta.get("asset_role") or "").strip()
+        if asset_role:
+            return asset_role
+
+        workflow_type = str(imageforge_meta.get("workflow_type") or "").strip()
+        if workflow_type == "ecard_soft_background_v1":
+            return "background"
+        if workflow_type == "festival_motif_pack":
+            return "motif"
+        if workflow_type:
+            return "spot_illustration"
+
+        asset_type = str(imageforge_meta.get("asset_type") or "").strip()
+        if asset_type == "background_full":
+            return "background"
+        if asset_type == "festival_motif":
+            return "motif"
+        if asset_type:
+            return "spot_illustration"
+
+        if job.get("imageforge_request_id") or list(job.get("image_candidates") or []):
+            return "spot_illustration"
+        return None
 
     def _build_generate_reset_updates(self, job: dict[str, Any]) -> dict[str, Any]:
         output_spec = self._with_studio_state(
@@ -513,6 +574,7 @@ class ImageGenerationService:
         )
         rendering = dict(output_spec.get("rendering") or {})
         rendering.pop("background_image_url", None)
+        rendering.pop("illustration_image_url", None)
         output_spec["rendering"] = rendering
         return {
             "status": "content_approved",

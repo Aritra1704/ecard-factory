@@ -49,6 +49,7 @@ class GenerateImageRequest(BaseModel):
     cultural_context: str | None = None
     selected_text: str | None = None
     workflow_type: str
+    asset_role: str
     asset_type: str
     style_profile: str
     scene_spec: SceneSpec | str | None = None
@@ -144,6 +145,7 @@ class ImageRequestRecord(BaseModel):
     cultural_context: str | None = None
     selected_text: str | None = None
     workflow_type: str | None = None
+    asset_role: str | None = None
     asset_type: str | None = None
     style_profile: str | None = None
     scene_spec: SceneSpec | str | None = None

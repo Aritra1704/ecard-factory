@@ -9,7 +9,12 @@ from app.services.image_provider import (
 from app.services.image_generation_service import ImageGenerationService, get_image_generation_service
 from app.services.pillow_service import PillowService
 from app.services.theme_resolver import ThemeResolver
-from app.services.workflow_card_renderer import FinalCardRenderInput, PreviewCardRenderInput, WorkflowCardRenderer
+from app.services.workflow_card_renderer import (
+    FinalCardRenderInput,
+    PreviewCardRenderInput,
+    WorkflowCardLayoutSpec,
+    WorkflowCardRenderer,
+)
 from app.services.workflow_v1_service import WorkflowV1Service
 
 __all__ = [
@@ -21,6 +26,7 @@ __all__ = [
     "PreviewCardRenderInput",
     "ThemeResolver",
     "WorkflowImageGenerationRequest",
+    "WorkflowCardLayoutSpec",
     "WorkflowCardRenderer",
     "WorkflowV1Service",
     "get_image_generation_service",
