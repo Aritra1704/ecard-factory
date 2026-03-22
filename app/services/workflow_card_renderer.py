@@ -19,6 +19,7 @@ ShapeLayer = Literal["background", "content"]
 ShapeType = Literal["rounded_rect", "ellipse"]
 TextRole = Literal["title", "body", "signoff", "metadata_title", "metadata_line"]
 ImageFitMode = Literal["contain", "cover"]
+PanelVariant = Literal["standard", "editorial", "caption"]
 
 
 @dataclass(slots=True)
@@ -64,6 +65,8 @@ class WorkflowCardShapeSpec:
     box: tuple[int, int, int, int]
     fill: tuple[int, int, int, int]
     radius: int = 0
+    outline: tuple[int, int, int, int] | None = None
+    outline_width: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,37 +447,125 @@ class WorkflowCardRenderer:
         padding: int,
         left: int | None = None,
         right: int | None = None,
+        variant: PanelVariant = "standard",
     ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardTextBlockSpec]]:
         """Build one text panel as explicit shapes and positioned text blocks."""
 
         left = padding if left is None else left
         right = width - padding if right is None else right
         panel_width = max(1, right - left)
+        panel_radius = 34
+        panel_fill = style.panel_fill
+        panel_outline: tuple[int, int, int, int] | None = None
+        outline_scale = 0.0
+        shadow_offset = max(12, int(height * 0.016))
+        shadow_fill = (35, 43, 57, 32)
+        horizontal_ratio = 0.085
+        top_ratio = 0.085
+        bottom_ratio = 0.08
+        title_scale = 0.09
+        body_scale = 0.04
+        body_minimum = 20
+        body_max_lines = 14
+        signoff_scale = 0.04
+        title_gap_ratio = 0.04
+        body_gap_ratio = 0.05
+        add_header_rule = False
+        header_rule_scale = 0.18
+
+        if variant == "editorial":
+            panel_radius = 40
+            panel_fill = (250, 247, 241, 238)
+            panel_outline = self._with_alpha(style.accent_color, 120)
+            outline_scale = 0.006
+            shadow_fill = self._with_alpha(style.accent_color, 26)
+            horizontal_ratio = 0.1
+            top_ratio = 0.1
+            bottom_ratio = 0.09
+            title_scale = 0.102
+            body_scale = 0.043
+            body_minimum = 22
+            body_max_lines = 11
+            signoff_scale = 0.044
+            title_gap_ratio = 0.045
+            body_gap_ratio = 0.055
+            add_header_rule = True
+            header_rule_scale = 0.22
+        elif variant == "caption":
+            panel_radius = 38
+            panel_fill = (252, 249, 243, 238)
+            panel_outline = self._with_alpha(style.accent_color, 128)
+            outline_scale = 0.007
+            shadow_fill = self._with_alpha(style.accent_color, 24)
+            horizontal_ratio = 0.095
+            top_ratio = 0.095
+            bottom_ratio = 0.085
+            title_scale = 0.094
+            body_scale = 0.041
+            body_minimum = 22
+            body_max_lines = 10
+            signoff_scale = 0.04
+            title_gap_ratio = 0.042
+            body_gap_ratio = 0.05
+            add_header_rule = True
+            header_rule_scale = 0.2
+
+        panel_outline_width = max(0, int(panel_width * outline_scale)) if panel_outline else 0
+        panel_shadow = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(left, top + shadow_offset, right, top + height + shadow_offset),
+            fill=shadow_fill,
+            radius=panel_radius + 2,
+        )
         panel_shape = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
             box=(left, top, right, top + height),
-            fill=style.panel_fill,
-            radius=34,
+            fill=panel_fill,
+            radius=panel_radius,
+            outline=panel_outline,
+            outline_width=panel_outline_width,
         )
 
-        horizontal_inset = max(28, int(panel_width * 0.085))
+        horizontal_inset = max(28, int(panel_width * horizontal_ratio))
         inner_left = left + horizontal_inset
         inner_right = right - horizontal_inset
-        inner_top = top + int(height * 0.085)
-        inner_bottom = top + height - int(height * 0.08)
+        inner_top = top + int(height * top_ratio)
+        inner_bottom = top + height - int(height * bottom_ratio)
         content_width = inner_right - inner_left
         vertical_space = inner_bottom - inner_top
 
         scratch = Image.new("RGBA", (width, max(top + height, 1)))
         draw = ImageDraw.Draw(scratch, "RGBA")
 
+        shapes = [panel_shadow, panel_shape]
         blocks: list[WorkflowCardTextBlockSpec] = []
         cursor_y = inner_top
+        if add_header_rule:
+            rule_width = max(120, int(panel_width * header_rule_scale))
+            rule_height = max(8, int(height * 0.012))
+            if alignment == "center":
+                rule_left = left + ((panel_width - rule_width) // 2)
+            elif alignment == "right":
+                rule_left = right - horizontal_inset - rule_width
+            else:
+                rule_left = inner_left
+            rule_top = top + int(height * 0.055)
+            shapes.append(
+                WorkflowCardShapeSpec(
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(rule_left, rule_top, rule_left + rule_width, rule_top + rule_height),
+                    fill=self._with_alpha(style.accent_color, 178),
+                    radius=999,
+                )
+            )
+            cursor_y = max(cursor_y, rule_top + rule_height + int(height * 0.045))
 
         title_text = (title or "").strip()
         if title_text:
-            initial_title_size = max(34, int(panel_width * 0.09))
+            initial_title_size = max(34, int(panel_width * title_scale))
             title_font = self._load_font(size=initial_title_size)
             title_lines = self._wrap_lines(draw, title_text, title_font, content_width, max_lines=2)
             title_font_size = getattr(title_font, "size", initial_title_size)
@@ -494,20 +585,23 @@ class WorkflowCardRenderer:
                     alignment=alignment,
                 )
             )
-            cursor_y += title_height + int(height * 0.04)
+            cursor_y += title_height + int(height * title_gap_ratio)
 
         signoff_text = (signoff or "").strip()
         body_max_height = vertical_space - (cursor_y - inner_top)
         if signoff_text:
-            body_max_height -= int(height * 0.12)
+            body_max_height -= int(height * 0.12 if variant == "standard" else 0.105)
         body_font, body_lines, body_spacing = self._fit_body_text(
             draw=draw,
             message=message,
             max_width=content_width,
             max_height=max(body_max_height, 150),
             width=panel_width,
+            initial_scale=body_scale,
+            minimum_size=body_minimum,
+            max_lines=body_max_lines,
         )
-        body_font_size = getattr(body_font, "size", max(24, int(panel_width * 0.055)))
+        body_font_size = getattr(body_font, "size", max(24, int(panel_width * max(body_scale, 0.04))))
         body_height = self._measure_multiline_height(draw, body_lines, body_font, body_spacing)
         blocks.append(
             WorkflowCardTextBlockSpec(
@@ -523,10 +617,10 @@ class WorkflowCardRenderer:
                 alignment=alignment,
             )
         )
-        cursor_y += body_height + int(height * 0.05)
+        cursor_y += body_height + int(height * body_gap_ratio)
 
         if signoff_text:
-            signoff_size = max(22, int(panel_width * 0.04))
+            signoff_size = max(22, int(panel_width * signoff_scale))
             blocks.append(
                 WorkflowCardTextBlockSpec(
                     block_id="signoff",
@@ -542,7 +636,7 @@ class WorkflowCardRenderer:
                 )
             )
 
-        return [panel_shape], blocks
+        return shapes, blocks
 
     def _build_top_illustration_final_layout(
         self,
@@ -565,7 +659,7 @@ class WorkflowCardRenderer:
         art_shadow = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
-            box=frame_box,
+            box=(frame_box[0], frame_box[1] + int(height * 0.012), frame_box[2], frame_box[3] + int(height * 0.012)),
             fill=(35, 43, 57, 44),
             radius=38,
         )
@@ -580,6 +674,8 @@ class WorkflowCardRenderer:
             ),
             fill=(255, 248, 240, 228),
             radius=38,
+            outline=self._with_alpha(style.accent_color, 130),
+            outline_width=max(4, int(width * 0.005)),
         )
         art_matte = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
@@ -592,6 +688,8 @@ class WorkflowCardRenderer:
             ),
             fill=(255, 255, 255, 238),
             radius=30,
+            outline=(223, 214, 203, 255),
+            outline_width=max(2, int(width * 0.002)),
         )
         image_blocks: list[WorkflowCardImageBlockSpec] = []
         if illustration_image_url:
@@ -606,7 +704,7 @@ class WorkflowCardRenderer:
                         frame_box[2] - int(width * 0.048),
                         frame_box[3] - int(height * 0.056),
                     ),
-                    fit="contain",
+                    fit="cover",
                     corner_radius=28,
                 )
             )
@@ -625,8 +723,8 @@ class WorkflowCardRenderer:
             radius=999,
         )
 
-        panel_top = illustration_bottom + int(height * 0.042)
-        panel_height = max(int(height * 0.22), height - panel_top - int(height * 0.09))
+        panel_top = illustration_bottom - int(height * 0.028)
+        panel_height = max(int(height * 0.23), height - panel_top - int(height * 0.085))
         panel_left = padding + int(width * 0.08)
         panel_right = width - padding - int(width * 0.08)
         panel_shapes, panel_blocks = self._build_message_panel_layout(
@@ -641,6 +739,7 @@ class WorkflowCardRenderer:
             padding=padding,
             left=panel_left,
             right=panel_right,
+            variant="caption",
         )
         return [art_shadow, art_frame, art_matte, accent_bar, *panel_shapes], image_blocks, panel_blocks
 
@@ -670,7 +769,7 @@ class WorkflowCardRenderer:
         image_shadow = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
-            box=(image_left, top, image_right, bottom),
+            box=(image_left, top + int(height * 0.012), image_right, bottom + int(height * 0.012)),
             fill=(35, 43, 57, 42),
             radius=36,
         )
@@ -680,6 +779,8 @@ class WorkflowCardRenderer:
             box=(image_left, top - int(height * 0.008), image_right, bottom - int(height * 0.008)),
             fill=(255, 248, 240, 232),
             radius=34,
+            outline=self._with_alpha(style.accent_color, 122),
+            outline_width=max(4, int(width * 0.004)),
         )
         image_matte = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
@@ -692,6 +793,8 @@ class WorkflowCardRenderer:
             ),
             fill=(255, 255, 255, 240),
             radius=28,
+            outline=(223, 214, 203, 255),
+            outline_width=max(2, int(width * 0.002)),
         )
         image_blocks: list[WorkflowCardImageBlockSpec] = []
         if illustration_image_url:
@@ -706,7 +809,7 @@ class WorkflowCardRenderer:
                         image_right - int(width * 0.022),
                         bottom - int(height * 0.025),
                     ),
-                    fit="contain",
+                    fit="cover",
                     corner_radius=28,
                 )
             )
@@ -723,6 +826,7 @@ class WorkflowCardRenderer:
             padding=padding,
             left=text_left,
             right=text_right,
+            variant="editorial",
         )
         return [image_shadow, image_shape, image_matte, *panel_shapes], image_blocks, panel_blocks
 
@@ -750,7 +854,7 @@ class WorkflowCardRenderer:
         image_shadow = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
-            box=(frame_left, top, frame_right, bottom),
+            box=(frame_left, top + int(height * 0.012), frame_right, bottom + int(height * 0.012)),
             fill=(35, 43, 57, 48),
             radius=40,
         )
@@ -760,6 +864,8 @@ class WorkflowCardRenderer:
             box=(frame_left, top - int(height * 0.01), frame_right, bottom - int(height * 0.01)),
             fill=(255, 248, 240, 234),
             radius=40,
+            outline=self._with_alpha(style.accent_color, 136),
+            outline_width=max(5, int(width * 0.005)),
         )
         image_matte = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
@@ -772,6 +878,8 @@ class WorkflowCardRenderer:
             ),
             fill=(255, 255, 255, 242),
             radius=30,
+            outline=(223, 214, 203, 255),
+            outline_width=max(2, int(width * 0.002)),
         )
 
         image_blocks: list[WorkflowCardImageBlockSpec] = []
@@ -787,10 +895,23 @@ class WorkflowCardRenderer:
                         frame_right - int(width * 0.04),
                         bottom - int(height * 0.07),
                     ),
-                    fit="contain",
+                    fit="cover",
                     corner_radius=24,
                 )
             )
+
+        poster_crown = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                frame_left + int(width * 0.12),
+                top - int(height * 0.022),
+                frame_right - int(width * 0.12),
+                top - int(height * 0.008),
+            ),
+            fill=self._with_alpha(style.accent_color, 166),
+            radius=999,
+        )
 
         accent_bar_top = bottom + int(height * 0.012)
         accent_bar = WorkflowCardShapeSpec(
@@ -822,8 +943,9 @@ class WorkflowCardRenderer:
             padding=padding,
             left=panel_left,
             right=panel_right,
+            variant="caption",
         )
-        return [image_shadow, image_shape, image_matte, accent_bar, *panel_shapes], image_blocks, panel_blocks
+        return [image_shadow, image_shape, image_matte, poster_crown, accent_bar, *panel_shapes], image_blocks, panel_blocks
 
     def _fit_body_text(
         self,
@@ -833,13 +955,15 @@ class WorkflowCardRenderer:
         max_width: int,
         max_height: int,
         width: int,
+        initial_scale: float = 0.04,
+        minimum_size: int = 20,
+        max_lines: int = 14,
     ) -> tuple[ImageFont.ImageFont, list[str], int]:
         """Wrap and scale body text so it fits without overflow."""
 
         text = message.strip() or "Warm wishes."
-        initial = max(28, int(width * 0.04))
-        minimum = 20
-        max_lines = 14
+        initial = max(28, int(width * initial_scale))
+        minimum = minimum_size
 
         for size in range(initial, minimum - 1, -2):
             font = self._load_font(size=size)
@@ -901,9 +1025,15 @@ class WorkflowCardRenderer:
         """Render one geometric shape from the explicit layout spec."""
 
         if shape.shape_type == "ellipse":
-            draw.ellipse(shape.box, fill=shape.fill)
+            draw.ellipse(shape.box, fill=shape.fill, outline=shape.outline, width=shape.outline_width)
             return
-        draw.rounded_rectangle(shape.box, radius=shape.radius, fill=shape.fill)
+        draw.rounded_rectangle(
+            shape.box,
+            radius=shape.radius,
+            fill=shape.fill,
+            outline=shape.outline,
+            width=shape.outline_width,
+        )
 
     def _draw_image_block(
         self,
@@ -1085,6 +1215,12 @@ class WorkflowCardRenderer:
             return None
         cleaned = "".join(char for char in raw if char.isalnum() or char in {"_", "-"}).strip("_-")
         return cleaned or None
+
+    @staticmethod
+    def _with_alpha(color: tuple[int, int, int, int], alpha: int) -> tuple[int, int, int, int]:
+        """Return one RGBA color with a replaced alpha channel."""
+
+        return (color[0], color[1], color[2], max(0, min(255, alpha)))
 
     @staticmethod
     def _build_template_shapes(width: int, height: int, style: _TemplateStyle) -> tuple[WorkflowCardShapeSpec, ...]:

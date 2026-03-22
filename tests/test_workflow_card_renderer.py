@@ -48,6 +48,8 @@ def test_build_final_layout_spec_is_versioned_and_explicit() -> None:
     assert any(shape.shape_type == "rounded_rect" and shape.layer == "content" for shape in layout.shapes)
     assert any(shape.shape_type == "ellipse" and shape.layer == "background" for shape in layout.shapes)
     assert len(layout.image_blocks) == 1
+    assert layout.image_blocks[0].fit == "cover"
+    assert any(shape.outline_width > 0 for shape in layout.shapes)
     assert {block.role for block in layout.text_blocks} >= {"title", "body", "signoff"}
 
 
@@ -127,3 +129,29 @@ def test_elegant_theme_defaults_to_side_by_side_layout() -> None:
 
     assert layout.layout_id == "text_left_illustration_right"
     assert len(layout.image_blocks) == 1
+    assert layout.image_blocks[0].fit == "cover"
+    assert any(shape.outline_width > 0 for shape in layout.shapes)
+
+
+def test_minimal_theme_defaults_to_top_layout_with_caption_panel_polish() -> None:
+    """Minimal cards should keep the top-art layout but still use the polished framing rules."""
+
+    renderer = WorkflowCardRenderer()
+
+    layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Warm Hello",
+            message="A calm minimal card should still get framed art and a styled caption panel.",
+            signoff="Take care",
+            theme_style="minimal",
+            background_image_url=None,
+            illustration_image_url="https://example.com/minimal.png",
+            text_alignment="center",
+            export_size="1080x1350",
+        )
+    )
+
+    assert layout.layout_id == "illustration_top_text_bottom"
+    assert len(layout.image_blocks) == 1
+    assert layout.image_blocks[0].fit == "cover"
+    assert any(shape.outline_width > 0 for shape in layout.shapes)

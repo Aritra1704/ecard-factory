@@ -175,6 +175,11 @@ What has been completed:
     - `festive` and `playful` -> `poster_illustration_caption`
     - fallback -> `illustration_top_text_bottom`
   - renderer tests were extended so theme-aware layout defaults are covered explicitly
+- the current Stage 3 polish slice has started and is regression-tested:
+  - final-card shapes now support decorative outline/border rendering inside the layout spec
+  - the existing layouts now use stronger framed-art treatment instead of flat surfaces only
+  - final image placement in the main card layouts now uses fuller framed rendering with `cover` fit
+  - text panels now support styled variants so poster/caption/editorial layouts have clearer hierarchy
 
 What this does not mean:
 
@@ -185,8 +190,9 @@ What this does not mean:
 Current limitation to carry forward explicitly:
 
 - the current composed card can still feel too assembled and is not acceptable as the end-state design language
-- theme-aware layout defaults now exist, but the layouts still need more polish in typography, framing, and image handling
-- decorative treatment, crop discipline, and theme-specific composition language are still too weak
+- theme-aware layout defaults now exist, and framed-art polish has started, but the layouts still need more work in typography and theme-specific composition language
+- decorative treatment is stronger than before, but still not at the level of a premium designed eCard
+- live visual QA is still required to confirm that the new `cover` fit and framed panels look correct across representative themes
 
 ## 7. Live Validation Result
 
@@ -344,6 +350,17 @@ Result:
 - compile check passed for the current Stage 3 layout-selection slice
 
 ```bash
+cd ecard-factory
+venv/bin/python -m py_compile app/services/workflow_card_renderer.py tests/test_workflow_card_renderer.py
+venv/bin/python -m pytest tests/test_workflow_card_renderer.py tests/test_imageforge_integration.py tests/test_workflow_v1_router.py -q
+```
+
+Result:
+
+- `37 passed in 14.28s`
+- compile check passed for the Stage 3 visual polish slice
+
+```bash
 cd contentforge
 venv/bin/python -m pytest tests/test_prompt_templates.py tests/test_golden_set.py
 ```
@@ -412,6 +429,85 @@ Actual repo path:
 /Users/aritrarpal/Documents/workspace_biz/content_generation_engine/ecard-factory
 ```
 
+## 11A. Manual QA Workflow For The Current Build
+
+Use this exact workflow to validate the current stack from UI through final export.
+
+Preconditions:
+
+- local stack is running
+- `ecard-factory`, `content_engine_ui`, `contentforge`, `imageforge`, Postgres, and ComfyUI are healthy
+- Studio is served from `http://localhost:4173`
+
+Step-by-step:
+
+1. Open Studio and create a new job.
+   - Expected:
+     - job creation returns immediately
+     - Studio lands on the job page without waiting for content generation to finish
+2. Wait for shortlist generation.
+   - Expected:
+     - queued/running content state is visible
+     - shortlist appears asynchronously
+     - no text is auto-selected
+3. Select one text candidate manually.
+   - Expected:
+     - selected text is clearly shown
+     - image generation remains unavailable until text is selected
+4. Generate image candidates.
+   - Expected:
+     - ImageForge candidates appear through the canonical `/image-assets/*` flow
+     - recommendation metadata is visible:
+       - recommended badge
+       - `quality_score`
+       - `relevance_score`
+       - `reason_codes`
+     - no image is auto-selected
+5. Select one image candidate manually.
+   - Expected:
+     - selected image is clearly shown
+     - final render remains gated on this manual image selection
+6. Render the final card.
+   - Expected:
+     - the `Final Card` section shows the Pillow-composed final card for review
+     - the raw image preview must not masquerade as the final eCard review asset
+     - the card should use framed art, stronger panel treatment, and the current theme-aware layout defaults
+7. Review the current Stage 3 polish outcome.
+   - Expected:
+     - art fills the framed area more fully because the current layouts now use `cover` fit
+     - text panel shows stronger border/frame treatment
+     - the result should look better than the old plain text-over-image composition, but it may still not feel commercially premium yet
+8. Approve the final card.
+   - Expected:
+     - final PNG/PDF export completes
+     - job reaches `export_ready`
+
+Failure signals to watch for:
+
+- shortlist never appears after async kickoff
+- text or image gets auto-selected
+- Studio still shows raw `image_preview` as the final review asset
+- final card image crops badly with the new `cover` fit
+- typography or spacing visibly overflows the panel
+- approve-final does not produce export assets
+
+## 11B. Remaining Roadmap Count
+
+From the current roadmap, there are `4` remaining implementation blocks after the already-completed Stage 0, Stage 1, Stage 2, and Stage 2A work:
+
+1. finish Stage 3 composition redesign
+2. implement Stage 4 quality/scoring layer
+3. do Stage 5 UI hardening only where needed
+   - Stage 5 baseline extraction is already complete; this is not a full greenfield stage anymore
+4. implement Stage 6 bounded agent runtime
+
+Current practical focus:
+
+- only Stage 3 is active right now
+- Stage 4 should not start before Stage 3 is visually acceptable
+- Stage 5 hardening is secondary and non-blocking for the current eCard flow
+- Stage 6 is explicitly deferred until deterministic quality is stronger
+
 ## 12. Recommended Next Step
 
 ### Immediate next action
@@ -430,10 +526,15 @@ Stage 3 work already completed:
    - `illustration_top_text_bottom`
    - `text_left_illustration_right`
    - `poster_illustration_caption`
+8. started the next Stage 3 polish slice:
+   - decorative outlines and borders now exist in the Pillow layout spec
+   - framed art treatment is stronger across the existing final-card layouts
+   - text panels now use styled variants for caption/editorial treatment
+   - main final-card image blocks now render with fuller `cover` placement
 
 Next implementation slice still remaining:
 
-1. push the layouts from mechanically distinct to visually strong
+1. push the layouts from visually improved to consistently premium
 2. keep the layout-spec-first approach and expand it only within `ecard-factory`
 3. preserve preview/final export parity and the already-validated Stage 0/2/2A contracts
 4. improve composition quality without changing the async kickoff or canonical `/image-assets/*` path
@@ -441,7 +542,7 @@ Next implementation slice still remaining:
 Concrete next phase of changes:
 
 1. keep theme-aware multi-layout composition as the active Stage 3 topic
-2. strengthen the existing layout modes with better crop/safe-area rules and image placement
+2. tune the new `cover` image placement and safe-area rules against real generated art
 3. add at least one more premium composition mode only if it clearly improves card quality
 4. stop treating the selected image as only a generic background candidate
 5. improve typography hierarchy:
@@ -452,7 +553,7 @@ Concrete next phase of changes:
    - borders
    - shape accents
    - festival framing
-7. add stronger decorative framing and panel treatment so the card reads as designed, not assembled
+7. deepen the decorative framing and panel treatment so the card reads as designed, not assembled
 8. run live Studio visual QA on a few representative themes after the redesign slice lands
 
 Acceptance rule for the next phase:
