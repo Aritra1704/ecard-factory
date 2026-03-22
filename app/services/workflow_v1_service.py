@@ -3819,8 +3819,17 @@ class WorkflowV1Service:
         options = self._resolve_rendering_options(job)
         raw_layout_id = str(options.get("layout_id") or "").strip().lower()
         sanitized = "".join(char for char in raw_layout_id if char.isalnum() or char in {"_", "-"}).strip("_-")
-        if sanitized in {"illustration_top_text_bottom", "text_left_illustration_right"}:
+        if sanitized in {
+            "illustration_top_text_bottom",
+            "text_left_illustration_right",
+            "poster_illustration_caption",
+        }:
             return sanitized
+        theme_style = self._resolve_theme_style(job)
+        if theme_style == "elegant":
+            return "text_left_illustration_right"
+        if theme_style in {"festive", "playful"}:
+            return "poster_illustration_caption"
         return "illustration_top_text_bottom"
 
     def _resolve_theme_style(self, job: dict[str, Any]) -> str:

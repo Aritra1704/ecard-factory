@@ -164,17 +164,29 @@ What has been completed:
 - Pillow now renders through an explicit layout spec
 - final preview and final PNG/PDF export use the same layout-spec path
 - final asset rows now persist the layout version id
+- a fast follow-up slice landed:
+  - illustration-first composition was tightened so the final card has a clearer art zone and smaller text zone
+  - Studio final-card review was narrowed in `content_engine_ui` so the raw image preview does not masquerade as a final card asset
+- the next Stage 3 composition slice is now partially complete:
+  - final-card layout selection supports multiple explicit layouts instead of one generic final-card shape
+  - `poster_illustration_caption` now exists as a real Pillow layout mode
+  - theme-aware defaults now choose a better layout by style:
+    - `elegant` -> `text_left_illustration_right`
+    - `festive` and `playful` -> `poster_illustration_caption`
+    - fallback -> `illustration_top_text_bottom`
+  - renderer tests were extended so theme-aware layout defaults are covered explicitly
 
 What this does not mean:
 
 - the current visual result is not the intended final design quality
-- the current Pillow output is still essentially a basic single-panel overlay composition
-- this slice solved renderer structure and preview/export parity, not premium visual composition
+- the current Pillow output is still not premium visual composition
+- this slice improved renderer structure, preview/export parity, and layout variety, but it did not finish the creative redesign
 
 Current limitation to carry forward explicitly:
 
-- the current composed card can still feel like "text pasted on top of the image" and is not acceptable as the end-state design language
-- the Studio `Final Card` section can also still surface the raw image preview alongside the real final preview, which is confusing and should be cleaned up in the next UI hardening pass
+- the current composed card can still feel too assembled and is not acceptable as the end-state design language
+- theme-aware layout defaults now exist, but the layouts still need more polish in typography, framing, and image handling
+- decorative treatment, crop discipline, and theme-specific composition language are still too weak
 
 ## 7. Live Validation Result
 
@@ -321,6 +333,17 @@ Result:
 - `35 passed in 13.41s`
 
 ```bash
+cd ecard-factory
+venv/bin/python -m py_compile app/services/workflow_card_renderer.py app/services/workflow_v1_service.py tests/test_workflow_card_renderer.py
+venv/bin/python -m pytest tests/test_workflow_card_renderer.py tests/test_imageforge_integration.py tests/test_workflow_v1_router.py -q
+```
+
+Result:
+
+- `36 passed in 14.36s`
+- compile check passed for the current Stage 3 layout-selection slice
+
+```bash
 cd contentforge
 venv/bin/python -m pytest tests/test_prompt_templates.py tests/test_golden_set.py
 ```
@@ -374,8 +397,8 @@ Before opening a PR or switching focus, review current worktree state.
 
 At handoff time:
 
-- `ecard-factory` has multiple modified files plus untracked migrations and worker file
-- `content_engine_ui` has modified source and built assets
+- `ecard-factory` has modified Stage 3 renderer/service/test files plus this handoff doc
+- `content_engine_ui` still has modified source and built assets from the Studio review cleanup
 
 Do not assume the repos are clean.
 
@@ -395,30 +418,32 @@ Actual repo path:
 
 Continue Stage 3 composition work.
 
-First Stage 3 slice already completed:
+Stage 3 work already completed:
 
 1. defined the first explicit layout spec inside the Pillow renderer
 2. routed final preview and final export through the same layout spec path
 3. persisted the layout version on final preview/PNG/PDF asset rows
 4. regression-tested the canonical workflow after the refactor
+5. tightened the first illustration-first composition so the card has clearer art/text zones
+6. narrowed Studio final-card review so the raw image preview does not pretend to be the final eCard
+7. added a multi-layout composition slice with theme-aware defaults:
+   - `illustration_top_text_bottom`
+   - `text_left_illustration_right`
+   - `poster_illustration_caption`
 
-Next implementation slice:
+Next implementation slice still remaining:
 
-1. redesign composition so the final card is not just a text panel over a generated image
+1. push the layouts from mechanically distinct to visually strong
 2. keep the layout-spec-first approach and expand it only within `ecard-factory`
 3. preserve preview/final export parity and the already-validated Stage 0/2/2A contracts
 4. improve composition quality without changing the async kickoff or canonical `/image-assets/*` path
 
 Concrete next phase of changes:
 
-1. add real layout modes:
-   - split layout
-   - framed art layout
-   - poster layout
-   - hero-art plus caption layout
-2. stop treating the selected image as only a generic background candidate
-3. introduce explicit image zone plus text zone composition in the layout spec
-4. support image-safe cropping, padding, and placement rules
+1. keep theme-aware multi-layout composition as the active Stage 3 topic
+2. strengthen the existing layout modes with better crop/safe-area rules and image placement
+3. add at least one more premium composition mode only if it clearly improves card quality
+4. stop treating the selected image as only a generic background candidate
 5. improve typography hierarchy:
    - better title/body/signoff scale separation
    - theme-specific font choices if available
@@ -427,7 +452,8 @@ Concrete next phase of changes:
    - borders
    - shape accents
    - festival framing
-7. update Studio so `Final Card` shows the actual Pillow-composed card clearly and does not mix it with the raw image preview in the same review slot
+7. add stronger decorative framing and panel treatment so the card reads as designed, not assembled
+8. run live Studio visual QA on a few representative themes after the redesign slice lands
 
 Acceptance rule for the next phase:
 
@@ -470,7 +496,8 @@ First, read:
 Then do this:
 - continue Stage 3 composition work inside `ecard-factory`
 - keep the explicit layout spec as the source of truth for Pillow composition
-- redesign the current single-panel overlay into a real card composition system
+- continue from the current multi-layout foundation instead of restarting Stage 3 from scratch
+- polish the existing layouts so they read as designed cards instead of mechanically separated panels
 - extend composition behavior from that layout-spec path without disturbing the canonical workflow
 - preserve the already-validated async kickoff and canonical `/image-assets/*` path
 
@@ -502,9 +529,9 @@ First read:
 - ecard-factory/docs/NEXT_STEPS_LLD_v0.1.md
 
 Then do this only:
-- continue from the initial explicit layout-spec implementation in the Pillow renderer
+- continue from the existing explicit multi-layout implementation in the Pillow renderer
 - keep `render-final` and final export on the shared layout-spec path
-- replace the current basic single-panel overlay with a more intentional card composition
+- improve the current layouts so the result feels premium rather than mechanically composed
 - extend composition capability while keeping preview/final export parity
 - preserve the already-validated async kickoff and canonical image-selection path
 

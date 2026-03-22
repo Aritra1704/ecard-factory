@@ -42,7 +42,7 @@ def test_build_final_layout_spec_is_versioned_and_explicit() -> None:
         )
     )
 
-    assert layout.layout_id == "illustration_top_text_bottom"
+    assert layout.layout_id == "poster_illustration_caption"
     assert layout.canvas_width == 1200
     assert layout.canvas_height == 1500
     assert any(shape.shape_type == "rounded_rect" and shape.layer == "content" for shape in layout.shapes)
@@ -105,3 +105,25 @@ def test_render_layout_png_honors_canvas_dimensions_and_custom_layout_id() -> No
         assert image.format == "PNG"
         assert image.size == (900, 1200)
     assert layout.layout_id == "text_left_illustration_right"
+
+
+def test_elegant_theme_defaults_to_side_by_side_layout() -> None:
+    """Elegant cards should default to the side-by-side composition preset."""
+
+    renderer = WorkflowCardRenderer()
+
+    layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Quiet Grace",
+            message="A restrained, polished design should not default to the festival poster layout.",
+            signoff="Regards",
+            theme_style="elegant",
+            background_image_url=None,
+            illustration_image_url="https://example.com/elegant.png",
+            text_alignment="left",
+            export_size="1080x1350",
+        )
+    )
+
+    assert layout.layout_id == "text_left_illustration_right"
+    assert len(layout.image_blocks) == 1

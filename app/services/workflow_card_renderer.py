@@ -256,6 +256,18 @@ class WorkflowCardRenderer:
                 style=style,
                 padding=padding,
             )
+        elif layout_id == "poster_illustration_caption":
+            panel_shapes, panel_images, panel_blocks = self._build_poster_final_layout(
+                width=width,
+                height=height,
+                title=(payload.title or "").strip() or None,
+                message=payload.message,
+                signoff=payload.signoff,
+                alignment=payload.text_alignment,
+                illustration_image_url=payload.illustration_image_url,
+                style=style,
+                padding=padding,
+            )
         else:
             panel_shapes, panel_images, panel_blocks = self._build_top_illustration_final_layout(
                 width=width,
@@ -437,6 +449,7 @@ class WorkflowCardRenderer:
 
         left = padding if left is None else left
         right = width - padding if right is None else right
+        panel_width = max(1, right - left)
         panel_shape = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
@@ -445,8 +458,9 @@ class WorkflowCardRenderer:
             radius=34,
         )
 
-        inner_left = left + int(width * 0.055)
-        inner_right = right - int(width * 0.055)
+        horizontal_inset = max(28, int(panel_width * 0.085))
+        inner_left = left + horizontal_inset
+        inner_right = right - horizontal_inset
         inner_top = top + int(height * 0.085)
         inner_bottom = top + height - int(height * 0.08)
         content_width = inner_right - inner_left
@@ -460,7 +474,7 @@ class WorkflowCardRenderer:
 
         title_text = (title or "").strip()
         if title_text:
-            initial_title_size = int(width * 0.06)
+            initial_title_size = max(34, int(panel_width * 0.09))
             title_font = self._load_font(size=initial_title_size)
             title_lines = self._wrap_lines(draw, title_text, title_font, content_width, max_lines=2)
             title_font_size = getattr(title_font, "size", initial_title_size)
@@ -491,9 +505,9 @@ class WorkflowCardRenderer:
             message=message,
             max_width=content_width,
             max_height=max(body_max_height, 150),
-            width=width,
+            width=panel_width,
         )
-        body_font_size = getattr(body_font, "size", max(28, int(width * 0.04)))
+        body_font_size = getattr(body_font, "size", max(24, int(panel_width * 0.055)))
         body_height = self._measure_multiline_height(draw, body_lines, body_font, body_spacing)
         blocks.append(
             WorkflowCardTextBlockSpec(
@@ -512,7 +526,7 @@ class WorkflowCardRenderer:
         cursor_y += body_height + int(height * 0.05)
 
         if signoff_text:
-            signoff_size = max(24, int(width * 0.028))
+            signoff_size = max(22, int(panel_width * 0.04))
             blocks.append(
                 WorkflowCardTextBlockSpec(
                     block_id="signoff",
@@ -545,15 +559,39 @@ class WorkflowCardRenderer:
     ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
         """Build the canonical illustration-top, text-bottom final layout."""
 
-        top = int(height * 0.08)
-        illustration_bottom = int(height * 0.48)
+        top = int(height * 0.07)
+        illustration_bottom = int(height * 0.57)
         frame_box = (padding, top, width - padding, illustration_bottom)
-        image_shape = WorkflowCardShapeSpec(
+        art_shadow = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
             box=frame_box,
-            fill=(255, 255, 255, 170),
-            radius=34,
+            fill=(35, 43, 57, 44),
+            radius=38,
+        )
+        art_frame = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                frame_box[0],
+                frame_box[1] - int(height * 0.01),
+                frame_box[2],
+                frame_box[3] - int(height * 0.01),
+            ),
+            fill=(255, 248, 240, 228),
+            radius=38,
+        )
+        art_matte = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                frame_box[0] + int(width * 0.022),
+                frame_box[1] + int(height * 0.014),
+                frame_box[2] - int(width * 0.022),
+                frame_box[3] - int(height * 0.028),
+            ),
+            fill=(255, 255, 255, 238),
+            radius=30,
         )
         image_blocks: list[WorkflowCardImageBlockSpec] = []
         if illustration_image_url:
@@ -563,18 +601,34 @@ class WorkflowCardRenderer:
                     layer="content",
                     image_url=illustration_image_url,
                     box=(
-                        frame_box[0] + int(width * 0.035),
-                        frame_box[1] + int(height * 0.03),
-                        frame_box[2] - int(width * 0.035),
-                        frame_box[3] - int(height * 0.03),
+                        frame_box[0] + int(width * 0.048),
+                        frame_box[1] + int(height * 0.034),
+                        frame_box[2] - int(width * 0.048),
+                        frame_box[3] - int(height * 0.056),
                     ),
                     fit="contain",
                     corner_radius=28,
                 )
             )
 
-        panel_top = illustration_bottom + int(height * 0.04)
-        panel_height = max(int(height * 0.28), height - panel_top - padding)
+        accent_bar_top = illustration_bottom + int(height * 0.014)
+        accent_bar = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                int(width * 0.37),
+                accent_bar_top,
+                int(width * 0.63),
+                accent_bar_top + max(8, int(height * 0.01)),
+            ),
+            fill=style.accent_color,
+            radius=999,
+        )
+
+        panel_top = illustration_bottom + int(height * 0.042)
+        panel_height = max(int(height * 0.22), height - panel_top - int(height * 0.09))
+        panel_left = padding + int(width * 0.08)
+        panel_right = width - padding - int(width * 0.08)
         panel_shapes, panel_blocks = self._build_message_panel_layout(
             width=width,
             top=panel_top,
@@ -585,8 +639,10 @@ class WorkflowCardRenderer:
             alignment=alignment,
             style=style,
             padding=padding,
+            left=panel_left,
+            right=panel_right,
         )
-        return [image_shape, *panel_shapes], image_blocks, panel_blocks
+        return [art_shadow, art_frame, art_matte, accent_bar, *panel_shapes], image_blocks, panel_blocks
 
     def _build_side_by_side_final_layout(
         self,
@@ -603,20 +659,39 @@ class WorkflowCardRenderer:
     ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
         """Build the alternate text-left, illustration-right final layout."""
 
-        top = int(height * 0.16)
-        bottom = int(height * 0.82)
-        gutter = int(width * 0.035)
+        top = int(height * 0.14)
+        bottom = int(height * 0.84)
+        gutter = int(width * 0.04)
         text_left = padding
-        text_right = int(width * 0.52)
+        text_right = int(width * 0.47)
         image_left = text_right + gutter
         image_right = width - padding
 
-        image_shape = WorkflowCardShapeSpec(
+        image_shadow = WorkflowCardShapeSpec(
             shape_type="rounded_rect",
             layer="content",
             box=(image_left, top, image_right, bottom),
-            fill=(255, 255, 255, 168),
+            fill=(35, 43, 57, 42),
+            radius=36,
+        )
+        image_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(image_left, top - int(height * 0.008), image_right, bottom - int(height * 0.008)),
+            fill=(255, 248, 240, 232),
             radius=34,
+        )
+        image_matte = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                image_left + int(width * 0.018),
+                top + int(height * 0.01),
+                image_right - int(width * 0.018),
+                bottom - int(height * 0.026),
+            ),
+            fill=(255, 255, 255, 240),
+            radius=28,
         )
         image_blocks: list[WorkflowCardImageBlockSpec] = []
         if illustration_image_url:
@@ -649,7 +724,106 @@ class WorkflowCardRenderer:
             left=text_left,
             right=text_right,
         )
-        return [*panel_shapes, image_shape], image_blocks, panel_blocks
+        return [image_shadow, image_shape, image_matte, *panel_shapes], image_blocks, panel_blocks
+
+    def _build_poster_final_layout(
+        self,
+        *,
+        width: int,
+        height: int,
+        title: str | None,
+        message: str,
+        signoff: str | None,
+        alignment: TextAlignment,
+        illustration_image_url: str | None,
+        style: _TemplateStyle,
+        padding: int,
+    ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
+        """Build a centered poster-style illustration card with a separate caption block."""
+
+        frame_width = int(width * 0.72)
+        frame_left = (width - frame_width) // 2
+        frame_right = frame_left + frame_width
+        top = int(height * 0.06)
+        bottom = int(height * 0.69)
+
+        image_shadow = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(frame_left, top, frame_right, bottom),
+            fill=(35, 43, 57, 48),
+            radius=40,
+        )
+        image_shape = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(frame_left, top - int(height * 0.01), frame_right, bottom - int(height * 0.01)),
+            fill=(255, 248, 240, 234),
+            radius=40,
+        )
+        image_matte = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                frame_left + int(width * 0.02),
+                top + int(height * 0.01),
+                frame_right - int(width * 0.02),
+                bottom - int(height * 0.03),
+            ),
+            fill=(255, 255, 255, 242),
+            radius=30,
+        )
+
+        image_blocks: list[WorkflowCardImageBlockSpec] = []
+        if illustration_image_url:
+            image_blocks.append(
+                WorkflowCardImageBlockSpec(
+                    block_id="poster_illustration",
+                    layer="content",
+                    image_url=illustration_image_url,
+                    box=(
+                        frame_left + int(width * 0.04),
+                        top + int(height * 0.03),
+                        frame_right - int(width * 0.04),
+                        bottom - int(height * 0.07),
+                    ),
+                    fit="contain",
+                    corner_radius=24,
+                )
+            )
+
+        accent_bar_top = bottom + int(height * 0.012)
+        accent_bar = WorkflowCardShapeSpec(
+            shape_type="rounded_rect",
+            layer="content",
+            box=(
+                int(width * 0.41),
+                accent_bar_top,
+                int(width * 0.59),
+                accent_bar_top + max(8, int(height * 0.01)),
+            ),
+            fill=style.accent_color,
+            radius=999,
+        )
+
+        panel_top = bottom + int(height * 0.038)
+        panel_height = max(int(height * 0.18), height - panel_top - int(height * 0.08))
+        panel_left = padding + int(width * 0.1)
+        panel_right = width - padding - int(width * 0.1)
+        panel_shapes, panel_blocks = self._build_message_panel_layout(
+            width=width,
+            top=panel_top,
+            height=panel_height,
+            title=title,
+            message=message,
+            signoff=signoff,
+            alignment=alignment,
+            style=style,
+            padding=padding,
+            left=panel_left,
+            right=panel_right,
+        )
+        return [image_shadow, image_shape, image_matte, accent_bar, *panel_shapes], image_blocks, panel_blocks
 
     def _fit_body_text(
         self,
@@ -891,10 +1065,15 @@ class WorkflowCardRenderer:
         if mode == "final" and normalized in {
             "illustration_top_text_bottom",
             "text_left_illustration_right",
+            "poster_illustration_caption",
         }:
             return normalized
         if mode == "preview":
             return f"preview_{theme_style}_v1"
+        if theme_style == "elegant":
+            return "text_left_illustration_right"
+        if theme_style in {"festive", "playful"}:
+            return "poster_illustration_caption"
         return "illustration_top_text_bottom"
 
     @staticmethod
