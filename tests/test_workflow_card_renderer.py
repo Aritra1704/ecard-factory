@@ -49,8 +49,13 @@ def test_build_final_layout_spec_is_versioned_and_explicit() -> None:
     assert any(shape.shape_type == "ellipse" and shape.layer == "background" for shape in layout.shapes)
     assert len(layout.image_blocks) == 1
     assert layout.image_blocks[0].fit == "cover"
+    assert layout.image_blocks[0].crop_focus == (0.5, 0.3)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
     assert {block.role for block in layout.text_blocks} >= {"title", "body", "signoff"}
+    role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
+    assert role_to_variant["title"] == "serif_bold"
+    assert role_to_variant["body"] == "sans"
+    assert role_to_variant["signoff"] == "serif_italic"
 
 
 def test_preview_layout_spec_includes_metadata_blocks() -> None:
@@ -82,6 +87,7 @@ def test_preview_layout_spec_includes_metadata_blocks() -> None:
     assert any(block.role == "metadata_title" for block in layout.text_blocks)
     assert len([block for block in layout.text_blocks if block.role == "metadata_line"]) >= 5
     assert any(block.role == "body" for block in layout.text_blocks)
+    assert any(block.role == "metadata_title" and block.font_variant == "sans_bold" for block in layout.text_blocks)
 
 
 def test_render_layout_png_honors_canvas_dimensions_and_custom_layout_id() -> None:
@@ -130,7 +136,12 @@ def test_elegant_theme_defaults_to_side_by_side_layout() -> None:
     assert layout.layout_id == "text_left_illustration_right"
     assert len(layout.image_blocks) == 1
     assert layout.image_blocks[0].fit == "cover"
+    assert layout.image_blocks[0].crop_focus == (0.5, 0.4)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
+    role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
+    assert role_to_variant["title"] == "serif_bold"
+    assert role_to_variant["body"] == "serif"
+    assert role_to_variant["signoff"] == "serif_italic"
 
 
 def test_minimal_theme_defaults_to_top_layout_with_caption_panel_polish() -> None:
@@ -154,4 +165,9 @@ def test_minimal_theme_defaults_to_top_layout_with_caption_panel_polish() -> Non
     assert layout.layout_id == "illustration_top_text_bottom"
     assert len(layout.image_blocks) == 1
     assert layout.image_blocks[0].fit == "cover"
+    assert layout.image_blocks[0].crop_focus == (0.5, 0.34)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
+    role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
+    assert role_to_variant["title"] == "serif_bold"
+    assert role_to_variant["body"] == "sans"
+    assert role_to_variant["signoff"] == "sans_italic"

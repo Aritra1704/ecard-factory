@@ -180,6 +180,11 @@ What has been completed:
   - the existing layouts now use stronger framed-art treatment instead of flat surfaces only
   - final image placement in the main card layouts now uses fuller framed rendering with `cover` fit
   - text panels now support styled variants so poster/caption/editorial layouts have clearer hierarchy
+- the next Stage 3 polish slice is now in place and regression-tested:
+  - final image blocks now carry explicit crop-focus metadata instead of relying on generic center-crop behavior
+  - current layouts use deterministic crop-focus defaults tuned for portrait-style illustration framing
+  - final text blocks now carry deterministic font variants by role and theme
+  - title/body/signoff hierarchy is stronger because the renderer now resolves serif/sans/italic variants intentionally
 
 What this does not mean:
 
@@ -190,9 +195,9 @@ What this does not mean:
 Current limitation to carry forward explicitly:
 
 - the current composed card can still feel too assembled and is not acceptable as the end-state design language
-- theme-aware layout defaults now exist, and framed-art polish has started, but the layouts still need more work in typography and theme-specific composition language
+- theme-aware layout defaults now exist, framed-art polish has started, and typography hierarchy is stronger, but the layouts still need more work in theme-specific composition language
 - decorative treatment is stronger than before, but still not at the level of a premium designed eCard
-- live visual QA is still required to confirm that the new `cover` fit and framed panels look correct across representative themes
+- live visual QA is still required to confirm that the new crop-focus defaults, `cover` fit, and framed panels look correct across representative themes
 
 ## 7. Live Validation Result
 
@@ -474,8 +479,9 @@ Step-by-step:
      - the card should use framed art, stronger panel treatment, and the current theme-aware layout defaults
 7. Review the current Stage 3 polish outcome.
    - Expected:
-     - art fills the framed area more fully because the current layouts now use `cover` fit
+     - art fills the framed area more fully because the current layouts now use `cover` fit with explicit crop-focus defaults
      - text panel shows stronger border/frame treatment
+     - title/body/signoff should have clearer visual separation because the renderer now uses role-aware font variants
      - the result should look better than the old plain text-over-image composition, but it may still not feel commercially premium yet
 8. Approve the final card.
    - Expected:
@@ -489,6 +495,7 @@ Failure signals to watch for:
 - Studio still shows raw `image_preview` as the final review asset
 - final card image crops badly with the new `cover` fit
 - typography or spacing visibly overflows the panel
+- title/body/signoff still feel visually identical despite the new font-role treatment
 - approve-final does not produce export assets
 
 ## 11B. Remaining Roadmap Count
@@ -531,6 +538,9 @@ Stage 3 work already completed:
    - framed art treatment is stronger across the existing final-card layouts
    - text panels now use styled variants for caption/editorial treatment
    - main final-card image blocks now render with fuller `cover` placement
+9. added safe image-placement and role-aware typography controls:
+   - image blocks now carry explicit crop-focus defaults
+   - title/body/signoff now resolve deterministic font variants by theme and role
 
 Next implementation slice still remaining:
 
@@ -542,13 +552,13 @@ Next implementation slice still remaining:
 Concrete next phase of changes:
 
 1. keep theme-aware multi-layout composition as the active Stage 3 topic
-2. tune the new `cover` image placement and safe-area rules against real generated art
+2. tune the new crop-focus plus `cover` image placement rules against real generated art
 3. add at least one more premium composition mode only if it clearly improves card quality
 4. stop treating the selected image as only a generic background candidate
 5. improve typography hierarchy:
-   - better title/body/signoff scale separation
-   - theme-specific font choices if available
    - better spacing and line-length control
+   - stronger title emphasis where the new font variants still look too flat
+   - theme-specific font choices if better local assets become available
 6. support theme-aware decorative layers:
    - borders
    - shape accents

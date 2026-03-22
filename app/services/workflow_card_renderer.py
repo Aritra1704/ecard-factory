@@ -20,6 +20,7 @@ ShapeType = Literal["rounded_rect", "ellipse"]
 TextRole = Literal["title", "body", "signoff", "metadata_title", "metadata_line"]
 ImageFitMode = Literal["contain", "cover"]
 PanelVariant = Literal["standard", "editorial", "caption"]
+FontVariant = Literal["sans", "sans_bold", "sans_italic", "serif", "serif_bold", "serif_italic"]
 
 
 @dataclass(slots=True)
@@ -83,6 +84,7 @@ class WorkflowCardTextBlockSpec:
     spacing: int
     fill: tuple[int, int, int, int]
     alignment: TextAlignment
+    font_variant: FontVariant = "sans"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +97,7 @@ class WorkflowCardImageBlockSpec:
     box: tuple[int, int, int, int]
     fit: ImageFitMode = "contain"
     corner_radius: int = 0
+    crop_focus: tuple[float, float] = (0.5, 0.5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +210,7 @@ class WorkflowCardRenderer:
             message=payload.message,
             signoff=payload.signoff,
             alignment=payload.text_alignment,
+            theme_style=theme_style,
             style=style,
             padding=padding,
         )
@@ -255,6 +259,7 @@ class WorkflowCardRenderer:
                 message=payload.message,
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
+                theme_style=theme_style,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -267,6 +272,7 @@ class WorkflowCardRenderer:
                 message=payload.message,
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
+                theme_style=theme_style,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -279,6 +285,7 @@ class WorkflowCardRenderer:
                 message=payload.message,
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
+                theme_style=theme_style,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -325,7 +332,7 @@ class WorkflowCardRenderer:
                 self._draw_image_block(canvas=canvas, image_block=image_block)
 
         for text_block in layout.text_blocks:
-            font = self._load_font(size=text_block.font_size)
+            font = self._load_font(size=text_block.font_size, variant=text_block.font_variant)
             self._draw_multiline(
                 draw=draw,
                 lines=list(text_block.lines),
@@ -398,6 +405,7 @@ class WorkflowCardRenderer:
                 x_right=width - padding - int(width * 0.03),
                 y=y,
                 font_size=title_size,
+                font_variant="sans_bold",
                 spacing=0,
                 fill=style.title_color,
                 alignment="left",
@@ -424,6 +432,7 @@ class WorkflowCardRenderer:
                     x_right=width - padding - int(width * 0.03),
                     y=y,
                     font_size=size,
+                    font_variant="sans",
                     spacing=0,
                     fill=style.body_color,
                     alignment="left",
@@ -443,6 +452,7 @@ class WorkflowCardRenderer:
         message: str,
         signoff: str | None,
         alignment: TextAlignment,
+        theme_style: TemplateName,
         style: _TemplateStyle,
         padding: int,
         left: int | None = None,
@@ -566,7 +576,8 @@ class WorkflowCardRenderer:
         title_text = (title or "").strip()
         if title_text:
             initial_title_size = max(34, int(panel_width * title_scale))
-            title_font = self._load_font(size=initial_title_size)
+            title_font_variant = self._resolve_font_variant(theme_style=theme_style, role="title", variant=variant)
+            title_font = self._load_font(size=initial_title_size, variant=title_font_variant)
             title_lines = self._wrap_lines(draw, title_text, title_font, content_width, max_lines=2)
             title_font_size = getattr(title_font, "size", initial_title_size)
             title_spacing = max(10, int(title_font_size * 0.25))
@@ -580,6 +591,7 @@ class WorkflowCardRenderer:
                     x_right=inner_right,
                     y=cursor_y,
                     font_size=title_font_size,
+                    font_variant=title_font_variant,
                     spacing=title_spacing,
                     fill=style.title_color,
                     alignment=alignment,
@@ -591,12 +603,14 @@ class WorkflowCardRenderer:
         body_max_height = vertical_space - (cursor_y - inner_top)
         if signoff_text:
             body_max_height -= int(height * 0.12 if variant == "standard" else 0.105)
+        body_font_variant = self._resolve_font_variant(theme_style=theme_style, role="body", variant=variant)
         body_font, body_lines, body_spacing = self._fit_body_text(
             draw=draw,
             message=message,
             max_width=content_width,
             max_height=max(body_max_height, 150),
             width=panel_width,
+            font_variant=body_font_variant,
             initial_scale=body_scale,
             minimum_size=body_minimum,
             max_lines=body_max_lines,
@@ -612,6 +626,7 @@ class WorkflowCardRenderer:
                 x_right=inner_right,
                 y=cursor_y,
                 font_size=body_font_size,
+                font_variant=body_font_variant,
                 spacing=body_spacing,
                 fill=style.body_color,
                 alignment=alignment,
@@ -621,6 +636,11 @@ class WorkflowCardRenderer:
 
         if signoff_text:
             signoff_size = max(22, int(panel_width * signoff_scale))
+            signoff_font_variant = self._resolve_font_variant(
+                theme_style=theme_style,
+                role="signoff",
+                variant=variant,
+            )
             blocks.append(
                 WorkflowCardTextBlockSpec(
                     block_id="signoff",
@@ -630,6 +650,7 @@ class WorkflowCardRenderer:
                     x_right=inner_right,
                     y=min(cursor_y, inner_bottom - int(height * 0.08)),
                     font_size=signoff_size,
+                    font_variant=signoff_font_variant,
                     spacing=0,
                     fill=style.accent_color,
                     alignment=alignment,
@@ -647,6 +668,7 @@ class WorkflowCardRenderer:
         message: str,
         signoff: str | None,
         alignment: TextAlignment,
+        theme_style: TemplateName,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
@@ -706,6 +728,7 @@ class WorkflowCardRenderer:
                     ),
                     fit="cover",
                     corner_radius=28,
+                    crop_focus=(0.5, 0.34),
                 )
             )
 
@@ -735,6 +758,7 @@ class WorkflowCardRenderer:
             message=message,
             signoff=signoff,
             alignment=alignment,
+            theme_style=theme_style,
             style=style,
             padding=padding,
             left=panel_left,
@@ -752,6 +776,7 @@ class WorkflowCardRenderer:
         message: str,
         signoff: str | None,
         alignment: TextAlignment,
+        theme_style: TemplateName,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
@@ -811,6 +836,7 @@ class WorkflowCardRenderer:
                     ),
                     fit="cover",
                     corner_radius=28,
+                    crop_focus=(0.5, 0.4),
                 )
             )
 
@@ -822,6 +848,7 @@ class WorkflowCardRenderer:
             message=message,
             signoff=signoff,
             alignment=alignment,
+            theme_style=theme_style,
             style=style,
             padding=padding,
             left=text_left,
@@ -839,6 +866,7 @@ class WorkflowCardRenderer:
         message: str,
         signoff: str | None,
         alignment: TextAlignment,
+        theme_style: TemplateName,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
@@ -897,6 +925,7 @@ class WorkflowCardRenderer:
                     ),
                     fit="cover",
                     corner_radius=24,
+                    crop_focus=(0.5, 0.3),
                 )
             )
 
@@ -939,6 +968,7 @@ class WorkflowCardRenderer:
             message=message,
             signoff=signoff,
             alignment=alignment,
+            theme_style=theme_style,
             style=style,
             padding=padding,
             left=panel_left,
@@ -955,6 +985,7 @@ class WorkflowCardRenderer:
         max_width: int,
         max_height: int,
         width: int,
+        font_variant: FontVariant = "sans",
         initial_scale: float = 0.04,
         minimum_size: int = 20,
         max_lines: int = 14,
@@ -966,14 +997,14 @@ class WorkflowCardRenderer:
         minimum = minimum_size
 
         for size in range(initial, minimum - 1, -2):
-            font = self._load_font(size=size)
+            font = self._load_font(size=size, variant=font_variant)
             lines = self._wrap_lines(draw, text, font, max_width, max_lines=max_lines)
             spacing = max(8, int(size * 0.3))
             total_height = self._measure_multiline_height(draw, lines, font, spacing)
             if total_height <= max_height:
                 return font, lines, spacing
 
-        fallback_font = self._load_font(size=minimum)
+        fallback_font = self._load_font(size=minimum, variant=font_variant)
         lines = self._wrap_lines(draw, text, fallback_font, max_width, max_lines=max_lines, truncate=True)
         spacing = max(8, int(minimum * 0.3))
         return fallback_font, lines, spacing
@@ -1054,6 +1085,7 @@ class WorkflowCardRenderer:
                 image,
                 (block_width, block_height),
                 method=Image.Resampling.LANCZOS,
+                centering=image_block.crop_focus,
             )
         else:
             contained = ImageOps.contain(
@@ -1179,6 +1211,37 @@ class WorkflowCardRenderer:
 
         return cls._TEMPLATES[cls._resolve_template_name(template_name)]
 
+    @staticmethod
+    def _resolve_font_variant(
+        *,
+        theme_style: TemplateName,
+        role: TextRole,
+        variant: PanelVariant,
+    ) -> FontVariant:
+        """Choose a deterministic font variant for the theme/role combination."""
+
+        if role == "metadata_title":
+            return "sans_bold"
+        if role == "metadata_line":
+            return "sans"
+        if role == "signoff":
+            if theme_style in {"elegant", "festive"}:
+                return "serif_italic"
+            return "sans_italic"
+        if role == "body":
+            if theme_style == "elegant":
+                return "serif"
+            if variant == "editorial" and theme_style == "minimal":
+                return "serif"
+            return "sans"
+        if theme_style in {"elegant", "festive"}:
+            return "serif_bold"
+        if theme_style == "playful":
+            return "sans_bold"
+        if variant in {"editorial", "caption"}:
+            return "serif_bold"
+        return "sans_bold"
+
     @classmethod
     def _resolve_layout_id(
         cls,
@@ -1286,10 +1349,19 @@ class WorkflowCardRenderer:
             return cls.DEFAULT_SIZE
 
     @staticmethod
-    def _load_font(*, size: int) -> ImageFont.ImageFont:
+    def _load_font(*, size: int, variant: FontVariant = "sans") -> ImageFont.ImageFont:
         """Return an available font with fallback."""
 
-        for font_name in ("DejaVuSans.ttf", "Arial.ttf", "Helvetica.ttf"):
+        variant_map: dict[FontVariant, tuple[str, ...]] = {
+            "sans": ("DejaVuSans.ttf", "Arial.ttf", "Helvetica.ttf"),
+            "sans_bold": ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial.ttf"),
+            "sans_italic": ("DejaVuSans-Oblique.ttf", "DejaVuSans.ttf", "Arial.ttf"),
+            "serif": ("DejaVuSerif.ttf", "DejaVuSans.ttf", "Times New Roman.ttf"),
+            "serif_bold": ("DejaVuSerif-Bold.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf"),
+            "serif_italic": ("DejaVuSerif-Italic.ttf", "DejaVuSerif.ttf", "DejaVuSans-Oblique.ttf"),
+        }
+
+        for font_name in variant_map.get(variant, variant_map["sans"]):
             try:
                 return ImageFont.truetype(font_name, size=size)
             except OSError:
