@@ -615,18 +615,17 @@ Failure signals to watch for:
 
 ## 11B. Remaining Roadmap Count
 
-From the current roadmap, there are now `2` untouched later stages plus remaining Stage 4 refinement work:
+From the current roadmap, there are now `2` untouched later stages:
 
-1. finish Stage 4 quality hardening and connect it to actual content-improvement decisions
-2. do Stage 5 UI hardening only where needed
+1. do Stage 5 UI hardening only where needed
    - Stage 5 baseline extraction is already complete; this is not a full greenfield stage anymore
-3. implement Stage 6 bounded agent runtime
+2. implement Stage 6 bounded agent runtime
 
 Current practical focus:
 
-- Stage 3 implementation is now code-complete, but it is still waiting on the manual Studio visual acceptance pass
-- Stage 4 first pass is now implemented because the user explicitly redirected work there
-- the next useful work is not more plumbing; it is live QA plus quality-driven content improvement
+- Stage 3 visual acceptance is complete on `2026-03-23`
+- Stage 4 quality/operator-config hardening is complete on `2026-03-23`
+- the next useful work is not more Stage 3 or Stage 4 plumbing; it is optional Stage 5 hardening, image-latency reduction, or further non-blocking content-quality tuning
 - Stage 5 hardening is secondary and non-blocking for the current eCard flow
 - Stage 6 is explicitly deferred until deterministic quality is stronger
 
@@ -634,7 +633,7 @@ Current practical focus:
 
 ### Immediate next action
 
-Run a combined live QA pass for Stage 3 visual acceptance and Stage 4 quality/config behavior.
+Use the now-verified Stage 3 and Stage 4 baseline to decide whether the next pass should be Stage 5 hardening or targeted operational tuning.
 
 Stage 3 work already completed:
 
@@ -663,43 +662,43 @@ Stage 3 work already completed:
    - layouts now adapt art/text proportions for compact versus dense copy
    - top, poster, and side-by-side layouts no longer rely on one fixed content balance
 
-Remaining Stage 3 acceptance step:
+Stage 3 closeout evidence:
 
-1. run the manual Studio visual pass on representative themes and message lengths
-2. if the pass is clean, mark Stage 3 visually accepted
-3. if the pass finds a real issue, do only the narrow polish required to fix that issue
+1. rerendered and visually checked representative jobs:
+   - `job_d6281fb50d`
+   - `job_fd95fc7d65`
+   - `job_966e98cbf8`
+   - `job_95e76a8593`
+2. verified crop-focus plus `cover` placement against real generated art
+3. verified compact versus dense copy balancing against real jobs
+4. verified theme-specific ornaments and typography hierarchy were acceptable
 
-Concrete closeout checks:
+Stage 4 closeout evidence:
 
-1. verify crop-focus plus `cover` placement against real generated art
-2. verify compact versus dense copy balancing against real jobs
-3. verify theme-specific ornaments feel intentional rather than noisy
-4. only make targeted Stage 3 tweaks if the manual pass reveals a concrete defect
+1. live compact-copy `contentforge` compare-models probe for `target_words=18` returned compact two-sentence shortlist candidates
+2. live `ecard-factory` job `job_b25fd58e50` completed:
+   - `text_candidates_ready`
+   - `text_selected`
+   - `image_candidates_ready`
+   - `image_selected`
+   - `preview_ready`
+   - `export_ready`
+3. selected text for that job landed at `17` words for a `target_words=18` request
+4. final workflow quality result for that job returned `score=10.0`, `status=pass`
+5. live `/api/config/options` served database-backed categories and did not expose `operations team` in `audience`
 
-Stage 4 verification to execute in the same pass:
+Current follow-up focus:
 
-1. open the `Config Catalog` screen and verify dropdown categories load from `/api/config/options`
-2. confirm `Create New Card Job` no longer defaults audience to `operations team`
-3. create or edit one option and verify it becomes selectable in the relevant UI form
-4. create one job with intentionally weak copy inputs and verify the Stage 4 quality panel reports issues plus a non-`accept` recommendation
-5. create one well-formed job and verify the Stage 4 quality panel returns `review` or `pass` with meaningful metrics
-
-Stage 4 follow-up focus after QA:
-
-1. improve actual content quality, not just the quality signal
-2. use the new quality result to target whether text, image, or final render should be rerun
-3. harden `contentforge` prompt/ranking quality where Stage 4 repeatedly flags weak copy
-
-Acceptance rule for Stage 3 closeout:
-
-- the final eCard should read as a designed card composition, not as raw text pasted on a generated image
+1. reduce image-generation latency; one live `image-assets/generate` client call timed out while the backend still completed successfully
+2. deepen browser-driven UI smoke coverage only if needed
+3. continue optional prompt/ranking tuning for tone range without changing the canonical flow
 
 ### Scope rule for the next session
 
 The next fresh session should either:
 
-- execute the combined Stage 3 and Stage 4 live QA pass, or
-- if that pass is already clean, start using Stage 4 findings to improve content quality and rerun guidance
+- take one targeted Stage 5 hardening slice, or
+- improve one concrete operational concern such as image-generation latency or remaining tone-variety quality gaps
 
 ### Guardrails
 
@@ -724,12 +723,12 @@ Context:
 - Stage 1 complete
 - Stage 2 implemented in code, regression-tested, and live-validated
 - Stage 2A async job kickoff implemented, regression-tested, and live-validated
-- Stage 3 is code-complete, but still pending manual Studio visual acceptance
-- Stage 4 first pass is implemented:
-  - deterministic workflow quality scoring exists
-  - operator dropdowns are DB-driven through /api/config/options
-  - Config Catalog screen exists in content_engine_ui
-  - the old hardcoded `operations team` audience default is removed
+- Stage 3 visual acceptance is complete on 2026-03-23
+- Stage 4 quality/operator-config hardening is complete on 2026-03-23
+- live proof points:
+  - representative Stage 3 rerender pass covered job_d6281fb50d, job_fd95fc7d65, job_966e98cbf8, and job_95e76a8593
+  - compact-copy live job job_b25fd58e50 reached export_ready with selected_text_words=17 for target_words=18
+  - /api/config/options is live from database-backed categories and does not expose `operations team` in audience
 
 First, read:
 - ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md
@@ -738,10 +737,11 @@ First, read:
 - ecard-factory/docs/EXECUTION_PLAYBOOK_v0.1.md
 
 Then do this:
-- run the combined Stage 3 visual and Stage 4 quality/config live QA pass first
-- verify the Config Catalog page and config-backed dropdowns end to end
-- if the pass reveals a concrete Stage 3 issue, fix only the narrow composition defect required to pass
-- if the pass reveals weak Stage 4 signals or weak copy patterns, improve the quality heuristics and/or content-quality path without breaking the canonical flow
+- confirm there is no regression against the verified Stage 3 and Stage 4 baseline
+- pick one next slice only:
+  - targeted Stage 5 UI hardening, or
+  - image-generation latency reduction, or
+  - further prompt/ranking tone-quality tuning
 - keep the explicit layout spec as the source of truth for Pillow composition
 - preserve the already-validated async kickoff and canonical `/image-assets/*` path
 
@@ -755,7 +755,7 @@ Guardrails:
 - log every step clearly
 
 Success condition:
-- Stage 3 live QA is complete, Stage 4 config/quality behavior is verified, and the next highest-value content-quality improvement is identified or implemented
+- the verified Stage 3 and Stage 4 baseline still holds, and one concrete next-stage improvement is identified or implemented
 ```
 
 ## 14. Exact Prompt To Trigger The Next Stage In A New Session

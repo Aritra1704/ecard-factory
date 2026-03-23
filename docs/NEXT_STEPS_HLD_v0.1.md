@@ -324,7 +324,7 @@ Current verified state:
 - Stage 1 mechanically complete, but quality hardening is still required for prompt packs, tone diversity, and shortlist usefulness
 - Stage 2 mechanically complete, but quality hardening is still required for illustration fit and negative-space safety
 - Stage 2A implemented in code, regression-tested, and validated against the live local stack on `2026-03-22`
-- Stage 3 composition redesign is now code-complete on `2026-03-22`, pending manual Studio visual acceptance
+- Stage 3 composition redesign is accepted on `2026-03-23`
   - explicit layout spec inside the Pillow renderer is the only composition path
   - final preview and final export render from the same layout-spec path
   - deterministic final layouts now include:
@@ -335,6 +335,19 @@ Current verified state:
   - final preview/PNG/PDF asset rows carry the layout version id
   - crop-focus defaults, role-aware font variants, theme-specific ornament layers, and content-aware layout balancing are implemented
   - targeted regression slice is green after the refactor
+  - representative rerendered live previews were reviewed across minimal, festive, and elegant jobs:
+    - `job_d6281fb50d`
+    - `job_fd95fc7d65`
+    - `job_966e98cbf8`
+    - `job_95e76a8593`
+- Stage 4 quality and operator-config hardening is functionally complete on `2026-03-23`
+  - deterministic workflow quality scoring is live inside `ecard-factory`
+  - compact-card prompt/ranking hardening is live inside `contentforge`
+  - a live compact-copy compare-models pass returned compact two-sentence shortlist candidates for `target_words=18`
+  - live job `job_b25fd58e50` completed the canonical flow through `export_ready`
+    - selected text landed at `17` words for a `target_words=18` request
+    - final workflow quality result returned `score=10.0`, `status=pass`
+  - `/api/config/options` is serving database-backed categories and no longer exposes the old `operations team` audience placeholder
 
 Next execution gate before Stage 3:
 
@@ -346,17 +359,16 @@ Next execution gate before Stage 3:
 
 Stage 3 composition work is now code-complete enough for manual acceptance.
 
-- Stage 4 first pass is now implemented on `2026-03-23`
-  - deterministic workflow quality scoring now exists inside `ecard-factory`
+- Stage 4 first pass moved from implemented to live-validated on `2026-03-23`
   - Stage 4 signals are exposed in job detail, Studio actions, and stage action responses
-  - operator dropdown configuration is now DB-driven through `operator_option_catalog` with API CRUD plus seed fallback
-  - `content_engine_ui` now includes a `Config Catalog` admin screen and config-backed dropdowns for Create Job and Theme Factory
-  - the old hardcoded `operations team` audience default has been removed
+  - operator dropdown configuration is DB-driven through `operator_option_catalog` with API CRUD plus seed fallback
+  - `content_engine_ui` is serving on the live stack and the config API is live from the database
 
 Current practical reading:
 
-- Stage 3 still needs one live Studio visual signoff pass
-- Stage 4 plumbing is no longer theoretical; the next work should focus on live QA and actual content-quality improvement using the new scoring layer
+- no Stage 3 or Stage 4 acceptance gate remains open
+- the main remaining operational concern is image-generation latency; one live `image-assets/generate` client call timed out while the backend still completed and persisted candidates
+- the next work should focus on optional Stage 5 hardening, image latency reduction, and continued quality tuning without changing the canonical flow
 
 ## 13. Non-Deviation Guardrails
 
@@ -376,8 +388,8 @@ To avoid drifting away from the proposed architecture:
 Start with this sequence:
 
 1. use `docs/NEXT_CHAT_HANDOFF_v0.1.md` as the execution snapshot in the next session
-2. keep the next execution window focused on eCard quality hardening only
-3. run a combined live QA pass for Stage 3 composition and Stage 4 quality/config behavior
-4. preserve the already-validated async kickoff and canonical ImageForge path while tuning prompt/image quality
-5. use the new Stage 4 scoring signal to drive actual content-quality improvements instead of adding more plumbing
-6. defer StoryFactory, ThoughtFactory, and bounded-agent work until deterministic quality is materially stronger
+2. treat Stage 3 and Stage 4 as the current verified baseline
+3. preserve the already-validated async kickoff and canonical ImageForge path while tuning latency or UX
+4. use the existing Stage 4 scoring signal to guide any further text/image quality work instead of adding more plumbing
+5. take only targeted Stage 5 UI hardening work if the running stack shows a concrete operator issue
+6. defer StoryFactory, ThoughtFactory, and bounded-agent work until there is a stronger reason than the current eCard backlog

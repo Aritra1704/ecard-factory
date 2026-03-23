@@ -412,7 +412,7 @@ The composition layer should render from a layout spec, not from scattered ad ho
 
 ## Current implementation status
 
-As of `2026-03-22`, Stage 3 is code-complete pending manual Studio visual acceptance:
+As of `2026-03-23`, Stage 3 is complete and visually accepted:
 
 - `WorkflowCardRenderer` builds an explicit `WorkflowCardLayoutSpec`
 - final preview and final PNG/PDF export in `workflow_v1_service.py` render from the same layout spec
@@ -432,13 +432,16 @@ As of `2026-03-22`, Stage 3 is code-complete pending manual Studio visual accept
   - `tests/test_workflow_card_renderer.py`
   - `tests/test_imageforge_integration.py`
   - `tests/test_workflow_v1_router.py`
-
-## Remaining Stage 3 acceptance gate
-
-- run the manual Studio visual pass on representative themes and message lengths
-- verify crop-focus, ornament density, typography hierarchy, and compact/dense balancing against real jobs
-- if the pass is clean, close Stage 3 and start Stage 4
-- if the pass finds a concrete issue, do only the narrow Stage 3 tuning needed to fix it
+- representative live visual QA is complete across rerendered jobs:
+  - `job_d6281fb50d`
+  - `job_fd95fc7d65`
+  - `job_966e98cbf8`
+  - `job_95e76a8593`
+- the closeout pass verified:
+  - crop-focus and `cover` placement
+  - ornament density
+  - typography hierarchy
+  - compact versus dense copy balancing
 
 ## 8. Stage 4: Quality Stage
 
@@ -512,13 +515,23 @@ As of `2026-03-23`:
   - `venv/bin/python -m pytest tests/test_operator_option_service.py tests/test_workflow_quality_service.py tests/test_models.py tests/test_workflow_v1_router.py -q`
   - result: `32 passed in 14.71s`
   - `content_engine_ui` build passed
+- live runtime verification is now complete:
+  - direct `contentforge` compare-models probe for `target_words=18` returned compact two-sentence shortlist candidates instead of 40-50 word outputs
+  - live `ecard-factory` job `job_b25fd58e50` reached `export_ready`
+    - selected text: `Warmest birthday wishes to you, dear friend. May this day be filled with joy and cherished moments.`
+    - selected text words: `17`
+    - requested target words: `18`
+    - final workflow quality result: `score=10.0`, `status=pass`
+  - live `/api/config/options` returned database-backed categories with no `operations team` audience entry
+  - standalone UI root on `http://127.0.0.1:4173` served successfully during the same pass
 
-## Remaining Stage 4 work
+## Post-Stage 4 follow-up
 
-- run live UI verification for the new config-catalog flow
-- verify Stage 4 scoring against representative weak and strong jobs
-- improve actual content quality using the new score signal instead of only surfacing warnings
-- add more targeted rerun/recovery guidance only if the live pass shows clear operator value
+- no blocking Stage 4 work remains
+- optional next improvements:
+  - deeper browser-driven UI smoke coverage for Config Catalog interactions
+  - further prompt/ranking tuning for tone variety, now that compact-length control is fixed
+  - image-generation latency reduction, since one live `image-assets/generate` client call timed out even though the backend completed and persisted candidates
 
 ## 9. Stage 5: UI Split
 
