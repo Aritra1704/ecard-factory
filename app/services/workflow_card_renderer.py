@@ -21,6 +21,7 @@ TextRole = Literal["title", "body", "signoff", "metadata_title", "metadata_line"
 ImageFitMode = Literal["contain", "cover"]
 PanelVariant = Literal["standard", "editorial", "caption"]
 FontVariant = Literal["sans", "sans_bold", "sans_italic", "serif", "serif_bold", "serif_italic"]
+ContentDensity = Literal["compact", "balanced", "dense"]
 
 
 @dataclass(slots=True)
@@ -68,6 +69,7 @@ class WorkflowCardShapeSpec:
     radius: int = 0
     outline: tuple[int, int, int, int] | None = None
     outline_width: int = 0
+    shape_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +213,11 @@ class WorkflowCardRenderer:
             signoff=payload.signoff,
             alignment=payload.text_alignment,
             theme_style=theme_style,
+            content_density=self._resolve_content_density(
+                title="Internal Preview",
+                message=payload.message,
+                signoff=payload.signoff,
+            ),
             style=style,
             padding=padding,
         )
@@ -242,6 +249,11 @@ class WorkflowCardRenderer:
         theme_style = self._resolve_template_name(payload.theme_style)
         style = self._resolve_template_style(theme_style)
         padding = int(width * 0.08)
+        content_density = self._resolve_content_density(
+            title=(payload.title or "").strip() or None,
+            message=payload.message,
+            signoff=payload.signoff,
+        )
         layout_id = self._resolve_layout_id(
             requested_layout_id=payload.layout_id,
             theme_style=theme_style,
@@ -249,6 +261,7 @@ class WorkflowCardRenderer:
         )
 
         shapes = list(self._build_template_shapes(width, height, style))
+        shapes.extend(self._build_theme_ornament_shapes(width=width, height=height, theme_style=theme_style, style=style))
         image_blocks: list[WorkflowCardImageBlockSpec] = []
         text_blocks: list[WorkflowCardTextBlockSpec] = []
         if layout_id == "text_left_illustration_right":
@@ -260,6 +273,7 @@ class WorkflowCardRenderer:
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
                 theme_style=theme_style,
+                content_density=content_density,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -273,6 +287,7 @@ class WorkflowCardRenderer:
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
                 theme_style=theme_style,
+                content_density=content_density,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -286,6 +301,7 @@ class WorkflowCardRenderer:
                 signoff=payload.signoff,
                 alignment=payload.text_alignment,
                 theme_style=theme_style,
+                content_density=content_density,
                 illustration_image_url=payload.illustration_image_url,
                 style=style,
                 padding=padding,
@@ -453,6 +469,7 @@ class WorkflowCardRenderer:
         signoff: str | None,
         alignment: TextAlignment,
         theme_style: TemplateName,
+        content_density: ContentDensity,
         style: _TemplateStyle,
         padding: int,
         left: int | None = None,
@@ -483,6 +500,21 @@ class WorkflowCardRenderer:
         add_header_rule = False
         header_rule_scale = 0.18
 
+        if content_density == "compact":
+            title_scale += 0.01
+            title_gap_ratio = max(0.03, title_gap_ratio - 0.006)
+            body_gap_ratio = max(0.04, body_gap_ratio - 0.006)
+            body_max_lines = max(8, body_max_lines - 1)
+        elif content_density == "dense":
+            top_ratio = max(0.07, top_ratio - 0.012)
+            bottom_ratio = max(0.06, bottom_ratio - 0.012)
+            title_scale = max(0.078, title_scale - 0.008)
+            body_scale = max(0.036, body_scale - 0.002)
+            body_minimum = max(body_minimum, 21)
+            body_max_lines += 2
+            title_gap_ratio = max(0.028, title_gap_ratio - 0.01)
+            body_gap_ratio = max(0.04, body_gap_ratio - 0.008)
+
         if variant == "editorial":
             panel_radius = 40
             panel_fill = (250, 247, 241, 238)
@@ -501,6 +533,17 @@ class WorkflowCardRenderer:
             body_gap_ratio = 0.055
             add_header_rule = True
             header_rule_scale = 0.22
+            if content_density == "compact":
+                title_scale += 0.008
+                body_gap_ratio = max(0.046, body_gap_ratio - 0.006)
+            elif content_density == "dense":
+                top_ratio = max(0.082, top_ratio - 0.01)
+                bottom_ratio = max(0.075, bottom_ratio - 0.01)
+                title_scale = max(0.09, title_scale - 0.006)
+                body_scale = max(0.04, body_scale - 0.001)
+                body_max_lines += 2
+                title_gap_ratio = max(0.032, title_gap_ratio - 0.008)
+                body_gap_ratio = max(0.045, body_gap_ratio - 0.006)
         elif variant == "caption":
             panel_radius = 38
             panel_fill = (252, 249, 243, 238)
@@ -519,9 +562,21 @@ class WorkflowCardRenderer:
             body_gap_ratio = 0.05
             add_header_rule = True
             header_rule_scale = 0.2
+            if content_density == "compact":
+                title_scale += 0.008
+                body_gap_ratio = max(0.043, body_gap_ratio - 0.005)
+            elif content_density == "dense":
+                top_ratio = max(0.082, top_ratio - 0.01)
+                bottom_ratio = max(0.072, bottom_ratio - 0.01)
+                title_scale = max(0.086, title_scale - 0.006)
+                body_scale = max(0.039, body_scale - 0.001)
+                body_max_lines += 2
+                title_gap_ratio = max(0.032, title_gap_ratio - 0.008)
+                body_gap_ratio = max(0.043, body_gap_ratio - 0.006)
 
         panel_outline_width = max(0, int(panel_width * outline_scale)) if panel_outline else 0
         panel_shadow = WorkflowCardShapeSpec(
+            shape_id="message_panel_shadow",
             shape_type="rounded_rect",
             layer="content",
             box=(left, top + shadow_offset, right, top + height + shadow_offset),
@@ -529,6 +584,7 @@ class WorkflowCardRenderer:
             radius=panel_radius + 2,
         )
         panel_shape = WorkflowCardShapeSpec(
+            shape_id="message_panel",
             shape_type="rounded_rect",
             layer="content",
             box=(left, top, right, top + height),
@@ -564,6 +620,7 @@ class WorkflowCardRenderer:
             rule_top = top + int(height * 0.055)
             shapes.append(
                 WorkflowCardShapeSpec(
+                    shape_id="message_panel_rule",
                     shape_type="rounded_rect",
                     layer="content",
                     box=(rule_left, rule_top, rule_left + rule_width, rule_top + rule_height),
@@ -669,6 +726,7 @@ class WorkflowCardRenderer:
         signoff: str | None,
         alignment: TextAlignment,
         theme_style: TemplateName,
+        content_density: ContentDensity,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
@@ -676,9 +734,15 @@ class WorkflowCardRenderer:
         """Build the canonical illustration-top, text-bottom final layout."""
 
         top = int(height * 0.07)
-        illustration_bottom = int(height * 0.57)
+        if content_density == "compact":
+            illustration_bottom = int(height * 0.60)
+        elif content_density == "dense":
+            illustration_bottom = int(height * 0.53)
+        else:
+            illustration_bottom = int(height * 0.57)
         frame_box = (padding, top, width - padding, illustration_bottom)
         art_shadow = WorkflowCardShapeSpec(
+            shape_id="top_art_shadow",
             shape_type="rounded_rect",
             layer="content",
             box=(frame_box[0], frame_box[1] + int(height * 0.012), frame_box[2], frame_box[3] + int(height * 0.012)),
@@ -686,6 +750,7 @@ class WorkflowCardRenderer:
             radius=38,
         )
         art_frame = WorkflowCardShapeSpec(
+            shape_id="top_art_frame",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -700,6 +765,7 @@ class WorkflowCardRenderer:
             outline_width=max(4, int(width * 0.005)),
         )
         art_matte = WorkflowCardShapeSpec(
+            shape_id="top_art_matte",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -734,6 +800,7 @@ class WorkflowCardRenderer:
 
         accent_bar_top = illustration_bottom + int(height * 0.014)
         accent_bar = WorkflowCardShapeSpec(
+            shape_id="top_accent_bar",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -746,8 +813,10 @@ class WorkflowCardRenderer:
             radius=999,
         )
 
-        panel_top = illustration_bottom - int(height * 0.028)
-        panel_height = max(int(height * 0.23), height - panel_top - int(height * 0.085))
+        overlap = int(height * (0.04 if content_density == "compact" else 0.018 if content_density == "dense" else 0.028))
+        panel_top = illustration_bottom - overlap
+        panel_min_height = int(height * (0.20 if content_density == "compact" else 0.27 if content_density == "dense" else 0.23))
+        panel_height = max(panel_min_height, height - panel_top - int(height * 0.085))
         panel_left = padding + int(width * 0.08)
         panel_right = width - padding - int(width * 0.08)
         panel_shapes, panel_blocks = self._build_message_panel_layout(
@@ -759,6 +828,7 @@ class WorkflowCardRenderer:
             signoff=signoff,
             alignment=alignment,
             theme_style=theme_style,
+            content_density=content_density,
             style=style,
             padding=padding,
             left=panel_left,
@@ -777,21 +847,23 @@ class WorkflowCardRenderer:
         signoff: str | None,
         alignment: TextAlignment,
         theme_style: TemplateName,
+        content_density: ContentDensity,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
     ) -> tuple[list[WorkflowCardShapeSpec], list[WorkflowCardImageBlockSpec], list[WorkflowCardTextBlockSpec]]:
         """Build the alternate text-left, illustration-right final layout."""
 
-        top = int(height * 0.14)
-        bottom = int(height * 0.84)
+        top = int(height * (0.135 if content_density == "compact" else 0.125 if content_density == "dense" else 0.14))
+        bottom = int(height * (0.82 if content_density == "compact" else 0.865 if content_density == "dense" else 0.84))
         gutter = int(width * 0.04)
         text_left = padding
-        text_right = int(width * 0.47)
+        text_right = int(width * (0.45 if content_density == "compact" else 0.5 if content_density == "dense" else 0.47))
         image_left = text_right + gutter
         image_right = width - padding
 
         image_shadow = WorkflowCardShapeSpec(
+            shape_id="side_art_shadow",
             shape_type="rounded_rect",
             layer="content",
             box=(image_left, top + int(height * 0.012), image_right, bottom + int(height * 0.012)),
@@ -799,6 +871,7 @@ class WorkflowCardRenderer:
             radius=36,
         )
         image_shape = WorkflowCardShapeSpec(
+            shape_id="side_art_frame",
             shape_type="rounded_rect",
             layer="content",
             box=(image_left, top - int(height * 0.008), image_right, bottom - int(height * 0.008)),
@@ -808,6 +881,7 @@ class WorkflowCardRenderer:
             outline_width=max(4, int(width * 0.004)),
         )
         image_matte = WorkflowCardShapeSpec(
+            shape_id="side_art_matte",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -849,6 +923,7 @@ class WorkflowCardRenderer:
             signoff=signoff,
             alignment=alignment,
             theme_style=theme_style,
+            content_density=content_density,
             style=style,
             padding=padding,
             left=text_left,
@@ -867,6 +942,7 @@ class WorkflowCardRenderer:
         signoff: str | None,
         alignment: TextAlignment,
         theme_style: TemplateName,
+        content_density: ContentDensity,
         illustration_image_url: str | None,
         style: _TemplateStyle,
         padding: int,
@@ -877,9 +953,15 @@ class WorkflowCardRenderer:
         frame_left = (width - frame_width) // 2
         frame_right = frame_left + frame_width
         top = int(height * 0.06)
-        bottom = int(height * 0.69)
+        if content_density == "compact":
+            bottom = int(height * 0.72)
+        elif content_density == "dense":
+            bottom = int(height * 0.66)
+        else:
+            bottom = int(height * 0.69)
 
         image_shadow = WorkflowCardShapeSpec(
+            shape_id="poster_art_shadow",
             shape_type="rounded_rect",
             layer="content",
             box=(frame_left, top + int(height * 0.012), frame_right, bottom + int(height * 0.012)),
@@ -887,6 +969,7 @@ class WorkflowCardRenderer:
             radius=40,
         )
         image_shape = WorkflowCardShapeSpec(
+            shape_id="poster_art_frame",
             shape_type="rounded_rect",
             layer="content",
             box=(frame_left, top - int(height * 0.01), frame_right, bottom - int(height * 0.01)),
@@ -896,6 +979,7 @@ class WorkflowCardRenderer:
             outline_width=max(5, int(width * 0.005)),
         )
         image_matte = WorkflowCardShapeSpec(
+            shape_id="poster_art_matte",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -930,6 +1014,7 @@ class WorkflowCardRenderer:
             )
 
         poster_crown = WorkflowCardShapeSpec(
+            shape_id="poster_crown",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -944,6 +1029,7 @@ class WorkflowCardRenderer:
 
         accent_bar_top = bottom + int(height * 0.012)
         accent_bar = WorkflowCardShapeSpec(
+            shape_id="poster_accent_bar",
             shape_type="rounded_rect",
             layer="content",
             box=(
@@ -956,8 +1042,9 @@ class WorkflowCardRenderer:
             radius=999,
         )
 
-        panel_top = bottom + int(height * 0.038)
-        panel_height = max(int(height * 0.18), height - panel_top - int(height * 0.08))
+        panel_top = bottom + int(height * (0.034 if content_density == "dense" else 0.038))
+        panel_min_height = int(height * (0.17 if content_density == "compact" else 0.23 if content_density == "dense" else 0.18))
+        panel_height = max(panel_min_height, height - panel_top - int(height * 0.08))
         panel_left = padding + int(width * 0.1)
         panel_right = width - padding - int(width * 0.1)
         panel_shapes, panel_blocks = self._build_message_panel_layout(
@@ -969,6 +1056,7 @@ class WorkflowCardRenderer:
             signoff=signoff,
             alignment=alignment,
             theme_style=theme_style,
+            content_density=content_density,
             style=style,
             padding=padding,
             left=panel_left,
@@ -1211,6 +1299,137 @@ class WorkflowCardRenderer:
 
         return cls._TEMPLATES[cls._resolve_template_name(template_name)]
 
+    def _build_theme_ornament_shapes(
+        self,
+        *,
+        width: int,
+        height: int,
+        theme_style: TemplateName,
+        style: _TemplateStyle,
+    ) -> tuple[WorkflowCardShapeSpec, ...]:
+        """Return deterministic theme-specific decorative layers for final cards."""
+
+        if theme_style == "minimal":
+            return (
+                WorkflowCardShapeSpec(
+                    shape_id="minimal_outer_frame",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.038), int(height * 0.036), int(width * 0.962), int(height * 0.964)),
+                    fill=(255, 255, 255, 0),
+                    radius=46,
+                    outline=self._with_alpha(style.accent_color, 88),
+                    outline_width=max(2, int(width * 0.002)),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="minimal_footer_rule",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.29), int(height * 0.932), int(width * 0.71), int(height * 0.94)),
+                    fill=self._with_alpha(style.accent_color, 126),
+                    radius=999,
+                ),
+            )
+        if theme_style == "elegant":
+            return (
+                WorkflowCardShapeSpec(
+                    shape_id="elegant_outer_frame",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.032), int(height * 0.03), int(width * 0.968), int(height * 0.97)),
+                    fill=(255, 255, 255, 0),
+                    radius=52,
+                    outline=self._with_alpha(style.accent_color, 152),
+                    outline_width=max(3, int(width * 0.003)),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="elegant_inner_frame",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.05), int(height * 0.048), int(width * 0.95), int(height * 0.952)),
+                    fill=(255, 255, 255, 0),
+                    radius=44,
+                    outline=self._with_alpha(style.accent_color, 96),
+                    outline_width=max(2, int(width * 0.002)),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="elegant_side_rail_left",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.065), int(height * 0.18), int(width * 0.073), int(height * 0.82)),
+                    fill=self._with_alpha(style.accent_color, 86),
+                    radius=999,
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="elegant_side_rail_right",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.927), int(height * 0.18), int(width * 0.935), int(height * 0.82)),
+                    fill=self._with_alpha(style.accent_color, 86),
+                    radius=999,
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="elegant_crest",
+                    shape_type="ellipse",
+                    layer="content",
+                    box=(int(width * 0.455), int(height * 0.048), int(width * 0.545), int(height * 0.112)),
+                    fill=(255, 255, 255, 0),
+                    outline=self._with_alpha(style.accent_color, 168),
+                    outline_width=max(3, int(width * 0.003)),
+                ),
+            )
+        if theme_style == "festive":
+            return (
+                WorkflowCardShapeSpec(
+                    shape_id="festive_corner_left",
+                    shape_type="ellipse",
+                    layer="content",
+                    box=(int(width * 0.07), int(height * 0.08), int(width * 0.15), int(height * 0.14)),
+                    fill=self._with_alpha(style.accent_color, 136),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="festive_corner_right",
+                    shape_type="ellipse",
+                    layer="content",
+                    box=(int(width * 0.85), int(height * 0.08), int(width * 0.93), int(height * 0.14)),
+                    fill=self._with_alpha(style.accent_color, 136),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="festive_footer_band",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.19), int(height * 0.92), int(width * 0.81), int(height * 0.934)),
+                    fill=self._with_alpha(style.accent_color, 132),
+                    radius=999,
+                ),
+            )
+        if theme_style == "playful":
+            return (
+                WorkflowCardShapeSpec(
+                    shape_id="playful_bubble_left",
+                    shape_type="ellipse",
+                    layer="content",
+                    box=(int(width * 0.065), int(height * 0.12), int(width * 0.13), int(height * 0.17)),
+                    fill=self._with_alpha(style.accent_color, 112),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="playful_bubble_right",
+                    shape_type="ellipse",
+                    layer="content",
+                    box=(int(width * 0.872), int(height * 0.2), int(width * 0.94), int(height * 0.252)),
+                    fill=self._with_alpha(style.accent_color, 118),
+                ),
+                WorkflowCardShapeSpec(
+                    shape_id="playful_footer_tab",
+                    shape_type="rounded_rect",
+                    layer="content",
+                    box=(int(width * 0.36), int(height * 0.918), int(width * 0.64), int(height * 0.934)),
+                    fill=self._with_alpha(style.accent_color, 128),
+                    radius=999,
+                ),
+            )
+        return ()
+
     @staticmethod
     def _resolve_font_variant(
         *,
@@ -1241,6 +1460,26 @@ class WorkflowCardRenderer:
         if variant in {"editorial", "caption"}:
             return "serif_bold"
         return "sans_bold"
+
+    @staticmethod
+    def _resolve_content_density(
+        *,
+        title: str | None,
+        message: str,
+        signoff: str | None,
+    ) -> ContentDensity:
+        """Classify the copy volume so layout balance can respond deterministically."""
+
+        title_words = len((title or "").split())
+        message_words = len((message or "").split())
+        signoff_words = len((signoff or "").split())
+        total_chars = len((title or "").strip()) + len((message or "").strip()) + len((signoff or "").strip())
+
+        if message_words >= 24 or total_chars >= 180 or (message_words >= 18 and title_words >= 5):
+            return "dense"
+        if message_words <= 12 and title_words <= 4 and signoff_words <= 3 and total_chars <= 96:
+            return "compact"
+        return "balanced"
 
     @classmethod
     def _resolve_layout_id(

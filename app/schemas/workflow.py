@@ -361,6 +361,25 @@ class AuditEventDebugResponse(BaseModel):
     created_at: datetime
 
 
+class WorkflowQualityIssueResponse(BaseModel):
+    """One explicit quality issue surfaced by the deterministic Stage 4 layer."""
+
+    code: str
+    stage: Literal["content", "image", "final"]
+    severity: Literal["warning", "critical"]
+    message: str
+
+
+class WorkflowQualityResultResponse(BaseModel):
+    """Deterministic quality snapshot for one workflow job."""
+
+    score: float
+    status: Literal["pass", "review", "fail"]
+    recommended_action: Literal["accept", "rerun_text", "regenerate_image", "rerender_final", "manual_review"]
+    issues: list[WorkflowQualityIssueResponse] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
 class JobDebugResponse(BaseModel):
     """Full job snapshot for troubleshooting workflow state transitions."""
 
@@ -398,6 +417,7 @@ class JobDebugResponse(BaseModel):
     image_generated_at: datetime | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
+    quality_result: WorkflowQualityResultResponse | None = None
     cards_per_theme: int = 10
     operator_notes: str | None = None
     retry_count: int = 0
@@ -431,6 +451,7 @@ class JobListItemResponse(BaseModel):
     image_preview_url: str | None = None
     final_preview_url: str | None = None
     final_asset_urls: dict[str, str] | None = None
+    quality_result: WorkflowQualityResultResponse | None = None
     cards_per_theme: int = 10
     content_approval_status: str = "pending"
     image_approval_status: str = "pending"
@@ -486,6 +507,7 @@ class StudioActionResponse(BaseModel):
     content_preview: str | None = None
     image_preview_url: str | None = None
     final_preview_url: str | None = None
+    quality_result: WorkflowQualityResultResponse | None = None
     is_favorite: bool = False
 
 
@@ -603,6 +625,7 @@ class StageActionResponse(BaseModel):
     image_preview_url: str | None = None
     final_preview_url: str | None = None
     final_asset_urls: FinalAssetUrls | None = None
+    quality_result: WorkflowQualityResultResponse | None = None
     retry_count: int = 0
     last_stage_started_at: datetime | None = None
     last_stage_finished_at: datetime | None = None

@@ -64,6 +64,7 @@ from app.services.workflow_card_renderer import (
     WorkflowCardLayoutSpec,
     WorkflowCardRenderer,
 )
+from app.services.workflow_quality_service import WorkflowQualityService
 from app.storage import AssetStorage, get_asset_storage
 
 logger = logging.getLogger(__name__)
@@ -842,6 +843,7 @@ class WorkflowV1Service:
         self._repository = repository or get_workflow_job_repository()
         self._asset_storage = asset_storage or get_asset_storage()
         self._card_renderer = WorkflowCardRenderer()
+        self._quality_service = WorkflowQualityService(card_renderer=self._card_renderer)
         self._image_provider = image_provider or get_image_provider()
 
     def get_workflow_contract(self) -> WorkflowContractResponse:
@@ -2729,6 +2731,7 @@ class WorkflowV1Service:
                 **job,
                 "canonical_stage": self._resolve_canonical_stage(job),
                 "current_stage": self._resolve_current_stage(job),
+                "quality_result": self._build_quality_result(job),
             }
         )
 
@@ -3145,8 +3148,7 @@ class WorkflowV1Service:
             last_error_message=str(updated.get("last_error_message") or "") or None,
         )
 
-    @staticmethod
-    def _build_stage_action_response(updated: dict[str, Any]) -> StageActionResponse:
+    def _build_stage_action_response(self, updated: dict[str, Any]) -> StageActionResponse:
         """Build a normalized response for one operator stage action."""
 
         final_asset_urls = updated.get("final_asset_urls") if isinstance(updated.get("final_asset_urls"), dict) else None
@@ -3161,6 +3163,7 @@ class WorkflowV1Service:
             image_preview_url=str(updated.get("image_preview_url") or "") or None,
             final_preview_url=str(updated.get("final_preview_url") or "") or None,
             final_asset_urls=FinalAssetUrls.model_validate(final_asset_urls) if final_asset_urls else None,
+            quality_result=self._build_quality_result(updated),
             retry_count=int(updated.get("retry_count") or 0),
             last_stage_started_at=WorkflowV1Service._coerce_datetime(
                 updated.get("last_stage_started_at"),
@@ -3177,8 +3180,7 @@ class WorkflowV1Service:
             last_error_message=str(updated.get("last_error_message") or "") or None,
         )
 
-    @staticmethod
-    def _build_studio_action_response(updated: dict[str, Any]) -> StudioActionResponse:
+    def _build_studio_action_response(self, updated: dict[str, Any]) -> StudioActionResponse:
         """Build a compact Studio response after a selection or favorite action."""
 
         studio_state = WorkflowV1Service._studio_state(updated)
@@ -3190,8 +3192,21 @@ class WorkflowV1Service:
             content_preview=str(updated.get("content_preview") or "") or None,
             image_preview_url=str(updated.get("image_preview_url") or "") or None,
             final_preview_url=str(updated.get("final_preview_url") or "") or None,
+            quality_result=self._build_quality_result(updated),
             is_favorite=bool(studio_state.get("is_favorite")),
         )
+
+    def _build_quality_result(self, job: dict[str, Any]):
+        """Return deterministic Stage 4 quality scoring for the current job snapshot."""
+
+        try:
+            layout_spec = None
+            if self._has_selected_text(job) and self._has_selected_image(job):
+                layout_spec = self._build_final_layout_spec(job)
+            return self._quality_service.evaluate(job=job, layout_spec=layout_spec)
+        except Exception:  # noqa: BLE001
+            logger.exception("workflow quality evaluation failed job_id=%s", str(job.get("job_id") or ""))
+            return None
 
     @staticmethod
     def _resolve_output_spec(job: dict[str, Any]) -> dict[str, Any]:

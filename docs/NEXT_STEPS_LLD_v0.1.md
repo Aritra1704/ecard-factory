@@ -1,7 +1,7 @@
 # Next Steps LLD: Stage-Wise Implementation Design
 
 Document Version: `v0.1`
-Updated: `2026-03-22`
+Updated: `2026-03-23`
 Status: `Working Snapshot`
 
 ## 1. Purpose
@@ -412,26 +412,33 @@ The composition layer should render from a layout spec, not from scattered ad ho
 
 ## Current implementation status
 
-As of `2026-03-22`, the first Stage 3 slice is implemented:
+As of `2026-03-22`, Stage 3 is code-complete pending manual Studio visual acceptance:
 
-- `WorkflowCardRenderer` now builds an explicit `WorkflowCardLayoutSpec`
+- `WorkflowCardRenderer` builds an explicit `WorkflowCardLayoutSpec`
 - final preview and final PNG/PDF export in `workflow_v1_service.py` render from the same layout spec
 - the selected image is placed as an illustration block instead of becoming the implicit card background
 - the supported deterministic final layouts are:
   - `illustration_top_text_bottom`
   - `text_left_illustration_right`
-- final preview, final PNG, and final PDF asset rows now persist the layout version id
+  - `poster_illustration_caption`
+- final preview, final PNG, and final PDF asset rows persist the layout version id
+- final-card rendering now includes:
+  - framed art treatment
+  - `cover` fit with explicit crop-focus defaults
+  - role-aware font variants for title/body/signoff
+  - theme-specific ornament layers
+  - content-aware balancing for compact versus dense copy
 - targeted regressions passed:
   - `tests/test_workflow_card_renderer.py`
   - `tests/test_imageforge_integration.py`
   - `tests/test_workflow_v1_router.py`
 
-## Next Stage 3 slice
+## Remaining Stage 3 acceptance gate
 
-- keep the layout-spec path as the only composition path
-- extend the spec only in ways that preserve the already-validated async kickoff and canonical `/image-assets/*` path
-- improve composition flexibility before starting Stage 4 quality scoring
-- preserve preview/final parity while tuning illustration framing and text overflow behavior
+- run the manual Studio visual pass on representative themes and message lengths
+- verify crop-focus, ornament density, typography hierarchy, and compact/dense balancing against real jobs
+- if the pass is clean, close Stage 3 and start Stage 4
+- if the pass finds a concrete issue, do only the narrow Stage 3 tuning needed to fix it
 
 ## 8. Stage 4: Quality Stage
 
@@ -475,6 +482,43 @@ This quality result later becomes input to the central eCard agent.
 
 - quality failures are explicit
 - reruns can target one weak stage only
+
+## Current implementation status
+
+As of `2026-03-23`:
+
+- `ecard-factory` now includes `WorkflowQualityService` for deterministic workflow scoring
+- current quality output is exposed on:
+  - job detail/debug responses
+  - Studio action responses
+  - stage action responses
+- current checks cover:
+  - selected text presence and basic length fit
+  - shortlist-derived selected-text quality
+  - selected image presence
+  - final preview presence
+  - final export integrity
+  - layout overflow / message-panel fit
+  - simple tone-versus-visual tension warnings
+- the first quality UI is live in `content_engine_ui`:
+  - compact quality panel in Studio final-card review
+  - quality panel in Job Detail
+- operator-form configuration is now DB-driven through `operator_option_catalog`
+- `/api/config/options` CRUD now exists for editable dropdown values with seed fallback when DB access is unavailable
+- `Create New Card Job` and Theme Factory forms now source dropdown values from the config catalog instead of hardcoded defaults
+- a `Config Catalog` admin screen now exists in `content_engine_ui`
+- the earlier `operations team` audience default was only a hardcoded UI placeholder and has been removed
+- targeted verification is green:
+  - `venv/bin/python -m pytest tests/test_operator_option_service.py tests/test_workflow_quality_service.py tests/test_models.py tests/test_workflow_v1_router.py -q`
+  - result: `32 passed in 14.71s`
+  - `content_engine_ui` build passed
+
+## Remaining Stage 4 work
+
+- run live UI verification for the new config-catalog flow
+- verify Stage 4 scoring against representative weak and strong jobs
+- improve actual content quality using the new score signal instead of only surfacing warnings
+- add more targeted rerun/recovery guidance only if the live pass shows clear operator value
 
 ## 9. Stage 5: UI Split
 

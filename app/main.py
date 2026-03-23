@@ -21,6 +21,7 @@ from app.routers.events import router as events_router
 from app.routers.frontend import router as frontend_router
 from app.routers.generation import router as generation_router
 from app.routers.health import router as health_router
+from app.routers.operator_config import router as operator_config_router
 from app.routers.planning import router as planning_router
 from app.routers.storage import router as storage_router
 from app.routers.telegram import router as telegram_router
@@ -103,6 +104,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR), check_dir=False), name="assets")
 
 app.include_router(health_router)
+app.include_router(operator_config_router)
 app.include_router(storage_router)
 app.include_router(workflow_v1_router)
 app.include_router(themes_api_router)

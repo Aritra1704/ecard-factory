@@ -8,6 +8,7 @@ from app.routers.cards import router as cards_router
 from app.routers.events import router as events_router
 from app.routers.frontend import router as frontend_router
 from app.routers.generation import router as generation_router
+from app.routers.operator_config import router as operator_config_router
 from app.routers.planning import router as planning_router
 from app.routers.storage import router as storage_router
 from app.routers.telegram import router as telegram_router
@@ -21,6 +22,7 @@ api_router.include_router(assembly_router)
 api_router.include_router(events_router)
 api_router.include_router(cards_router)
 api_router.include_router(generation_router)
+api_router.include_router(operator_config_router)
 api_router.include_router(frontend_router)
 api_router.include_router(planning_router)
 api_router.include_router(storage_router)
@@ -37,6 +39,7 @@ __all__ = [
     "generation",
     "health",
     "frontend",
+    "operator_config",
     "storage",
     "telegram",
     "theme",

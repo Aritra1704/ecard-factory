@@ -7,6 +7,7 @@ from app.models.competitor import Competitor
 from app.models.daily_plan import DailyContentPlan
 from app.models.event import Event
 from app.models.listing import Listing
+from app.models.operator_option import OperatorOptionCatalog
 from app.models.sale import Sale
 from app.models.social_post import SocialPost
 from app.models.theme import CardThemeOverride, ThemeCatalog, ThemeOverride, ThemeSchedule, WeeklyTheme
@@ -31,6 +32,7 @@ __all__ = [
     "DailyContentPlan",
     "Event",
     "Listing",
+    "OperatorOptionCatalog",
     "Sale",
     "SocialPost",
     "ThemeCatalog",

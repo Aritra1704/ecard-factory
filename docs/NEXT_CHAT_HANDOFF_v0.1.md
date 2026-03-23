@@ -1,7 +1,7 @@
 # Next Chat Handoff
 
 Document Version: `v0.1`  
-Updated: `2026-03-22`  
+Updated: `2026-03-23`  
 Status: `Active Working Snapshot`
 
 ## 1. Purpose
@@ -53,6 +53,7 @@ Design direction:
 - `ecard-factory` remains the only active product app for now
 - local-first mode is the default until paid providers are intentionally enabled
 - current business priority is now creative quality hardening, not just mechanical flow completion
+- Stage 4 has now started with a deterministic quality layer and DB-driven operator dropdown configuration
 
 ## 5. Completed Stages
 
@@ -185,19 +186,81 @@ What has been completed:
   - current layouts use deterministic crop-focus defaults tuned for portrait-style illustration framing
   - final text blocks now carry deterministic font variants by role and theme
   - title/body/signoff hierarchy is stronger because the renderer now resolves serif/sans/italic variants intentionally
+- the latest Stage 3 polish slice is now in place and regression-tested:
+  - final-card themes now add deterministic ornament layers instead of relying only on shared frame treatments
+  - `minimal`, `elegant`, `festive`, and `playful` now each carry distinct decorative shape language
+  - theme-specific ornament rendering is now covered directly in renderer tests
+- the final Stage 3 code-side slice is now in place and regression-tested:
+  - layouts now rebalance themselves for compact versus dense copy instead of using one fixed art/text proportion
+  - top, poster, and side-by-side layouts now adapt art-zone and message-panel proportions to content density
+  - Stage 3 is now code-complete enough to move to a manual Studio acceptance pass
 
 What this does not mean:
 
-- the current visual result is not the intended final design quality
-- the current Pillow output is still not premium visual composition
-- this slice improved renderer structure, preview/export parity, and layout variety, but it did not finish the creative redesign
+- Stage 3 is not accepted until the manual Studio visual pass is completed
+- the current visual result may still need small targeted tuning after that pass
+- this closes the main code-side composition redesign, not the later Stage 4 quality layer
 
 Current limitation to carry forward explicitly:
 
-- the current composed card can still feel too assembled and is not acceptable as the end-state design language
-- theme-aware layout defaults now exist, framed-art polish has started, and typography hierarchy is stronger, but the layouts still need more work in theme-specific composition language
-- decorative treatment is stronger than before, but still not at the level of a premium designed eCard
-- live visual QA is still required to confirm that the new crop-focus defaults, `cover` fit, and framed panels look correct across representative themes
+- the only remaining Stage 3 gate is manual visual QA against representative jobs in Studio
+- if that pass reveals a concrete issue, do only the narrow tuning needed to fix the observed defect
+- do not reopen broad Stage 3 refactoring unless the QA pass exposes a serious composition flaw
+
+## 6B. Stage 4 First Pass
+
+Status:
+
+- started on `2026-03-23` by explicit user direction before the deferred Stage 3 live visual closeout
+- code-complete for the first deterministic pass and regression/build verified locally
+
+What is already implemented:
+
+- `ecard-factory` now computes a deterministic `quality_result` for the current job snapshot
+- Stage 4 quality output is exposed on:
+  - job debug/detail responses
+  - Studio action responses
+  - stage action responses
+- current checks include:
+  - selected text presence
+  - selected text length versus target words
+  - selected text shortlist-quality score
+  - selected image presence
+  - final preview presence
+  - final export integrity
+  - layout overflow / message-panel fit
+  - simple tone-versus-visual tension warnings
+- `content_engine_ui` now shows Stage 4 quality panels in Studio and Job Detail
+
+Operator configuration work completed in the same pass:
+
+- hardcoded job-form defaults such as `operations team` were removed
+- `operations team` was only a UI placeholder default, not a required backend concept
+- editable operator dropdowns are now backed by a new catalog model and API:
+  - `GET /api/config/options`
+  - `POST /api/config/options`
+  - `PUT /api/config/options/{option_id}`
+  - `DELETE /api/config/options/{option_id}`
+- the new `operator_option_catalog` table is seeded with sensible defaults and still has a seed fallback if DB access is unavailable
+- Create Job and Theme Factory forms now read dropdown values from that catalog instead of hardcoded lists
+- a new `Config Catalog` admin screen exists in `content_engine_ui` for editing categories and values
+
+Default audience options now include:
+
+- `general audience`
+- `working professionals`
+- `friends and family`
+- `teammates`
+- `community`
+- `friends`
+- `family`
+- `partners and loved ones`
+
+Current limitation:
+
+- Stage 4 currently scores the existing workflow deterministically; it does not by itself improve model prompting or rewrite bad copy
+- content quality improvement still requires follow-up tuning in `contentforge` and possibly tighter rerun heuristics inside `ecard-factory`
+- the active Stage 4 UI is `content_engine_ui`; the old embedded fallback bundle under `ecard-factory/app/static/console` still exists and may lag the standalone UI
 
 ## 7. Live Validation Result
 
@@ -236,18 +299,26 @@ Expected async kickoff response shape:
 - `app/integrations/imageforge/schemas.py`
 - `app/integrations/imageforge/mapper.py`
 - `app/main.py`
+- `app/models/operator_option.py`
 - `app/models/workflow.py`
 - `app/repositories/workflow_repository.py`
+- `app/routers/operator_config.py`
 - `app/routers/workflow_v1.py`
+- `app/schemas/operator_config.py`
 - `app/schemas/workflow.py`
 - `app/services/__init__.py`
 - `app/services/image_generation_service.py`
+- `app/services/operator_option_service.py`
 - `app/services/workflow_v1_service.py`
 - `app/services/workflow_card_renderer.py`
+- `app/services/workflow_quality_service.py`
 - `app/services/async_content_worker.py`
 - `app/store/job_store.py`
 - `migrations/versions/031_add_imageforge_ranking_metadata.py`
 - `migrations/versions/032_add_async_content_processing_fields.py`
+- `migrations/versions/033_add_operator_option_catalog.py`
+- `tests/test_operator_option_service.py`
+- `tests/test_workflow_quality_service.py`
 - `tests/test_workflow_card_renderer.py`
 - `docs/NEXT_STEPS_HLD_v0.1.md`
 - `docs/NEXT_STEPS_LLD_v0.1.md`
@@ -366,6 +437,48 @@ Result:
 - compile check passed for the Stage 3 visual polish slice
 
 ```bash
+cd ecard-factory
+venv/bin/python -m py_compile app/services/workflow_card_renderer.py tests/test_workflow_card_renderer.py
+venv/bin/python -m pytest tests/test_workflow_card_renderer.py tests/test_imageforge_integration.py tests/test_workflow_v1_router.py -q
+```
+
+Result:
+
+- `38 passed in 14.23s`
+- compile check passed for the Stage 3 theme-ornament slice
+
+```bash
+cd ecard-factory
+venv/bin/python -m py_compile app/services/workflow_card_renderer.py tests/test_workflow_card_renderer.py
+venv/bin/python -m pytest tests/test_workflow_card_renderer.py tests/test_imageforge_integration.py tests/test_workflow_v1_router.py -q
+```
+
+Result:
+
+- `40 passed in 14.35s`
+- compile check passed for the Stage 3 content-aware balancing slice
+
+```bash
+cd ecard-factory
+venv/bin/python -m py_compile app/models/operator_option.py app/routers/operator_config.py app/schemas/operator_config.py app/services/operator_option_service.py app/services/workflow_quality_service.py app/services/workflow_v1_service.py app/schemas/workflow.py tests/test_operator_option_service.py tests/test_workflow_quality_service.py
+venv/bin/python -m pytest tests/test_operator_option_service.py tests/test_workflow_quality_service.py tests/test_models.py tests/test_workflow_v1_router.py -q
+```
+
+Result:
+
+- `32 passed in 14.71s`
+- compile check passed for the Stage 4 config-catalog and deterministic quality-scoring slice
+
+```bash
+cd content_engine_ui
+npm run build
+```
+
+Result:
+
+- build succeeded for the new `Config Catalog` screen and config-backed form dropdown wiring
+
+```bash
 cd contentforge
 venv/bin/python -m pytest tests/test_prompt_templates.py tests/test_golden_set.py
 ```
@@ -482,6 +595,7 @@ Step-by-step:
      - art fills the framed area more fully because the current layouts now use `cover` fit with explicit crop-focus defaults
      - text panel shows stronger border/frame treatment
      - title/body/signoff should have clearer visual separation because the renderer now uses role-aware font variants
+     - different themes should no longer feel visually identical because they now add theme-specific ornament layers
      - the result should look better than the old plain text-over-image composition, but it may still not feel commercially premium yet
 8. Approve the final card.
    - Expected:
@@ -496,22 +610,23 @@ Failure signals to watch for:
 - final card image crops badly with the new `cover` fit
 - typography or spacing visibly overflows the panel
 - title/body/signoff still feel visually identical despite the new font-role treatment
+- minimal/elegant/festive/playful cards still look visually interchangeable despite the new ornament layer
 - approve-final does not produce export assets
 
 ## 11B. Remaining Roadmap Count
 
-From the current roadmap, there are `4` remaining implementation blocks after the already-completed Stage 0, Stage 1, Stage 2, and Stage 2A work:
+From the current roadmap, there are now `2` untouched later stages plus remaining Stage 4 refinement work:
 
-1. finish Stage 3 composition redesign
-2. implement Stage 4 quality/scoring layer
-3. do Stage 5 UI hardening only where needed
+1. finish Stage 4 quality hardening and connect it to actual content-improvement decisions
+2. do Stage 5 UI hardening only where needed
    - Stage 5 baseline extraction is already complete; this is not a full greenfield stage anymore
-4. implement Stage 6 bounded agent runtime
+3. implement Stage 6 bounded agent runtime
 
 Current practical focus:
 
-- only Stage 3 is active right now
-- Stage 4 should not start before Stage 3 is visually acceptable
+- Stage 3 implementation is now code-complete, but it is still waiting on the manual Studio visual acceptance pass
+- Stage 4 first pass is now implemented because the user explicitly redirected work there
+- the next useful work is not more plumbing; it is live QA plus quality-driven content improvement
 - Stage 5 hardening is secondary and non-blocking for the current eCard flow
 - Stage 6 is explicitly deferred until deterministic quality is stronger
 
@@ -519,7 +634,7 @@ Current practical focus:
 
 ### Immediate next action
 
-Continue Stage 3 composition work.
+Run a combined live QA pass for Stage 3 visual acceptance and Stage 4 quality/config behavior.
 
 Stage 3 work already completed:
 
@@ -541,46 +656,59 @@ Stage 3 work already completed:
 9. added safe image-placement and role-aware typography controls:
    - image blocks now carry explicit crop-focus defaults
    - title/body/signoff now resolve deterministic font variants by theme and role
+10. added theme-specific ornament layers:
+   - each supported theme now carries deterministic decorative shapes in the final card renderer
+   - theme-specific ornament rendering is covered in renderer regression tests
+11. added content-aware composition balancing:
+   - layouts now adapt art/text proportions for compact versus dense copy
+   - top, poster, and side-by-side layouts no longer rely on one fixed content balance
 
-Next implementation slice still remaining:
+Remaining Stage 3 acceptance step:
 
-1. push the layouts from visually improved to consistently premium
-2. keep the layout-spec-first approach and expand it only within `ecard-factory`
-3. preserve preview/final export parity and the already-validated Stage 0/2/2A contracts
-4. improve composition quality without changing the async kickoff or canonical `/image-assets/*` path
+1. run the manual Studio visual pass on representative themes and message lengths
+2. if the pass is clean, mark Stage 3 visually accepted
+3. if the pass finds a real issue, do only the narrow polish required to fix that issue
 
-Concrete next phase of changes:
+Concrete closeout checks:
 
-1. keep theme-aware multi-layout composition as the active Stage 3 topic
-2. tune the new crop-focus plus `cover` image placement rules against real generated art
-3. add at least one more premium composition mode only if it clearly improves card quality
-4. stop treating the selected image as only a generic background candidate
-5. improve typography hierarchy:
-   - better spacing and line-length control
-   - stronger title emphasis where the new font variants still look too flat
-   - theme-specific font choices if better local assets become available
-6. support theme-aware decorative layers:
-   - borders
-   - shape accents
-   - festival framing
-7. deepen the decorative framing and panel treatment so the card reads as designed, not assembled
-8. run live Studio visual QA on a few representative themes after the redesign slice lands
+1. verify crop-focus plus `cover` placement against real generated art
+2. verify compact versus dense copy balancing against real jobs
+3. verify theme-specific ornaments feel intentional rather than noisy
+4. only make targeted Stage 3 tweaks if the manual pass reveals a concrete defect
 
-Acceptance rule for the next phase:
+Stage 4 verification to execute in the same pass:
+
+1. open the `Config Catalog` screen and verify dropdown categories load from `/api/config/options`
+2. confirm `Create New Card Job` no longer defaults audience to `operations team`
+3. create or edit one option and verify it becomes selectable in the relevant UI form
+4. create one job with intentionally weak copy inputs and verify the Stage 4 quality panel reports issues plus a non-`accept` recommendation
+5. create one well-formed job and verify the Stage 4 quality panel returns `review` or `pass` with meaningful metrics
+
+Stage 4 follow-up focus after QA:
+
+1. improve actual content quality, not just the quality signal
+2. use the new quality result to target whether text, image, or final render should be rerun
+3. harden `contentforge` prompt/ranking quality where Stage 4 repeatedly flags weak copy
+
+Acceptance rule for Stage 3 closeout:
 
 - the final eCard should read as a designed card composition, not as raw text pasted on a generated image
 
 ### Scope rule for the next session
 
-The next fresh session should focus only on Stage 3 composition unless a narrow bug fix is required to preserve the already-validated async kickoff or canonical image path.
+The next fresh session should either:
 
-### Stage 3 guardrails
+- execute the combined Stage 3 and Stage 4 live QA pass, or
+- if that pass is already clean, start using Stage 4 findings to improve content quality and rerun guidance
+
+### Guardrails
 
 - do not change the async kickoff contract
 - do not introduce a second image path
 - keep manual text selection and manual image selection as hard gates
 - keep legacy image endpoints compatibility-only unless a bug forces a change
-- do not mix Stage 3 composition refactor with Stage 4 quality scoring or Stage 6 agent work
+- do not add agent logic
+- keep the new config catalog DB-driven and editable; do not reintroduce hardcoded operator dropdowns
 
 ## 13. Exact Prompt For The Next Chat
 
@@ -596,7 +724,12 @@ Context:
 - Stage 1 complete
 - Stage 2 implemented in code, regression-tested, and live-validated
 - Stage 2A async job kickoff implemented, regression-tested, and live-validated
-- Stage 3 has started, but the current visual result is still not acceptable
+- Stage 3 is code-complete, but still pending manual Studio visual acceptance
+- Stage 4 first pass is implemented:
+  - deterministic workflow quality scoring exists
+  - operator dropdowns are DB-driven through /api/config/options
+  - Config Catalog screen exists in content_engine_ui
+  - the old hardcoded `operations team` audience default is removed
 
 First, read:
 - ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md
@@ -605,15 +738,15 @@ First, read:
 - ecard-factory/docs/EXECUTION_PLAYBOOK_v0.1.md
 
 Then do this:
-- continue Stage 3 composition work inside `ecard-factory`
+- run the combined Stage 3 visual and Stage 4 quality/config live QA pass first
+- verify the Config Catalog page and config-backed dropdowns end to end
+- if the pass reveals a concrete Stage 3 issue, fix only the narrow composition defect required to pass
+- if the pass reveals weak Stage 4 signals or weak copy patterns, improve the quality heuristics and/or content-quality path without breaking the canonical flow
 - keep the explicit layout spec as the source of truth for Pillow composition
-- continue from the current multi-layout foundation instead of restarting Stage 3 from scratch
-- polish the existing layouts so they read as designed cards instead of mechanically separated panels
-- extend composition behavior from that layout-spec path without disturbing the canonical workflow
 - preserve the already-validated async kickoff and canonical `/image-assets/*` path
 
 Guardrails:
-- do not touch content ranking flow
+- do not reintroduce hardcoded dropdown values like `operations team`
 - do not change Stage 2 or Stage 2A contracts unless a concrete regression is discovered
 - do not add agent logic
 - do not introduce a second image path
@@ -622,17 +755,17 @@ Guardrails:
 - log every step clearly
 
 Success condition:
-- the final card should no longer feel like text pasted over the generated image
+- Stage 3 live QA is complete, Stage 4 config/quality behavior is verified, and the next highest-value content-quality improvement is identified or implemented
 ```
 
 ## 14. Exact Prompt To Trigger The Next Stage In A New Session
 
-Use this if you want the next session to execute only Stage 3:
+Use this if you want the next session to execute only the live QA pass:
 
 ```text
 Continue from ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md.
 
-Execute only Stage 3 composition.
+Execute only the Stage 3 visual plus Stage 4 quality/config live QA pass.
 
 First read:
 - ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md
@@ -640,10 +773,13 @@ First read:
 - ecard-factory/docs/NEXT_STEPS_LLD_v0.1.md
 
 Then do this only:
-- continue from the existing explicit multi-layout implementation in the Pillow renderer
+- verify the current Pillow composition in the running Studio
+- test representative themes and short versus dense copy
+- verify the Config Catalog screen loads and Create Job uses config-backed dropdowns
+- confirm the old hardcoded `operations team` audience default is gone
+- verify Stage 4 quality panels show sensible signals in Studio and Job Detail
+- if a concrete issue is discovered, fix only that issue inside the existing layout-spec path
 - keep `render-final` and final export on the shared layout-spec path
-- improve the current layouts so the result feels premium rather than mechanically composed
-- extend composition capability while keeping preview/final export parity
 - preserve the already-validated async kickoff and canonical image-selection path
 
 If Stage 3 work uncovers a regression:
@@ -657,7 +793,7 @@ Guardrails:
 - keep legacy /generate-image style routes compatibility-only
 
 Success condition:
-- the final card should read as a designed eCard, not as text pasted over source art
+- Stage 3 visual behavior and Stage 4 config/quality behavior are either signed off or narrowed to one concrete remaining defect
 ```
 
 ## 15. Daily Brief Template

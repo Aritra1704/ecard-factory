@@ -24,6 +24,10 @@ from app.services.workflow_card_renderer import (
 )
 
 
+def _shape_by_id(layout, shape_id: str):
+    return next(shape for shape in layout.shapes if shape.shape_id == shape_id)
+
+
 def test_build_final_layout_spec_is_versioned_and_explicit() -> None:
     """Final renders should resolve to one explicit versioned layout spec."""
 
@@ -51,6 +55,8 @@ def test_build_final_layout_spec_is_versioned_and_explicit() -> None:
     assert layout.image_blocks[0].fit == "cover"
     assert layout.image_blocks[0].crop_focus == (0.5, 0.3)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
+    shape_ids = {shape.shape_id for shape in layout.shapes}
+    assert {"festive_corner_left", "festive_corner_right", "festive_footer_band"} <= shape_ids
     assert {block.role for block in layout.text_blocks} >= {"title", "body", "signoff"}
     role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
     assert role_to_variant["title"] == "serif_bold"
@@ -138,6 +144,8 @@ def test_elegant_theme_defaults_to_side_by_side_layout() -> None:
     assert layout.image_blocks[0].fit == "cover"
     assert layout.image_blocks[0].crop_focus == (0.5, 0.4)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
+    shape_ids = {shape.shape_id for shape in layout.shapes}
+    assert {"elegant_outer_frame", "elegant_inner_frame", "elegant_crest"} <= shape_ids
     role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
     assert role_to_variant["title"] == "serif_bold"
     assert role_to_variant["body"] == "serif"
@@ -167,7 +175,117 @@ def test_minimal_theme_defaults_to_top_layout_with_caption_panel_polish() -> Non
     assert layout.image_blocks[0].fit == "cover"
     assert layout.image_blocks[0].crop_focus == (0.5, 0.34)
     assert any(shape.outline_width > 0 for shape in layout.shapes)
+    shape_ids = {shape.shape_id for shape in layout.shapes}
+    assert {"minimal_outer_frame", "minimal_footer_rule"} <= shape_ids
     role_to_variant = {block.role: block.font_variant for block in layout.text_blocks}
     assert role_to_variant["title"] == "serif_bold"
     assert role_to_variant["body"] == "sans"
     assert role_to_variant["signoff"] == "sans_italic"
+
+
+def test_playful_theme_gets_theme_specific_ornaments() -> None:
+    """Playful cards should include distinct decorative ornaments beyond the shared background circles."""
+
+    renderer = WorkflowCardRenderer()
+
+    layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Bright Hello",
+            message="Playful cards should carry visible ornament language instead of looking like generic posters.",
+            signoff="See you soon",
+            theme_style="playful",
+            background_image_url=None,
+            illustration_image_url="https://example.com/playful.png",
+            text_alignment="center",
+            export_size="1080x1350",
+        )
+    )
+
+    assert layout.layout_id == "poster_illustration_caption"
+    shape_ids = {shape.shape_id for shape in layout.shapes}
+    assert {"playful_bubble_left", "playful_bubble_right", "playful_footer_tab"} <= shape_ids
+
+
+def test_top_layout_balances_art_and_text_for_dense_copy() -> None:
+    """Dense copy should trade some art height for a larger message panel in top layout cards."""
+
+    renderer = WorkflowCardRenderer()
+
+    compact_layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Warm Wishes",
+            message="A bright hello for you.",
+            signoff="Love",
+            theme_style="minimal",
+            background_image_url=None,
+            illustration_image_url="https://example.com/compact.png",
+            text_alignment="center",
+            export_size="1080x1350",
+        )
+    )
+    dense_layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="A Long And Gracious Note For Someone Special",
+            message=(
+                "May this season bring quiet strength, kind company, steady hope, and enough room in your day "
+                "to feel deeply appreciated for the care, patience, and warmth you keep giving to everyone around you."
+            ),
+            signoff="With admiration and gratitude",
+            theme_style="minimal",
+            background_image_url=None,
+            illustration_image_url="https://example.com/dense.png",
+            text_alignment="center",
+            export_size="1080x1350",
+        )
+    )
+
+    compact_art = _shape_by_id(compact_layout, "top_art_frame")
+    dense_art = _shape_by_id(dense_layout, "top_art_frame")
+    compact_panel = _shape_by_id(compact_layout, "message_panel")
+    dense_panel = _shape_by_id(dense_layout, "message_panel")
+
+    assert compact_art.box[3] > dense_art.box[3]
+    assert dense_panel.box[1] < compact_panel.box[1]
+    assert (dense_panel.box[3] - dense_panel.box[1]) > (compact_panel.box[3] - compact_panel.box[1])
+
+
+def test_dense_elegant_copy_expands_side_text_column() -> None:
+    """Dense elegant copy should widen the side-by-side text panel for readability."""
+
+    renderer = WorkflowCardRenderer()
+
+    compact_layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Quiet Grace",
+            message="Calm thanks and warm regards.",
+            signoff="Regards",
+            theme_style="elegant",
+            background_image_url=None,
+            illustration_image_url="https://example.com/compact-elegant.png",
+            text_alignment="left",
+            export_size="1080x1350",
+        )
+    )
+    dense_layout = renderer.build_final_layout_spec(
+        FinalCardRenderInput(
+            title="Quiet Grace In A Season Of Thoughtful Celebration",
+            message=(
+                "Wishing you a season of measured joy, graceful reflection, generous companionship, and the kind of "
+                "steady peace that lingers well beyond the moment itself."
+            ),
+            signoff="With sincere regards",
+            theme_style="elegant",
+            background_image_url=None,
+            illustration_image_url="https://example.com/dense-elegant.png",
+            text_alignment="left",
+            export_size="1080x1350",
+        )
+    )
+
+    compact_panel = _shape_by_id(compact_layout, "message_panel")
+    dense_panel = _shape_by_id(dense_layout, "message_panel")
+    compact_art = _shape_by_id(compact_layout, "side_art_frame")
+    dense_art = _shape_by_id(dense_layout, "side_art_frame")
+
+    assert dense_panel.box[2] > compact_panel.box[2]
+    assert dense_art.box[0] > compact_art.box[0]

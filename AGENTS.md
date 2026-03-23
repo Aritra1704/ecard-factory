@@ -20,12 +20,13 @@ Orchestrator service responsible for final card creation.
 - final rendered eCard
 
 ## Current Issues
-- Stage 3 composition quality is still not premium
-- live visual QA is still needed for the current framed-art and `cover`-fit layouts
-- quality/scoring layer is not implemented yet
+- Stage 3 composition still needs one live Studio visual signoff pass
+- Stage 4 deterministic quality scoring is implemented, but the system still needs actual content-quality improvement
+- config-catalog routes and UI wiring are in place, but they still need live QA against the running stack
 
 ## Rules
 - never embed text inside image
 - always use selected assets only
 - keep `/api/jobs/{job_id}/image-assets/*` as the canonical image path
-- keep async kickoff behavior intact while Stage 3 is being polished
+- keep async kickoff behavior intact while Stage 3 and Stage 4 are being verified
+- keep operator dropdowns DB-driven; do not reintroduce hardcoded form values like `operations team`

@@ -1,7 +1,7 @@
 # Next Steps HLD: eCard MVP First Local Creative Platform
 
 Document Version: `v0.1`
-Updated: `2026-03-22`
+Updated: `2026-03-23`
 Status: `Working Snapshot`
 
 ## 1. Purpose
@@ -324,12 +324,16 @@ Current verified state:
 - Stage 1 mechanically complete, but quality hardening is still required for prompt packs, tone diversity, and shortlist usefulness
 - Stage 2 mechanically complete, but quality hardening is still required for illustration fit and negative-space safety
 - Stage 2A implemented in code, regression-tested, and validated against the live local stack on `2026-03-22`
-- Stage 3 composition redesign started on `2026-03-22`
-  - first slice implemented: explicit layout spec inside the Pillow renderer
-  - final preview and final export now render from the same layout-spec path
-  - deterministic final layouts are now `illustration_top_text_bottom` and `text_left_illustration_right`
-  - selected image is now treated as an illustration block instead of an implicit full-card background
-  - final preview/PNG/PDF asset rows now carry the layout version id
+- Stage 3 composition redesign is now code-complete on `2026-03-22`, pending manual Studio visual acceptance
+  - explicit layout spec inside the Pillow renderer is the only composition path
+  - final preview and final export render from the same layout-spec path
+  - deterministic final layouts now include:
+    - `illustration_top_text_bottom`
+    - `text_left_illustration_right`
+    - `poster_illustration_caption`
+  - selected image is treated as an illustration block instead of an implicit full-card background
+  - final preview/PNG/PDF asset rows carry the layout version id
+  - crop-focus defaults, role-aware font variants, theme-specific ornament layers, and content-aware layout balancing are implemented
   - targeted regression slice is green after the refactor
 
 Next execution gate before Stage 3:
@@ -340,7 +344,19 @@ Next execution gate before Stage 3:
 - confirmed `/api/jobs/{job_id}/image-assets/generate` returns ranked candidates with recommendation metadata and no auto-selected image
 - confirmed manual image selection, `render-final`, and `approve-final` complete the canonical flow through `export_ready`
 
-Stage 3 composition work is now unblocked.
+Stage 3 composition work is now code-complete enough for manual acceptance.
+
+- Stage 4 first pass is now implemented on `2026-03-23`
+  - deterministic workflow quality scoring now exists inside `ecard-factory`
+  - Stage 4 signals are exposed in job detail, Studio actions, and stage action responses
+  - operator dropdown configuration is now DB-driven through `operator_option_catalog` with API CRUD plus seed fallback
+  - `content_engine_ui` now includes a `Config Catalog` admin screen and config-backed dropdowns for Create Job and Theme Factory
+  - the old hardcoded `operations team` audience default has been removed
+
+Current practical reading:
+
+- Stage 3 still needs one live Studio visual signoff pass
+- Stage 4 plumbing is no longer theoretical; the next work should focus on live QA and actual content-quality improvement using the new scoring layer
 
 ## 13. Non-Deviation Guardrails
 
@@ -361,6 +377,7 @@ Start with this sequence:
 
 1. use `docs/NEXT_CHAT_HANDOFF_v0.1.md` as the execution snapshot in the next session
 2. keep the next execution window focused on eCard quality hardening only
-3. preserve the already-validated async kickoff and canonical ImageForge path while tuning prompt/image quality
-4. defer StoryFactory and ThoughtFactory until the eCard MVP is commercially credible
-5. keep quality-layer and bounded-agent work for later stages
+3. run a combined live QA pass for Stage 3 composition and Stage 4 quality/config behavior
+4. preserve the already-validated async kickoff and canonical ImageForge path while tuning prompt/image quality
+5. use the new Stage 4 scoring signal to drive actual content-quality improvements instead of adding more plumbing
+6. defer StoryFactory, ThoughtFactory, and bounded-agent work until deterministic quality is materially stronger

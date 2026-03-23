@@ -152,4 +152,5 @@ def test_theme_factory_tables_are_namespaced(configured_env: dict[str, str]) -> 
     assert models.ThemeCatalog.__table__.name == "card_theme_catalog"
     assert models.ThemeSchedule.__table__.name == "card_theme_schedule"
     assert models.CardThemeOverride.__table__.name == "card_theme_overrides"
+    assert models.OperatorOptionCatalog.__table__.name == "operator_option_catalog"
     assert models.ThemeOverride.__table__.name == "theme_overrides"
