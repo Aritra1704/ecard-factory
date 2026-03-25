@@ -1,7 +1,7 @@
 # Next Steps LLD: Stage-Wise Implementation Design
 
-Document Version: `v0.1`
-Updated: `2026-03-23`
+Document Version: `v0.2`
+Updated: `2026-03-25`
 Status: `Working Snapshot`
 
 ## 1. Purpose
@@ -412,7 +412,7 @@ The composition layer should render from a layout spec, not from scattered ad ho
 
 ## Current implementation status
 
-As of `2026-03-23`, Stage 3 is complete and visually accepted:
+As of `2026-03-25`, Stage 3 is code-complete and regression-tested:
 
 - `WorkflowCardRenderer` builds an explicit `WorkflowCardLayoutSpec`
 - final preview and final PNG/PDF export in `workflow_v1_service.py` render from the same layout spec
@@ -432,16 +432,8 @@ As of `2026-03-23`, Stage 3 is complete and visually accepted:
   - `tests/test_workflow_card_renderer.py`
   - `tests/test_imageforge_integration.py`
   - `tests/test_workflow_v1_router.py`
-- representative live visual QA is complete across rerendered jobs:
-  - `job_d6281fb50d`
-  - `job_fd95fc7d65`
-  - `job_966e98cbf8`
-  - `job_95e76a8593`
-- the closeout pass verified:
-  - crop-focus and `cover` placement
-  - ornament density
-  - typography hierarchy
-  - compact versus dense copy balancing
+- the render path should be treated as the active baseline, not as the main product bottleneck
+- one narrow live Studio visual signoff pass may still be used as a confidence check if a concrete visual regression is suspected
 
 ## 8. Stage 4: Quality Stage
 
@@ -525,13 +517,102 @@ As of `2026-03-23`:
   - live `/api/config/options` returned database-backed categories with no `operations team` audience entry
   - standalone UI root on `http://127.0.0.1:4173` served successfully during the same pass
 
-## Post-Stage 4 follow-up
+## 8A. Immediate Follow-Up: Content Quality Hardening
 
-- no blocking Stage 4 work remains
-- optional next improvements:
-  - deeper browser-driven UI smoke coverage for Config Catalog interactions
-  - further prompt/ranking tuning for tone variety, now that compact-length control is fixed
-  - image-generation latency reduction, since one live `image-assets/generate` client call timed out even though the backend completed and persisted candidates
+## Goal
+
+Make content quality visibly better for the active eCard product before any sibling-app implementation starts.
+
+## Service owner
+
+Primary: `contentforge`
+
+Supporting integration owner: `ecard-factory`
+
+## Required capabilities
+
+- define a model-persona routing matrix for active local Ollama models
+- route witty, heartfelt, respectful, playful, and festive asks intentionally instead of relying on one generic prompt shape
+- allow compare-model requests to vary by prompt-pack strategy, not only by model name
+- surface `voice_pack`, route label, and model source clearly in debug metadata returned to Studio
+- expand golden-set coverage so tone variety is measured instead of guessed
+- prepare run-level analytics for future leaderboard and routing decisions without switching the product focus away from eCards
+
+## Proposed implementation notes
+
+- keep `ecard_factory` as the only active product app
+- continue carrying `app_id` and `content_type`, but do not treat StoryFactory or ThoughtFactory as production work yet
+- add non-blocking benchmark briefs for story/thought shapes only to prevent regression in the shared engine
+
+## Estimate
+
+- `3-5 working days`
+
+## Exit criteria
+
+- the same theme can produce visibly distinct but usable witty versus heartfelt versus respectful options
+- shortlist entries stop feeling like one repeated house voice
+- route metadata is visible enough to understand why one model/prompt path was chosen
+
+## 8B. Immediate Follow-Up: Illustration Quality And Latency Hardening
+
+## Goal
+
+Make ImageForge outputs look like reusable illustrations for composition instead of card-pattern backdrops, while reducing operator-facing latency confusion.
+
+## Service owner
+
+Primary: `imageforge`
+
+Supporting integration owner: `ecard-factory`
+
+## Required capabilities
+
+- tune spot-illustration prompts so subjects remain isolated and text-safe
+- improve per-theme scene presets for current eCard themes
+- tighten negative prompts that still allow full-card or poster-like outputs through
+- preserve illustration-first asset roles while making background usage explicitly secondary
+- reduce timeout confusion by using predictable draft-size behavior and clearer async/runtime feedback where needed
+- keep GIF/video generation explicitly out of this slice
+
+## Estimate
+
+- `3-5 working days`
+
+## Exit criteria
+
+- selected assets consistently look reusable inside Pillow layouts
+- operators stop seeing frequent “looks like a full card already” failures
+- one slow backend completion should not look like a hard product failure from the UI point of view
+
+## 8C. Shared-Engine Readiness Gate Before Sibling Apps
+
+## Goal
+
+Prevent StoryFactory and ThoughtFactory from starting before the shared engines are strong enough.
+
+## Owner
+
+Platform decision shared across `ecard-factory`, `contentforge`, and `imageforge`
+
+## Required capabilities
+
+- define the minimum readiness checklist for `contentforge` and `imageforge`
+- document what sibling apps will require that does not exist yet:
+  - story sequencing
+  - character continuity
+  - page-level layout logic
+  - animation/GIF support
+- keep those items out of the current eCard improvement cycle
+
+## Estimate
+
+- `1-2 working days`
+
+## Exit criteria
+
+- the next session does not accidentally start building sibling apps without an explicit readiness decision
+- future app work has a written gate instead of an implied hope
 
 ## 9. Stage 5: UI Split
 
@@ -723,13 +804,17 @@ Do the work in this order:
 7. Stage 2/2A live validation gate in the running UI
 8. Stage 3 Pillow composition redesign
 9. Stage 4 quality layer
-10. Stage 5 UI split hardening for `content_engine_ui` when needed
-11. Stage 6 bounded agent runtime
+10. Stage 4A content quality hardening
+11. Stage 4B illustration quality and latency hardening
+12. Stage 4C shared-engine readiness gate before sibling apps
+13. Stage 5 UI split hardening for `content_engine_ui` when needed
+14. Stage 6 bounded agent runtime
 
 Implementation note:
 
 - Stage 5 UI split baseline is already completed in the current workspace, so the remaining work is hardening only and is not a blocker for Stage 0-2 verification
-- the next new session should execute Step 7 only unless that validation uncovers a blocker requiring a narrow fix
+- the next new session should not return to broad Stage 0-4 plumbing unless a concrete regression is discovered
+- the practical next slices are Stage 4A, Stage 4B, or Stage 4C, not a new product app
 
 ## 13. Non-Deviation Conditions
 
@@ -738,6 +823,7 @@ Implementation note:
 - no multi-agent workflow until the single-agent supervisor proves useful
 - no production dependency on manual hidden fallbacks
 - no mixing of urgent festival delivery work with broad architecture changes in the same branch
+- no StoryFactory, ThoughtFactory, or GIF/video scope before the shared-engine readiness gate is closed
 
 ## 14. Open Design Questions
 
@@ -746,3 +832,4 @@ These questions should be resolved before the UI move starts:
 1. Should legacy Jinja/template pages be removed after the standalone UI reaches route parity, or retained longer as a safety fallback?
 2. Should the standalone UI eventually be served through a reverse proxy path in production, or remain independently deployed?
 3. Should `dist/` artifacts stay committed in `content_engine_ui`, or should that repo move to build-artifact-free source control?
+4. When shared-engine readiness is re-evaluated, what exact benchmark is strong enough to justify starting StoryFactory or ThoughtFactory?

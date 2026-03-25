@@ -1,7 +1,7 @@
 # Next Steps HLD: eCard MVP First Local Creative Platform
 
-Document Version: `v0.1`
-Updated: `2026-03-23`
+Document Version: `v0.2`
+Updated: `2026-03-25`
 Status: `Working Snapshot`
 
 ## 1. Purpose
@@ -56,9 +56,12 @@ Current issues:
 - multiple workflow styles coexist
 - image generation is split between old internal paths and ImageForge-backed paths
 - image outputs skew toward full-card backdrops instead of reusable spot illustrations
+- text output still collapses too often into narrow tone ranges even when multiple local models are available
+- shared-engine contracts exist, but app-specific behavior is still shallow in the current implementation
 - local mode still drifts toward paid-provider assumptions in some settings/contracts
 - UI is embedded inside `ecard-factory`
 - preview/export quality is coupled to backend internals
+- documentation and execution snapshots are no longer perfectly aligned on current Stage 3 status
 - the system is not yet structured for a safe agentic loop
 
 ## 4. Design Principles
@@ -75,6 +78,8 @@ The redesign should follow these rules:
 8. Quality scoring happens before autonomy expands.
 9. `contentforge` and `imageforge` are shared engines; future StoryFactory/ThoughtFactory apps should be sibling orchestrators, not extra flows inside `ecard-factory`.
 10. eCard assets are illustration-first by default; soft backgrounds remain opt-in.
+11. Tone diversity must be designed through prompt-pack plus model-routing strategy, not assumed to appear automatically from one generic prompt.
+12. Shared-engine readiness must be proven on the eCard MVP before sibling-app implementation starts.
 
 ## 5. Target High-Level Architecture
 
@@ -101,7 +106,10 @@ Responsibilities:
 - structured candidate output
 - thin shared contract for `app_id`, `content_type`, and `creative_brief`
 - prompt-pack routing across local models
+- model-persona routing for tone diversity across local models
+- app-aware prompt packs and output-shape handling
 - fixed golden-set evaluation briefs for regression tracking
+- generation-run analytics needed for later leaderboard and routing decisions
 
 ### ImageForge Shared Engine
 
@@ -113,6 +121,8 @@ Responsibilities:
 - selected asset persistence
 - asset roles for `spot_illustration`, `background`, and `motif`
 - preset workflows for `ecard_spot_illustration_v1` and `ecard_soft_background_v1`
+- illustration-fit tuning so selected assets remain reusable instead of looking like full-card posters
+- explicit still-image focus in the current cycle; GIF/video generation stays out of scope until the still-image path is commercially usable
 
 ### Composition Layer
 
@@ -231,6 +241,27 @@ Later evolution:
 - draggable UI controls
 - AI-assisted redesign requests
 
+## 8A. Shared-Engine Readiness Gate Before Sibling Apps
+
+Future sibling apps should not start from ambition alone. They should start only after the shared engines meet a minimum readiness bar on the eCard MVP.
+
+ContentForge readiness gate:
+
+- tone packs produce visibly distinct outputs for witty, warm, respectful, heartfelt, and playful asks
+- the same request routed across multiple local models yields meaningfully diverse but usable candidates
+- eCard golden-set results stop regressing while story/thought benchmark briefs remain at least structurally healthy
+
+ImageForge readiness gate:
+
+- selected assets consistently look like reusable spot illustrations or motifs, not implicit full-card templates
+- text-safe negative space is reliable enough for Pillow composition
+- image-generation latency is predictable enough for Studio operators to work without repeated timeout confusion
+
+Sibling-app gate:
+
+- `story_factory` and `thought_factory` should begin only after the above readiness checks pass
+- storybook sequencing, character continuity, and animation/GIF work are separate future scopes and should not be folded into the current eCard improvement cycle
+
 ## 9. UI Extraction Design
 
 Current UI history sources:
@@ -322,9 +353,9 @@ Current verified state:
 
 - Stage 0 complete
 - Stage 1 mechanically complete, but quality hardening is still required for prompt packs, tone diversity, and shortlist usefulness
-- Stage 2 mechanically complete, but quality hardening is still required for illustration fit and negative-space safety
+- Stage 2 mechanically complete, but quality hardening is still required for illustration fit, negative-space safety, and latency
 - Stage 2A implemented in code, regression-tested, and validated against the live local stack on `2026-03-22`
-- Stage 3 composition redesign is accepted on `2026-03-23`
+- Stage 3 composition redesign is code-complete and regression-tested on `2026-03-23`
   - explicit layout spec inside the Pillow renderer is the only composition path
   - final preview and final export render from the same layout-spec path
   - deterministic final layouts now include:
@@ -335,11 +366,6 @@ Current verified state:
   - final preview/PNG/PDF asset rows carry the layout version id
   - crop-focus defaults, role-aware font variants, theme-specific ornament layers, and content-aware layout balancing are implemented
   - targeted regression slice is green after the refactor
-  - representative rerendered live previews were reviewed across minimal, festive, and elegant jobs:
-    - `job_d6281fb50d`
-    - `job_fd95fc7d65`
-    - `job_966e98cbf8`
-    - `job_95e76a8593`
 - Stage 4 quality and operator-config hardening is functionally complete on `2026-03-23`
   - deterministic workflow quality scoring is live inside `ecard-factory`
   - compact-card prompt/ranking hardening is live inside `contentforge`
@@ -366,11 +392,39 @@ Stage 3 composition work is now code-complete enough for manual acceptance.
 
 Current practical reading:
 
-- no Stage 3 or Stage 4 acceptance gate remains open
-- the main remaining operational concern is image-generation latency; one live `image-assets/generate` client call timed out while the backend still completed and persisted candidates
-- the next work should focus on optional Stage 5 hardening, image latency reduction, and continued quality tuning without changing the canonical flow
+- the core flow is mechanically healthy enough to stop adding plumbing for now
+- the main remaining product concerns are content quality, illustration quality, and image-generation latency
+- one narrow live Studio visual signoff pass may still be used as a confidence check, but it is no longer the main execution bottleneck
+- the next work should focus on quality hardening and shared-engine readiness instead of new app creation
 
-## 13. Non-Deviation Guardrails
+## 13. Immediate Improvement Tracks
+
+The next change set should focus on these tracks only:
+
+### Track A: Content Quality And Tone Diversity
+
+- add stronger prompt-pack routing beyond the current shallow shared contract
+- define model personas for local Ollama targets so witty, heartfelt, respectful, and playful routes are intentionally diversified
+- expand golden-set coverage and future leaderboard inputs so quality tuning becomes measurable instead of anecdotal
+
+### Track B: Illustration Quality And Latency
+
+- tune ImageForge prompts and workflow defaults so selected assets read as reusable illustrations, not card-pattern backdrops
+- improve text-safe negative space and subject framing
+- reduce operator-facing timeout confusion by tightening latency behavior and draft-size defaults where needed
+
+### Track C: Shared-Engine Hardening Before Sibling Apps
+
+- keep `ecard-factory` as the only active product app
+- treat StoryFactory and ThoughtFactory as next consumers of the engines, not as the current build target
+- do not introduce GIF/video scope into the current still-image improvement cycle
+
+### Track D: Documentation And Runtime Hygiene
+
+- keep HLD, LLD, handoff, and AGENTS state descriptions aligned
+- remove stale status claims that imply work is accepted when the current execution focus says otherwise
+
+## 14. Non-Deviation Guardrails
 
 To avoid drifting away from the proposed architecture:
 
@@ -382,14 +436,15 @@ To avoid drifting away from the proposed architecture:
 - do not allow unbounded auto-regenerate loops
 - do not remove working API contracts without replacement mapping
 - keep legacy image routes frozen as compatibility-only; remove them only in a dedicated cleanup pass after Stage 3 stabilizes and the canonical `/image-assets/*` path is the only confirmed caller path
+- do not start StoryFactory, ThoughtFactory, or GIF/video work until the shared-engine readiness gate is explicitly passed
 
-## 14. Immediate Recommendation
+## 15. Immediate Recommendation
 
 Start with this sequence:
 
 1. use `docs/NEXT_CHAT_HANDOFF_v0.1.md` as the execution snapshot in the next session
-2. treat Stage 3 and Stage 4 as the current verified baseline
-3. preserve the already-validated async kickoff and canonical ImageForge path while tuning latency or UX
-4. use the existing Stage 4 scoring signal to guide any further text/image quality work instead of adding more plumbing
+2. treat the current canonical flow as mechanically stable, but not creatively finished
+3. preserve the already-validated async kickoff and canonical ImageForge path while tuning content quality, image quality, and latency
+4. use the existing Stage 4 scoring signal to guide quality work instead of adding more orchestration plumbing
 5. take only targeted Stage 5 UI hardening work if the running stack shows a concrete operator issue
-6. defer StoryFactory, ThoughtFactory, and bounded-agent work until there is a stronger reason than the current eCard backlog
+6. defer StoryFactory, ThoughtFactory, GIF/video work, and bounded-agent work until the shared-engine readiness gate is passed

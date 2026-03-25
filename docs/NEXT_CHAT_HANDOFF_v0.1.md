@@ -1,7 +1,7 @@
 # Next Chat Handoff
 
-Document Version: `v0.1`  
-Updated: `2026-03-23`  
+Document Version: `v0.2`  
+Updated: `2026-03-25`  
 Status: `Active Working Snapshot`
 
 ## 1. Purpose
@@ -53,7 +53,11 @@ Design direction:
 - `ecard-factory` remains the only active product app for now
 - local-first mode is the default until paid providers are intentionally enabled
 - current business priority is now creative quality hardening, not just mechanical flow completion
-- Stage 4 has now started with a deterministic quality layer and DB-driven operator dropdown configuration
+- Stage 4 baseline exists, but the immediate next work is:
+  - content quality and tone-diversity hardening
+  - illustration quality and latency hardening
+  - shared-engine readiness gating before any sibling app build starts
+- GIF/video generation is explicitly not part of the current improvement cycle
 
 ## 5. Completed Stages
 
@@ -193,19 +197,18 @@ What has been completed:
 - the final Stage 3 code-side slice is now in place and regression-tested:
   - layouts now rebalance themselves for compact versus dense copy instead of using one fixed art/text proportion
   - top, poster, and side-by-side layouts now adapt art-zone and message-panel proportions to content density
-  - Stage 3 is now code-complete enough to move to a manual Studio acceptance pass
+  - Stage 3 is now code-complete enough that only an optional narrow Studio confidence check should remain
 
-What this does not mean:
+What this does mean:
 
-- Stage 3 is not accepted until the manual Studio visual pass is completed
-- the current visual result may still need small targeted tuning after that pass
-- this closes the main code-side composition redesign, not the later Stage 4 quality layer
+- Stage 3 should now be treated as the active render baseline
+- any further Stage 3 work should be narrow regression fixing only
+- the main product bottlenecks have moved to content quality, illustration quality, and latency
 
 Current limitation to carry forward explicitly:
 
-- the only remaining Stage 3 gate is manual visual QA against representative jobs in Studio
-- if that pass reveals a concrete issue, do only the narrow tuning needed to fix the observed defect
-- do not reopen broad Stage 3 refactoring unless the QA pass exposes a serious composition flaw
+- one narrow live Studio signoff pass may still be used as a confidence check if a concrete visual regression is suspected
+- do not reopen broad Stage 3 refactoring unless a serious composition defect is observed in the running stack
 
 ## 6B. Stage 4 First Pass
 
@@ -261,6 +264,27 @@ Current limitation:
 - Stage 4 currently scores the existing workflow deterministically; it does not by itself improve model prompting or rewrite bad copy
 - content quality improvement still requires follow-up tuning in `contentforge` and possibly tighter rerun heuristics inside `ecard-factory`
 - the active Stage 4 UI is `content_engine_ui`; the old embedded fallback bundle under `ecard-factory/app/static/console` still exists and may lag the standalone UI
+
+## 6C. Immediate Next Work After The Current Baseline
+
+The next session should pick one of these tracks only:
+
+### Track 4A: Content Quality And Tone Diversity
+
+- strengthen prompt-pack routing in `contentforge`
+- intentionally diversify local-model behavior by route, not just by model name
+- make shortlist quality improvements measurable through better benchmark coverage and route metadata
+
+### Track 4B: Illustration Quality And Latency
+
+- improve spot-illustration fit so outputs stop looking like full-card templates
+- tighten negative-space safety for Pillow composition
+- reduce operator-facing timeout confusion around `image-assets/generate`
+
+### Track 4C: Shared-Engine Readiness Gate
+
+- document the readiness bar for starting StoryFactory or ThoughtFactory
+- explicitly keep story sequencing, character continuity, and GIF/video scope out of the current eCard improvement cycle
 
 ## 7. Live Validation Result
 
@@ -613,92 +637,37 @@ Failure signals to watch for:
 - minimal/elegant/festive/playful cards still look visually interchangeable despite the new ornament layer
 - approve-final does not produce export assets
 
-## 11B. Remaining Roadmap Count
+## 11B. Practical Next Roadmap Slice
 
-From the current roadmap, there are now `2` untouched later stages:
+Current practical focus is no longer broad Stage 3 or Stage 4 work. The next useful work is:
 
-1. do Stage 5 UI hardening only where needed
-   - Stage 5 baseline extraction is already complete; this is not a full greenfield stage anymore
-2. implement Stage 6 bounded agent runtime
+1. Stage 4A content quality hardening
+2. Stage 4B illustration quality and latency hardening
+3. Stage 4C shared-engine readiness gating before sibling apps
 
-Current practical focus:
+Stage 5 UI hardening remains secondary and non-blocking.
 
-- Stage 3 visual acceptance is complete on `2026-03-23`
-- Stage 4 quality/operator-config hardening is complete on `2026-03-23`
-- the next useful work is not more Stage 3 or Stage 4 plumbing; it is optional Stage 5 hardening, image-latency reduction, or further non-blocking content-quality tuning
-- Stage 5 hardening is secondary and non-blocking for the current eCard flow
-- Stage 6 is explicitly deferred until deterministic quality is stronger
+Stage 6 bounded agent runtime remains deferred until deterministic quality is stronger.
 
 ## 12. Recommended Next Step
 
 ### Immediate next action
 
-Use the now-verified Stage 3 and Stage 4 baseline to decide whether the next pass should be Stage 5 hardening or targeted operational tuning.
+Use the current Stage 3 plus Stage 4 baseline as stable plumbing, then take exactly one of these next slices:
 
-Stage 3 work already completed:
-
-1. defined the first explicit layout spec inside the Pillow renderer
-2. routed final preview and final export through the same layout spec path
-3. persisted the layout version on final preview/PNG/PDF asset rows
-4. regression-tested the canonical workflow after the refactor
-5. tightened the first illustration-first composition so the card has clearer art/text zones
-6. narrowed Studio final-card review so the raw image preview does not pretend to be the final eCard
-7. added a multi-layout composition slice with theme-aware defaults:
-   - `illustration_top_text_bottom`
-   - `text_left_illustration_right`
-   - `poster_illustration_caption`
-8. started the next Stage 3 polish slice:
-   - decorative outlines and borders now exist in the Pillow layout spec
-   - framed art treatment is stronger across the existing final-card layouts
-   - text panels now use styled variants for caption/editorial treatment
-   - main final-card image blocks now render with fuller `cover` placement
-9. added safe image-placement and role-aware typography controls:
-   - image blocks now carry explicit crop-focus defaults
-   - title/body/signoff now resolve deterministic font variants by theme and role
-10. added theme-specific ornament layers:
-   - each supported theme now carries deterministic decorative shapes in the final card renderer
-   - theme-specific ornament rendering is covered in renderer regression tests
-11. added content-aware composition balancing:
-   - layouts now adapt art/text proportions for compact versus dense copy
-   - top, poster, and side-by-side layouts no longer rely on one fixed content balance
-
-Stage 3 closeout evidence:
-
-1. rerendered and visually checked representative jobs:
-   - `job_d6281fb50d`
-   - `job_fd95fc7d65`
-   - `job_966e98cbf8`
-   - `job_95e76a8593`
-2. verified crop-focus plus `cover` placement against real generated art
-3. verified compact versus dense copy balancing against real jobs
-4. verified theme-specific ornaments and typography hierarchy were acceptable
-
-Stage 4 closeout evidence:
-
-1. live compact-copy `contentforge` compare-models probe for `target_words=18` returned compact two-sentence shortlist candidates
-2. live `ecard-factory` job `job_b25fd58e50` completed:
-   - `text_candidates_ready`
-   - `text_selected`
-   - `image_candidates_ready`
-   - `image_selected`
-   - `preview_ready`
-   - `export_ready`
-3. selected text for that job landed at `17` words for a `target_words=18` request
-4. final workflow quality result for that job returned `score=10.0`, `status=pass`
-5. live `/api/config/options` served database-backed categories and did not expose `operations team` in `audience`
-
-Current follow-up focus:
-
-1. reduce image-generation latency; one live `image-assets/generate` client call timed out while the backend still completed successfully
-2. deepen browser-driven UI smoke coverage only if needed
-3. continue optional prompt/ranking tuning for tone range without changing the canonical flow
+1. improve content quality and tone diversity in `contentforge`
+2. improve illustration quality and latency behavior in `imageforge` plus `ecard-factory`
+3. define the shared-engine readiness gate before any StoryFactory or ThoughtFactory work starts
 
 ### Scope rule for the next session
 
-The next fresh session should either:
+The next fresh session should pick one track only:
 
-- take one targeted Stage 5 hardening slice, or
-- improve one concrete operational concern such as image-generation latency or remaining tone-variety quality gaps
+- Stage 4A content quality hardening
+- Stage 4B illustration quality and latency hardening
+- Stage 4C shared-engine readiness gate
+
+Do not start Stage 5 or Stage 6 unless a concrete regression or operator issue forces it.
 
 ### Guardrails
 
@@ -708,6 +677,7 @@ The next fresh session should either:
 - keep legacy image endpoints compatibility-only unless a bug forces a change
 - do not add agent logic
 - keep the new config catalog DB-driven and editable; do not reintroduce hardcoded operator dropdowns
+- do not start StoryFactory, ThoughtFactory, or GIF/video work in the current cycle
 
 ## 13. Exact Prompt For The Next Chat
 
@@ -723,12 +693,12 @@ Context:
 - Stage 1 complete
 - Stage 2 implemented in code, regression-tested, and live-validated
 - Stage 2A async job kickoff implemented, regression-tested, and live-validated
-- Stage 3 visual acceptance is complete on 2026-03-23
-- Stage 4 quality/operator-config hardening is complete on 2026-03-23
-- live proof points:
-  - representative Stage 3 rerender pass covered job_d6281fb50d, job_fd95fc7d65, job_966e98cbf8, and job_95e76a8593
-  - compact-copy live job job_b25fd58e50 reached export_ready with selected_text_words=17 for target_words=18
-  - /api/config/options is live from database-backed categories and does not expose `operations team` in audience
+- Stage 3 render path is code-complete and regression-tested; treat it as the current baseline
+- Stage 4 quality/operator-config baseline is implemented and live-validated
+- the immediate next work is not a new product app; it is one of:
+  - Stage 4A content quality hardening
+  - Stage 4B illustration quality and latency hardening
+  - Stage 4C shared-engine readiness gate
 
 First, read:
 - ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md
@@ -737,11 +707,11 @@ First, read:
 - ecard-factory/docs/EXECUTION_PLAYBOOK_v0.1.md
 
 Then do this:
-- confirm there is no regression against the verified Stage 3 and Stage 4 baseline
+- confirm there is no regression against the current Stage 3 and Stage 4 baseline
 - pick one next slice only:
-  - targeted Stage 5 UI hardening, or
-  - image-generation latency reduction, or
-  - further prompt/ranking tone-quality tuning
+  - Stage 4A content quality hardening, or
+  - Stage 4B illustration quality and latency hardening, or
+  - Stage 4C shared-engine readiness gate
 - keep the explicit layout spec as the source of truth for Pillow composition
 - preserve the already-validated async kickoff and canonical `/image-assets/*` path
 
@@ -752,48 +722,40 @@ Guardrails:
 - do not introduce a second image path
 - do not auto-select text or image
 - keep legacy `/generate-image` style routes compatibility-only unless a bug forces a change
+- do not start StoryFactory, ThoughtFactory, or GIF/video work
 - log every step clearly
 
 Success condition:
-- the verified Stage 3 and Stage 4 baseline still holds, and one concrete next-stage improvement is identified or implemented
+- the current baseline still holds, and one concrete Stage 4A/4B/4C improvement is identified or implemented
 ```
 
-## 14. Exact Prompt To Trigger The Next Stage In A New Session
+## 14. Exact Prompt To Run One Improvement Slice In A New Session
 
-Use this if you want the next session to execute only the live QA pass:
+Use this if you want the next session to execute only one improvement track:
 
 ```text
 Continue from ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md.
 
-Execute only the Stage 3 visual plus Stage 4 quality/config live QA pass.
+Execute exactly one improvement slice after the current baseline.
 
 First read:
 - ecard-factory/docs/NEXT_CHAT_HANDOFF_v0.1.md
 - ecard-factory/docs/NEXT_STEPS_HLD_v0.1.md
 - ecard-factory/docs/NEXT_STEPS_LLD_v0.1.md
 
-Then do this only:
-- verify the current Pillow composition in the running Studio
-- test representative themes and short versus dense copy
-- verify the Config Catalog screen loads and Create Job uses config-backed dropdowns
-- confirm the old hardcoded `operations team` audience default is gone
-- verify Stage 4 quality panels show sensible signals in Studio and Job Detail
-- if a concrete issue is discovered, fix only that issue inside the existing layout-spec path
-- keep `render-final` and final export on the shared layout-spec path
-- preserve the already-validated async kickoff and canonical image-selection path
+Then choose only one:
+- Stage 4A content quality hardening
+- Stage 4B illustration quality and latency hardening
+- Stage 4C shared-engine readiness gate before sibling apps
 
-If Stage 3 work uncovers a regression:
-- fix only the regression required to keep the canonical flow healthy
-- do not change unrelated architecture
-
-Guardrails:
-- do not touch content ranking flow
-- do not add agent logic
-- do not introduce a second image path
-- keep legacy /generate-image style routes compatibility-only
+Rules:
+- keep Stage 3 render behavior on the existing layout-spec path
+- preserve async kickoff and canonical `/image-assets/*`
+- if a regression is discovered, fix only the regression required to keep the canonical flow healthy
+- do not start Stage 5, Stage 6, StoryFactory, ThoughtFactory, or GIF/video work
 
 Success condition:
-- Stage 3 visual behavior and Stage 4 config/quality behavior are either signed off or narrowed to one concrete remaining defect
+- one improvement slice is completed or clearly narrowed, without expanding scope
 ```
 
 ## 15. Daily Brief Template
